@@ -37,11 +37,6 @@ require_once __DIR__ . '/connect.php';
 if (file_exists(__DIR__ . '/facepp_api.php')) {
     require_once __DIR__ . '/facepp_api.php';
 }
-// Try to include Luxand helper if available
-if (file_exists(__DIR__ . '/luxand_face_api.php')) {
-    require_once __DIR__ . '/luxand_face_api.php';
-}
-
 $photoBase64 = null;
 $photoBytes = null;
 
@@ -137,43 +132,9 @@ if (!$storedFaceBase64) {
     exit;
 }
 
-// Use Luxand first when configured because it is less strict about upload size.
+// Use Face++ for verification.
 $faceppConfigured = function_exists('facepp_api_configured') ? facepp_api_configured() : false;
-$luxandConfigured = function_exists('luxand_face_api_configured') ? luxand_face_api_configured() : false;
 
-if ($luxandConfigured && function_exists('luxand_verify_faces')) {
-    $score = luxand_verify_faces($photoBase64, $storedFaceBase64);
-    if ($score < 0) {
-        $err = function_exists('luxand_get_last_error') ? luxand_get_last_error() : 'Luxand comparison failed';
-        http_response_code(500);
-        echo json_encode(['ok' => false, 'message' => 'Face comparison error', 'detail' => $err]);
-        exit;
-    }
-
-    $threshold = 0.75;
-    if ($score >= $threshold) {
-        echo json_encode([
-            'ok' => true,
-            'message' => 'Face matched',
-            'match_score' => $score,
-            'threshold' => $threshold,
-            'api' => 'luxand',
-        ]);
-        exit;
-    }
-
-    http_response_code(401);
-    echo json_encode([
-        'ok' => false,
-        'message' => 'Face did not match',
-        'match_score' => $score,
-        'threshold' => $threshold,
-        'api' => 'luxand',
-    ]);
-    exit;
-}
-
-// Fall back to Face++ only if Luxand is unavailable.
 if ($faceppConfigured && function_exists('facepp_compare_faces')) {
     $result = facepp_compare_faces($photoBase64, $storedFaceBase64);
     if ($result === null) {
@@ -216,7 +177,6 @@ echo json_encode([
         'facepp_configured' => $faceppConfigured,
         'has_FACEPP_API_KEY' => !empty(getenv('FACEPP_API_KEY')),
         'has_FACEPP_API_SECRET' => !empty(getenv('FACEPP_API_SECRET')),
-        'luxand_configured' => $luxandConfigured,
         'FACE_VERIFY_MODE' => $verifyMode,
     ],
 ]);
