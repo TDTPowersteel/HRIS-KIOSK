@@ -36,10 +36,10 @@ function facepp_api_configured(): bool
 
 /**
  * Optimize image for Face++ API - resize and compress for faster upload
- * Target: Max 800px width/height, 80% quality, under 200KB
+ * Target: keep the longest edge modest so Face++ accepts it reliably.
  * Falls back to original image if GD is not available
  */
-function optimizeImageForFacePP(string $imageData): ?string
+function optimizeImageForFacePP(string $imageData, int $maxDimension = 640, int $quality = 65): ?string
 {
     // Check if GD extension is available
     if (!function_exists('imagecreatefromstring')) {
@@ -57,8 +57,6 @@ function optimizeImageForFacePP(string $imageData): ?string
     $width = imagesx($img);
     $height = imagesy($img);
     
-    // Calculate new dimensions (max 800px on longest side for speed)
-    $maxDimension = 800;
     if ($width > $maxDimension || $height > $maxDimension) {
         if ($width > $height) {
             $newWidth = $maxDimension;
@@ -75,9 +73,9 @@ function optimizeImageForFacePP(string $imageData): ?string
         $img = $resized;
     }
     
-    // Convert to JPEG with 75% quality for smaller file size
+    // Convert to JPEG with reduced quality for smaller file size
     ob_start();
-    imagejpeg($img, null, 75);
+    imagejpeg($img, null, $quality);
     $optimizedData = ob_get_clean();
     imagedestroy($img);
     
@@ -182,6 +180,73 @@ function facepp_compare_faces(string $image1Base64, string $image2Base64): ?arra
         // Try to parse error message
         $errorDetails = json_decode($response, true);
         $errorMessage = $errorDetails['error_message'] ?? $response;
+
+        // Retry once with stronger compression if Face++ complains about file size.
+        if (is_string($errorMessage) && stripos($errorMessage, 'IMAGE_FILE_TOO_LARGE') !== false) {
+            error_log("Face++ API image too large; retrying with stronger compression");
+
+            $retryImageData1 = optimizeImageForFacePP($imageData1, 480, 55);
+            $retryImageData2 = optimizeImageForFacePP($imageData2, 480, 55);
+
+            if ($retryImageData1 !== null && $retryImageData2 !== null) {
+                $retryFile1 = tempnam(sys_get_temp_dir(), 'facepp_');
+                $retryFile2 = tempnam(sys_get_temp_dir(), 'facepp_');
+                file_put_contents($retryFile1, $retryImageData1);
+                file_put_contents($retryFile2, $retryImageData2);
+
+                $retryPostData = [
+                    'api_key' => FACEPP_API_KEY,
+                    'api_secret' => FACEPP_API_SECRET,
+                    'image_file1' => new CURLFile($retryFile1, 'image/jpeg', 'image1.jpg'),
+                    'image_file2' => new CURLFile($retryFile2, 'image/jpeg', 'image2.jpg'),
+                ];
+
+                $retryCh = curl_init($url);
+                curl_setopt_array($retryCh, [
+                    CURLOPT_RETURNTRANSFER => true,
+                    CURLOPT_POST => true,
+                    CURLOPT_POSTFIELDS => $retryPostData,
+                    CURLOPT_TIMEOUT => 25,
+                    CURLOPT_CONNECTTIMEOUT => 8,
+                ]);
+
+                $retryResponse = curl_exec($retryCh);
+                $retryHttpCode = curl_getinfo($retryCh, CURLINFO_HTTP_CODE);
+                $retryError = curl_error($retryCh);
+                curl_close($retryCh);
+
+                @unlink($retryFile1);
+                @unlink($retryFile2);
+
+                if (!$retryError && $retryHttpCode === 200) {
+                    $retryResult = json_decode($retryResponse, true);
+                    if (is_array($retryResult) && !isset($retryResult['error_message'])) {
+                        $confidence = $retryResult['confidence'] ?? 0;
+                        $thresholds = $retryResult['thresholds'] ?? [];
+                        $threshold = $thresholds['1e-4'] ?? ($thresholds['1e-5'] ?? 70.0);
+                        $confidenceNormalized = $confidence / 100.0;
+                        $thresholdNormalized = $threshold / 100.0;
+                        $isSimilar = $confidence >= $threshold;
+
+                        error_log(sprintf(
+                            "Face++ API result after retry - Confidence: %.2f, Threshold: %.2f, Match: %s",
+                            $confidence,
+                            $threshold,
+                            $isSimilar ? 'YES' : 'NO'
+                        ));
+
+                        return [
+                            'confidence' => $confidenceNormalized,
+                            'confidence_raw' => $confidence,
+                            'threshold' => $thresholdNormalized,
+                            'threshold_raw' => $threshold,
+                            'similar' => $isSimilar,
+                            'api' => 'facepp',
+                        ];
+                    }
+                }
+            }
+        }
         
         $GLOBALS['facepp_last_error'] = "HTTP $httpCode: " . substr($errorMessage, 0, 200);
         error_log("Face++ API HTTP error: $httpCode - " . substr($errorMessage, 0, 200));
