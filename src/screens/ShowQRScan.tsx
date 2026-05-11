@@ -1,5 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { Audio } from 'expo-av';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
@@ -46,6 +47,8 @@ export default function ShowQRScan({ onBack, onOpenOffline }: Props) {
   const [currentTime, setCurrentTime] = useState(new Date());
   const [clockInTime, setClockInTime] = useState('');
   const [isVerifying, setIsVerifying] = useState(false);
+  const [isQrLoading, setIsQrLoading] = useState(false);
+  const [lastScannedData, setLastScannedData] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [qrVerified, setQrVerified] = useState(false);
   const [welcomeName, setWelcomeName] = useState<string | null>(null);
@@ -67,6 +70,38 @@ export default function ShowQRScan({ onBack, onOpenOffline }: Props) {
   const [modalHint, setModalHint] = useState('');
   const scaleAnim = useRef(new Animated.Value(0)).current;
   const scanLineAnim = useRef(new Animated.Value(0)).current;
+  const flashAnim = useRef(new Animated.Value(0)).current;
+  const [snapSound, setSnapSound] = useState<Audio.Sound | null>(null);
+
+  useEffect(() => {
+    async function loadSound() {
+      try {
+        const { sound } = await Audio.Sound.createAsync(
+          { uri: 'https://www.soundjay.com/camera/camera-shutter-click-08.mp3' }
+        );
+        setSnapSound(sound);
+      } catch (error) {
+        console.log('[Sound] Failed to load snap sound', error);
+      }
+    }
+    loadSound();
+
+    return () => {
+      if (snapSound) {
+        snapSound.unloadAsync();
+      }
+    };
+  }, []);
+
+  const playSnapSound = async () => {
+    try {
+      if (snapSound) {
+        await snapSound.replayAsync();
+      }
+    } catch (error) {
+      console.log('[Sound] Error playing sound', error);
+    }
+  };
 
   useEffect(() => {
     setIsLoading(false);
@@ -313,6 +348,17 @@ export default function ShowQRScan({ onBack, onOpenOffline }: Props) {
     qrProcessingRef.current = true;
     lastScanRef.current = { data, ts: now };
 
+    // Snap effect (flash + sound)
+    playSnapSound();
+    Animated.sequence([
+      Animated.timing(flashAnim, { toValue: 1, duration: 50, useNativeDriver: true }),
+      Animated.timing(flashAnim, { toValue: 0, duration: 150, useNativeDriver: true }),
+    ]).start();
+    
+    // Immediate feedback to avoid perceived delay
+    setIsQrLoading(true);
+    setLastScannedData(data);
+
     try {
       console.log('[QR] Scanned', data);
       const resolved = await resolveUserFromQr(data);
@@ -347,6 +393,8 @@ export default function ShowQRScan({ onBack, onOpenOffline }: Props) {
       qrProcessingRef.current = false;
       setSelectedUser(null);
       showModal('error', 'QR Validation Error', e?.message || 'Could not validate QR code.', '');
+    } finally {
+      setIsQrLoading(false);
     }
   };
 
@@ -684,6 +732,14 @@ export default function ShowQRScan({ onBack, onOpenOffline }: Props) {
         onBarcodeScanned={handleBarcodeScanned}
       />
 
+      <Animated.View 
+        style={[
+          styles.snapFlash, 
+          { opacity: flashAnim }
+        ]} 
+        pointerEvents="none" 
+      />
+
       <View style={styles.cameraTint} pointerEvents="none" />
 
       <SafeAreaView style={styles.overlaySafeArea} edges={['top', 'left', 'right', 'bottom']}>
@@ -757,9 +813,15 @@ export default function ShowQRScan({ onBack, onOpenOffline }: Props) {
                 <View style={[styles.corner, styles.cornerTopRight]} />
                 <View style={[styles.corner, styles.cornerBottomLeft]} />
                 <View style={[styles.corner, styles.cornerBottomRight]} />
-                <MaterialCommunityIcons name="qrcode-scan" size={100} color="#F27121" />
+                {isQrLoading ? (
+                  <ActivityIndicator size={100} color="#F27121" />
+                ) : (
+                  <MaterialCommunityIcons name="qrcode-scan" size={100} color="#F27121" />
+                )}
               </View>
-              <Text style={styles.scanInstructionText}>READY TO SCAN QR</Text>
+              <Text style={styles.scanInstructionText}>
+                {isQrLoading ? 'QR CODE SCANNED' : 'READY TO SCAN QR'}
+              </Text>
             </View>
           ) : isClockingOut ? (
             <View style={styles.qrScannerArea}>
@@ -804,6 +866,13 @@ export default function ShowQRScan({ onBack, onOpenOffline }: Props) {
 
         {/* FOOTER SECTION */}
         <View style={styles.newFooter}>
+          {isQrLoading && (
+            <View style={[styles.verifyingPill, { borderColor: '#4A90E2' }]}>
+              <ActivityIndicator size="small" color="#4A90E2" />
+              <Text style={styles.verifyingPillText}>QR Code Scanned</Text>
+            </View>
+          )}
+
           {isVerifying && (
             <View style={styles.verifyingPill}>
               <ActivityIndicator size="small" color="#F27121" />
@@ -815,7 +884,7 @@ export default function ShowQRScan({ onBack, onOpenOffline }: Props) {
 
           {qrVerified ? (
             <View style={styles.welcomeContainer}>
-              <Text style={styles.welcomeLabel}>IDENTIFIED AS</Text>
+              <Text style={styles.welcomeLabel}>Good Morning,</Text>
               <Text style={styles.welcomeValue}>{welcomeName ?? 'Employee'}</Text>
               
               <View style={[styles.actionTag, { backgroundColor: isClockingOut ? '#C0392B' : '#F27121' }]}>
@@ -930,6 +999,11 @@ const styles = StyleSheet.create({
   permissionText: { color: '#fff', fontWeight: '600' },
   fullScreenCamera: {
     ...StyleSheet.absoluteFillObject,
+  },
+  snapFlash: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: '#ffffff',
+    zIndex: 99,
   },
   cameraTint: {
     ...StyleSheet.absoluteFillObject,
