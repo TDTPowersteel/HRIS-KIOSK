@@ -1,4 +1,5 @@
 import { StatusBar } from 'expo-status-bar';
+import * as ScreenOrientation from 'expo-screen-orientation';
 import { useEffect, useMemo, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -12,6 +13,8 @@ export default function App() {
   const [screen, setScreen] = useState<'home' | 'qr' | 'profile' | 'settings' | 'offline'>('home');
 
   useEffect(() => {
+    // Dynamically unlock screen orientation to prevent tablet letterboxing
+    ScreenOrientation.unlockAsync().catch(() => {});
     refreshOfflineUserCache().catch(() => undefined);
   }, []);
 
