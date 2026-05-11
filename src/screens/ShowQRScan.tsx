@@ -57,6 +57,8 @@ export default function ShowQRScan({ onBack, onOpenOffline }: Props) {
   const [pendingSyncCount, setPendingSyncCount] = useState(0);
   const lastScanRef = useRef<{ data: string | null; ts: number }>({ data: null, ts: 0 });
   const touchlessTriggeredRef = useRef(false);
+  const qrProcessingRef = useRef(false);
+  const faceProcessingRef = useRef(false);
 
   const [showResultModal, setShowResultModal] = useState(false);
   const [modalType, setModalType] = useState<'success' | 'error' | 'info' | 'warning'>('success');
@@ -238,6 +240,8 @@ export default function ShowQRScan({ onBack, onOpenOffline }: Props) {
     setAttendanceAction('clock_in');
     lastScanRef.current = { data: null, ts: 0 };
     touchlessTriggeredRef.current = false;
+    qrProcessingRef.current = false;
+    faceProcessingRef.current = false;
     try {
       await AsyncStorage.multiRemove(['userId', 'username']);
     } catch {
@@ -296,7 +300,7 @@ export default function ShowQRScan({ onBack, onOpenOffline }: Props) {
   }, [offlineModeEnabled]);
 
   const handleBarcodeScanned = async (event: any) => {
-    if (isVerifying || qrVerified) return;
+    if (qrProcessingRef.current || isVerifying || qrVerified) return;
 
     const data: string | undefined = event?.data;
     if (!data) return;
@@ -305,6 +309,8 @@ export default function ShowQRScan({ onBack, onOpenOffline }: Props) {
     if (lastScanRef.current.data === data && now - lastScanRef.current.ts < 1500) {
       return;
     }
+    
+    qrProcessingRef.current = true;
     lastScanRef.current = { data, ts: now };
 
     try {
@@ -338,6 +344,7 @@ export default function ShowQRScan({ onBack, onOpenOffline }: Props) {
     } catch (e: any) {
       console.log('[QR] Validation error', e);
       setQrVerified(false);
+      qrProcessingRef.current = false;
       setSelectedUser(null);
       showModal('error', 'QR Validation Error', e?.message || 'Could not validate QR code.', '');
     }
@@ -497,6 +504,8 @@ export default function ShowQRScan({ onBack, onOpenOffline }: Props) {
   }, []);
 
   const handleAttendance = useCallback(async () => {
+    if (faceProcessingRef.current || isVerifying) return;
+
     if (!qrVerified || !selectedUser) {
       showModal(
         'warning',
@@ -512,6 +521,7 @@ export default function ShowQRScan({ onBack, onOpenOffline }: Props) {
       return;
     }
 
+    faceProcessingRef.current = true;
     console.log('[Attendance] Starting verification', { action: attendanceAction, userId: selectedUser.userId });
     setIsVerifying(true);
 
@@ -580,6 +590,7 @@ export default function ShowQRScan({ onBack, onOpenOffline }: Props) {
           ''
         );
       } else if (result?.verified === false) {
+        faceProcessingRef.current = false;
         showModal(
           'error',
           'Verification Failed',
@@ -587,9 +598,11 @@ export default function ShowQRScan({ onBack, onOpenOffline }: Props) {
           result?.hint || 'Please try again.'
         );
       } else {
+        faceProcessingRef.current = false;
         showModal('error', 'Verification Failed', 'Please try again.', '');
       }
     } catch (e: any) {
+      faceProcessingRef.current = false;
       console.error('Verification error:', e);
       showModal(
         'error',
@@ -668,14 +681,64 @@ export default function ShowQRScan({ onBack, onOpenOffline }: Props) {
       <View style={styles.cameraTint} pointerEvents="none" />
 
       <SafeAreaView style={styles.overlaySafeArea} edges={['top', 'left', 'right', 'bottom']}>
-        <View style={styles.header}>
-          <TouchableOpacity onPress={onBack} style={styles.backButton}>
-            <Text style={styles.backArrow}>Back</Text>
-          </TouchableOpacity>
-          <Text style={styles.headerTitle}>Attendance</Text>
-          <View style={styles.headerSpacer} />
+        {/* TOP HEADER SECTION */}
+        <View style={styles.newHeader}>
+          <View style={styles.headerLeft}>
+            <TouchableOpacity onPress={onBack} style={styles.headerIconButton}>
+              <MaterialCommunityIcons name="chevron-left" size={28} color="#fff" />
+            </TouchableOpacity>
+            
+            <TouchableOpacity 
+              onPress={onOpenOffline} 
+              style={[styles.headerIconButton, { marginLeft: 10 }]}
+            >
+              <MaterialCommunityIcons name="history" size={22} color="#fff" />
+              {pendingSyncCount > 0 && (
+                <View style={styles.headerSyncBadge} />
+              )}
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.headerCenter}>
+            <Text style={styles.topTime}>{formattedTime}</Text>
+            <Text style={styles.topDate}>{formattedDate}</Text>
+          </View>
+
+          <View style={styles.headerRight}>
+            <TouchableOpacity 
+              onPress={() => handleOfflineModeChange(!offlineModeEnabled)}
+              style={[styles.miniOfflineBadge, offlineModeEnabled && styles.miniOfflineBadgeActive]}
+            >
+              <MaterialCommunityIcons 
+                name={offlineModeEnabled ? "cloud-off" : "cloud-check"} 
+                size={18} 
+                color="#fff" 
+              />
+              <Text style={styles.miniOfflineText}>{offlineModeEnabled ? "OFFLINE" : "ONLINE"}</Text>
+            </TouchableOpacity>
+          </View>
         </View>
 
+        {/* STEP INDICATOR - HIGHLIGHTED */}
+        <View style={styles.topStepsRow}>
+          <View style={[styles.stepPill, !qrVerified && styles.stepPillActive, qrVerified && styles.stepPillDone]}>
+            <Text style={[styles.stepPillText, (!qrVerified || qrVerified) && styles.stepPillTextActive]}>
+              {qrVerified ? '✓ ' : '1. '}QR CODE
+            </Text>
+            {!qrVerified && <View style={styles.activeDot} />}
+          </View>
+          
+          <MaterialCommunityIcons name="chevron-right" size={20} color="rgba(255,255,255,0.4)" />
+
+          <View style={[styles.stepPill, qrVerified && !isVerifying && styles.stepPillActive, isVerifying && styles.stepPillDone]}>
+            <Text style={[styles.stepPillText, qrVerified && styles.stepPillTextActive]}>
+              2. SCAN FACE
+            </Text>
+            {qrVerified && !isVerifying && <View style={styles.activeDot} />}
+          </View>
+        </View>
+
+        {/* CENTER SCANNING AREA */}
         <View style={styles.scannerOverlayContainer} pointerEvents="none">
           {!qrVerified ? (
             <View style={styles.qrScannerArea}>
@@ -684,9 +747,9 @@ export default function ShowQRScan({ onBack, onOpenOffline }: Props) {
                 <View style={[styles.corner, styles.cornerTopRight]} />
                 <View style={[styles.corner, styles.cornerBottomLeft]} />
                 <View style={[styles.corner, styles.cornerBottomRight]} />
-                <MaterialCommunityIcons name="qrcode-scan" size={80} color="rgba(255,255,255,0.6)" />
+                <MaterialCommunityIcons name="qrcode-scan" size={100} color="#F27121" />
               </View>
-              <Text style={styles.scanInstructionText}>SCAN QR CODE</Text>
+              <Text style={styles.scanInstructionText}>READY TO SCAN QR</Text>
             </View>
           ) : (
             <View style={styles.faceScannerArea}>
@@ -710,103 +773,60 @@ export default function ShowQRScan({ onBack, onOpenOffline }: Props) {
                     },
                   ]}
                 />
+                <MaterialCommunityIcons 
+                  name="face-recognition" 
+                  size={120} 
+                  color="rgba(255,255,255,0.2)" 
+                  style={styles.faceIconBackground}
+                />
               </View>
-              <Text style={styles.scanInstructionText}>SCAN FACE</Text>
+              <Text style={styles.scanInstructionText}>POSITION YOUR FACE</Text>
             </View>
           )}
         </View>
 
-        <View style={[styles.footer, qrVerified && styles.footerCompact]}>
-          {isVerifying ? (
-            <View style={styles.verifyingContainer}>
-              <ActivityIndicator size="large" color="#F27121" />
-              <Text style={styles.verifyingText}>Verifying face...</Text>
+        {/* FOOTER SECTION */}
+        <View style={styles.newFooter}>
+          {isVerifying && (
+            <View style={styles.verifyingPill}>
+              <ActivityIndicator size="small" color="#F27121" />
+              <Text style={styles.verifyingPillText}>Verifying Identity...</Text>
             </View>
-          ) : null}
+          )}
 
-          {qrVerified ? <Text style={styles.welcomeText}>Welcome, {welcomeName ?? 'Employee'}!</Text> : null}
-
-          <View style={styles.offlineToolsCard}>
-            <View style={styles.offlineToolsTextBlock}>
-              <Text style={styles.offlineToolsTitle}>Offline Mode</Text>
-              <Text style={styles.offlineToolsText}>
-                {offlineModeEnabled
-                  ? 'Verified attendance will be saved locally first and synced later.'
-                  : 'Attendance will be inserted into the database immediately.'}
-              </Text>
+          {qrVerified ? (
+            <View style={styles.welcomeContainer}>
+              <Text style={styles.welcomeLabel}>IDENTIFIED AS</Text>
+              <Text style={styles.welcomeValue}>{welcomeName ?? 'Employee'}</Text>
+              
+              <View style={[styles.actionTag, { backgroundColor: isClockingOut ? '#C0392B' : '#F27121' }]}>
+                <Text style={styles.actionTagText}>{isClockingOut ? 'CLOCK OUT' : 'CLOCK IN'}</Text>
+              </View>
             </View>
-            <View style={styles.offlineControls}>
-              {isSavingOfflineMode ? <ActivityIndicator size="small" color="#F27121" /> : null}
-              <Switch
-                value={offlineModeEnabled}
-                onValueChange={handleOfflineModeChange}
-                thumbColor={offlineModeEnabled ? '#F27121' : '#f4f3f4'}
-                trackColor={{ false: 'rgba(255,255,255,0.35)', true: 'rgba(242,113,33,0.35)' }}
-              />
+          ) : (
+            <View style={styles.welcomeContainer}>
+              <Text style={styles.waitingText}>Waiting for employee QR...</Text>
             </View>
-          </View>
+          )}
 
-          <View style={styles.offlineQuickActionRow}>
-            <TouchableOpacity style={styles.offlineListButton} onPress={onOpenOffline}>
-              <Text style={styles.offlineListButtonText}>LIST OFFLINE</Text>
-              {pendingSyncCount > 0 ? (
-                <View style={styles.offlineBadge}>
-                  <Text style={styles.offlineBadgeText}>{pendingSyncCount}</Text>
-                </View>
-              ) : null}
+          <View style={styles.footerButtons}>
+            <TouchableOpacity
+              style={[
+                styles.mainActionButton,
+                { backgroundColor: isClockingOut ? '#C0392B' : '#F27121', opacity: (isVerifying || !qrVerified) ? 0.6 : 1 },
+              ]}
+              onPress={handleAttendance}
+              disabled={isVerifying || !qrVerified}
+            >
+              {isVerifying ? (
+                <ActivityIndicator color="white" />
+              ) : (
+                <Text style={styles.mainActionButtonText}>
+                  {!qrVerified ? 'SCAN QR FIRST' : (isClockingOut ? 'CONFIRM CLOCK OUT' : 'CONFIRM CLOCK IN')}
+                </Text>
+              )}
             </TouchableOpacity>
           </View>
-
-          <View style={styles.requirementSteps}>
-            <View style={[styles.stepRow, qrVerified && styles.stepDone]}>
-              <Text style={[styles.stepIcon, qrVerified && styles.stepIconDone]}>{qrVerified ? 'OK' : '1'}</Text>
-              <Text style={styles.stepText}>QR Code</Text>
-            </View>
-            <View style={styles.stepRow}>
-              {isVerifying ? (
-                <ActivityIndicator size="small" color="#F27121" style={styles.stepSpinner} />
-              ) : (
-                <Text style={styles.stepIcon}>2</Text>
-              )}
-              <Text style={styles.stepText}>Face Recognition</Text>
-            </View>
-          </View>
-
-          <View style={styles.footerTimeBlock}>
-            {qrVerified ? (
-              <View
-                style={[
-                  styles.actionBadge,
-                  {
-                    backgroundColor: isClockingOut ? 'rgba(192,57,43,0.18)' : 'rgba(242,113,33,0.16)',
-                    borderColor: isClockingOut ? '#f19587' : '#ffc187',
-                  },
-                ]}
-              >
-                <Text style={[styles.actionBadgeText, { color: isClockingOut ? '#ffd4ce' : '#ffe0bc' }]}>
-                  {isClockingOut ? 'CLOCK OUT' : 'CLOCK IN'}
-                </Text>
-              </View>
-            ) : null}
-            <Text style={styles.footerDate}>{formattedDate}</Text>
-            <Text style={styles.footerTime}>{formattedTime}</Text>
-            {clockInTime ? <Text style={styles.clockInfoText}>Last clock in: {clockInTime}</Text> : null}
-          </View>
-
-          <TouchableOpacity
-            style={[
-              styles.bigButton,
-              { backgroundColor: isClockingOut ? '#C0392B' : '#F27121', opacity: isVerifying ? 0.7 : 1 },
-            ]}
-            onPress={handleAttendance}
-            disabled={isVerifying}
-          >
-            {isVerifying ? (
-              <ActivityIndicator color="white" />
-            ) : (
-              <Text style={styles.buttonText}>{isClockingOut ? 'CLOCK OUT' : 'CLOCK IN'}</Text>
-            )}
-          </TouchableOpacity>
         </View>
       </SafeAreaView>
 
@@ -894,54 +914,138 @@ const styles = StyleSheet.create({
   },
   cameraTint: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0,0,0,0.12)',
+    backgroundColor: 'rgba(0,0,0,0.2)',
   },
   overlaySafeArea: {
     flex: 1,
     justifyContent: 'space-between',
   },
-  header: {
+  // NEW HEADER
+  newHeader: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 14,
-    paddingTop: 4,
-    paddingBottom: 8,
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingTop: 10,
+    height: 70,
   },
-  backButton: {
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderRadius: 999,
-    backgroundColor: 'rgba(15,23,42,0.32)',
+  headerLeft: { 
+    flexDirection: 'row',
+    alignItems: 'center',
+    width: 100 
   },
-  backArrow: { color: '#ffffff', fontWeight: '700' },
-  headerTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#ffffff',
-    textShadowColor: 'rgba(0,0,0,0.35)',
+  headerIconButton: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    position: 'relative',
+  },
+  headerSyncBadge: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#F27121',
+    borderWidth: 1,
+    borderColor: '#fff',
+  },
+  headerCenter: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  topTime: {
+    color: '#fff',
+    fontSize: 30,
+    fontWeight: '900',
+    textShadowColor: 'rgba(0,0,0,0.5)',
     textShadowOffset: { width: 0, height: 1 },
     textShadowRadius: 4,
   },
-  headerSpacer: { width: 62 },
+  topDate: {
+    color: 'rgba(255,255,255,0.8)',
+    fontSize: 15,
+    fontWeight: '600',
+    marginTop: -2,
+  },
+  headerRight: { width: 85, alignItems: 'flex-end' },
+  miniOfflineBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.4)',
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.2)',
+  },
+  miniOfflineBadgeActive: {
+    borderColor: '#F27121',
+    backgroundColor: 'rgba(242,113,33,0.2)',
+  },
+  miniOfflineText: {
+    color: '#fff',
+    fontSize: 10,
+    fontWeight: '800',
+    marginLeft: 4,
+  },
+
+  // STEPS
+  topStepsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 15,
+    gap: 8,
+  },
+  stepPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    borderWidth: 1,
+    borderColor: 'transparent',
+  },
+  stepPillActive: {
+    backgroundColor: 'rgba(242,113,33,0.2)',
+    borderColor: '#F27121',
+  },
+  stepPillDone: {
+    backgroundColor: 'rgba(154,230,180,0.2)',
+  },
+  stepPillText: {
+    color: 'rgba(255,255,255,0.4)',
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  stepPillTextActive: {
+    color: '#fff',
+  },
+  activeDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#F27121',
+    marginLeft: 6,
+  },
+
+  // CENTER SCANNER
   scannerOverlayContainer: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  qrScannerArea: {
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  faceScannerArea: {
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
+  qrScannerArea: { alignItems: 'center' },
+  faceScannerArea: { alignItems: 'center' },
   qrFrame: {
-    width: 200,
-    height: 200,
-    borderWidth: 0,
-    borderColor: 'rgba(255,255,255,0.3)',
+    width: 220,
+    height: 220,
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 20,
@@ -949,12 +1053,15 @@ const styles = StyleSheet.create({
   faceFrame: {
     width: 240,
     height: 240,
-    borderWidth: 0,
-    borderColor: 'rgba(255,255,255,0.3)',
     alignItems: 'center',
     justifyContent: 'flex-start',
     marginBottom: 20,
     overflow: 'hidden',
+    position: 'relative',
+  },
+  faceIconBackground: {
+    position: 'absolute',
+    top: 60,
   },
   corner: {
     position: 'absolute',
@@ -965,194 +1072,161 @@ const styles = StyleSheet.create({
   cornerTopLeft: {
     top: 0,
     left: 0,
-    borderTopWidth: 4,
-    borderLeftWidth: 4,
-    borderTopLeftRadius: 10,
+    borderTopWidth: 5,
+    borderLeftWidth: 5,
+    borderTopLeftRadius: 15,
   },
   cornerTopRight: {
     top: 0,
     right: 0,
-    borderTopWidth: 4,
-    borderRightWidth: 4,
-    borderTopRightRadius: 10,
+    borderTopWidth: 5,
+    borderRightWidth: 5,
+    borderTopRightRadius: 15,
   },
   cornerBottomLeft: {
     bottom: 0,
     left: 0,
-    borderBottomWidth: 4,
-    borderLeftWidth: 4,
-    borderBottomLeftRadius: 10,
+    borderBottomWidth: 5,
+    borderLeftWidth: 5,
+    borderBottomLeftRadius: 15,
   },
   cornerBottomRight: {
     bottom: 0,
     right: 0,
-    borderBottomWidth: 4,
-    borderRightWidth: 4,
-    borderBottomRightRadius: 10,
+    borderBottomWidth: 5,
+    borderRightWidth: 5,
+    borderBottomRightRadius: 15,
   },
   scanLine: {
     width: '100%',
-    height: 3,
+    height: 4,
     backgroundColor: '#F27121',
     shadowColor: '#F27121',
     shadowOffset: { width: 0, height: 0 },
     shadowOpacity: 0.8,
     shadowRadius: 10,
     elevation: 10,
+    zIndex: 10,
   },
   scanInstructionText: {
     color: '#ffffff',
-    fontSize: 20,
+    fontSize: 18,
     fontWeight: '900',
-    letterSpacing: 2,
+    letterSpacing: 1,
     textShadowColor: 'rgba(0,0,0,0.8)',
     textShadowOffset: { width: 0, height: 2 },
     textShadowRadius: 4,
   },
-  footer: {
-    paddingHorizontal: 18,
-    paddingTop: 14,
-    paddingBottom: 18,
-    backgroundColor: 'transparent',
-  },
-  footerCompact: {
-    paddingTop: 12,
-    paddingBottom: 16,
-  },
-  verifyingContainer: {
-    backgroundColor: 'rgba(0,0,0,0.72)',
-    paddingHorizontal: 22,
-    paddingVertical: 20,
-    borderRadius: 18,
+
+  // FOOTER
+  newFooter: {
+    paddingHorizontal: 20,
+    paddingBottom: 25,
     alignItems: 'center',
-    marginBottom: 10,
   },
-  verifyingText: { color: '#fff', marginTop: 10, fontWeight: '700' },
-  welcomeText: {
-    textAlign: 'center',
-    color: '#ffffff',
-    fontWeight: '700',
-    marginBottom: 10,
-    textShadowColor: 'rgba(0,0,0,0.4)',
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 4,
-  },
-  offlineToolsCard: {
+  verifyingPill: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: 'rgba(15,23,42,0.28)',
-    borderRadius: 14,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    marginBottom: 8,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.10)',
-  },
-  offlineToolsTextBlock: {
-    flex: 1,
-    paddingRight: 10,
-  },
-  offlineToolsTitle: {
-    color: '#ffffff',
-    fontWeight: '700',
-    fontSize: 14,
-    marginBottom: 2,
-  },
-  offlineToolsText: {
-    color: 'rgba(255,255,255,0.82)',
-    fontSize: 12,
-    lineHeight: 17,
-  },
-  offlineControls: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  offlineQuickActionRow: {
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
-    marginBottom: 10,
-  },
-  offlineListButton: {
-    backgroundColor: 'rgba(15,23,42,0.36)',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.16)',
-    borderRadius: 999,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 10,
+    backgroundColor: 'rgba(0,0,0,0.8)',
     paddingHorizontal: 16,
-    flexDirection: 'row',
+    paddingVertical: 8,
+    borderRadius: 999,
+    marginBottom: 15,
+    borderWidth: 1,
+    borderColor: '#F27121',
   },
-  offlineListButtonText: {
-    color: '#ffffff',
-    fontWeight: '800',
-    fontSize: 12,
-    letterSpacing: 0.3,
-  },
-  offlineBadge: {
-    minWidth: 20,
-    height: 20,
-    borderRadius: 10,
-    backgroundColor: '#F27121',
-    alignItems: 'center',
-    justifyContent: 'center',
+  verifyingPillText: {
+    color: '#fff',
     marginLeft: 8,
-    paddingHorizontal: 5,
+    fontWeight: '700',
   },
-  offlineBadgeText: {
+  welcomeContainer: {
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  welcomeLabel: {
+    color: 'rgba(255,255,255,0.6)',
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 1,
+  },
+  welcomeValue: {
+    color: '#fff',
+    fontSize: 24,
+    fontWeight: '900',
+    marginBottom: 8,
+  },
+  actionTag: {
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    borderRadius: 4,
+  },
+  actionTagText: {
     color: '#fff',
     fontSize: 11,
-    fontWeight: '800',
+    fontWeight: '900',
   },
-  requirementSteps: { flexDirection: 'row', justifyContent: 'center', marginBottom: 16 },
-  stepRow: { flexDirection: 'row', alignItems: 'center', marginHorizontal: 12 },
-  stepDone: { opacity: 1 },
-  stepIcon: {
-    fontSize: 12,
-    color: '#ffffff',
-    width: 22,
-    height: 22,
-    textAlign: 'center',
-    textAlignVertical: 'center',
+  waitingText: {
+    color: 'rgba(255,255,255,0.5)',
+    fontStyle: 'italic',
+    fontSize: 14,
+  },
+  footerButtons: {
+    flexDirection: 'row',
+    width: '100%',
+    gap: 12,
+  },
+  syncButton: {
+    flex: 0.4,
+    height: 60,
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    borderRadius: 15,
+    alignItems: 'center',
+    justifyContent: 'center',
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.52)',
-    borderRadius: 11,
-    overflow: 'hidden',
-    paddingTop: 2,
-    backgroundColor: 'rgba(15,23,42,0.24)',
+    borderColor: 'rgba(255,255,255,0.1)',
   },
-  stepIconDone: { color: '#9ae6b4', borderColor: '#9ae6b4' },
-  stepSpinner: { marginRight: 8 },
-  stepText: { fontSize: 13, marginLeft: 6, fontWeight: '600', color: '#ffffff' },
-  footerTimeBlock: { alignItems: 'center', marginBottom: 14 },
-  actionBadge: {
-    borderWidth: 1,
-    borderRadius: 999,
-    paddingVertical: 6,
-    paddingHorizontal: 14,
-    marginBottom: 10,
-  },
-  actionBadgeText: {
-    fontSize: 12,
+  syncButtonText: {
+    color: '#fff',
+    fontSize: 10,
     fontWeight: '800',
-    letterSpacing: 0.5,
-  },
-  footerDate: { fontSize: 13, color: 'rgba(255,255,255,0.82)' },
-  footerTime: { fontSize: 40, fontWeight: 'bold', color: '#ffffff' },
-  clockInfoText: {
-    fontSize: 12,
-    color: 'rgba(255,255,255,0.78)',
     marginTop: 4,
   },
-  bigButton: {
-    justifyContent: 'center',
+  syncBadge: {
+    position: 'absolute',
+    top: -8,
+    right: -8,
+    backgroundColor: '#F27121',
+    borderRadius: 10,
+    minWidth: 20,
+    height: 20,
     alignItems: 'center',
-    padding: 20,
-    borderRadius: 15,
+    justifyContent: 'center',
+    paddingHorizontal: 4,
   },
-  buttonText: { color: '#fff', fontSize: 18, fontWeight: 'bold' },
+  syncBadgeText: {
+    color: '#fff',
+    fontSize: 10,
+    fontWeight: '900',
+  },
+  mainActionButton: {
+    flex: 1,
+    height: 60,
+    borderRadius: 15,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 5,
+  },
+  mainActionButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '900',
+  },
+
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0, 0, 0, 0.7)',
