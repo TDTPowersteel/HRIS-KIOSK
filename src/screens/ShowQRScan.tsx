@@ -85,6 +85,7 @@ export default function ShowQRScan({ onBack, onOpenOffline }: Props) {
   const faceProcessingRef = useRef(false);
 
   const [showResultModal, setShowResultModal] = useState(false);
+  const modalVisibleRef = useRef(false);
   const [modalType, setModalType] = useState<'success' | 'error' | 'info' | 'warning'>('success');
   const [modalTitle, setModalTitle] = useState('');
   const [modalMessage, setModalMessage] = useState('');
@@ -102,7 +103,7 @@ export default function ShowQRScan({ onBack, onOpenOffline }: Props) {
   });
 
   const onLivenessDetected = Worklets.createRunOnJS(() => {
-    if (!livenessTriggeredRef.current && qrVerified && attendanceAction === 'clock_in' && countdownRef.current <= 0) {
+    if (!livenessTriggeredRef.current && !modalVisibleRef.current && qrVerified && attendanceAction === 'clock_in' && countdownRef.current <= 0) {
       playSnapSound();
       handleAttendance();
       livenessTriggeredRef.current = true;
@@ -240,6 +241,7 @@ export default function ShowQRScan({ onBack, onOpenOffline }: Props) {
       clearTimeout(autoCloseTimerRef.current);
       autoCloseTimerRef.current = null;
     }
+    modalVisibleRef.current = false;
     Animated.timing(scaleAnim, {
       toValue: 0,
       duration: 200,
@@ -256,6 +258,7 @@ export default function ShowQRScan({ onBack, onOpenOffline }: Props) {
 
   const showModal = useCallback(
     (type: 'success' | 'error' | 'info' | 'warning', title: string, message: string, hint: string, autoCloseMs?: number) => {
+      modalVisibleRef.current = true;
       setModalType(type);
       setModalTitle(title);
       setModalMessage(message);
