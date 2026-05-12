@@ -2,10 +2,10 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Audio } from 'expo-av';
 // import { CameraView, useCameraPermissions } from 'expo-camera'; // (RESERVED)
-import { 
-  Camera, 
-  useCameraDevice, 
-  useCameraPermission, 
+import {
+  Camera,
+  useCameraDevice,
+  useCameraPermission,
   useCodeScanner,
   useFrameProcessor
 } from 'react-native-vision-camera';
@@ -55,7 +55,7 @@ export default function ShowQRScan({ onBack, onOpenOffline }: Props) {
   const { hasPermission, requestPermission } = useCameraPermission();
   const device = useCameraDevice('front');
   const cameraRef = useRef<Camera>(null);
-  
+
   // Liveness Detection States (Smile or Blink)
   const [livenessDetected, setLivenessDetected] = useState(false);
   const livenessTriggeredRef = useRef(false);
@@ -110,7 +110,7 @@ export default function ShowQRScan({ onBack, onOpenOffline }: Props) {
     const faces = detectFaces(frame);
     if (faces.length > 0) {
       const face = faces[0];
-      
+
       // UX Improvement: Detect Smile OR Blink
       const isSmiling = (face.smilingProbability || 0) > 0.7;
       const isBlinking = (face.leftEyeOpenProbability || 1) < 0.3 && (face.rightEyeOpenProbability || 1) < 0.3;
@@ -404,7 +404,7 @@ export default function ShowQRScan({ onBack, onOpenOffline }: Props) {
     if (lastScanRef.current.data === data && now - lastScanRef.current.ts < 1500) {
       return;
     }
-    
+
     qrProcessingRef.current = true;
     lastScanRef.current = { data, ts: now };
 
@@ -414,7 +414,7 @@ export default function ShowQRScan({ onBack, onOpenOffline }: Props) {
       Animated.timing(flashAnim, { toValue: 1, duration: 50, useNativeDriver: true }),
       Animated.timing(flashAnim, { toValue: 0, duration: 150, useNativeDriver: true }),
     ]).start();
-    
+
     // Immediate feedback to avoid perceived delay
     setIsQrLoading(true);
     setLastScannedData(data);
@@ -443,8 +443,8 @@ export default function ShowQRScan({ onBack, onOpenOffline }: Props) {
             ? 'This user already has an active clock-in. Press CLOCK OUT to save the attendance offline.'
             : 'This user already has an active clock-in. Press CLOCK OUT to finish logout.'
           : offlineModeEnabled
-          ? 'QR recognized. SMILE or BLINK to capture the face photo automatically.'
-          : 'SMILE or BLINK to capture your face and verify attendance automatically.',
+            ? 'QR recognized. SMILE or BLINK to capture the face photo automatically.'
+            : 'SMILE or BLINK to capture your face and verify attendance automatically.',
         'No need to touch the screen. Just look at the camera!'
       );
     } catch (e: any) {
@@ -472,7 +472,7 @@ export default function ShowQRScan({ onBack, onOpenOffline }: Props) {
 
     console.log('[Verify] Sending face to backend', { userId, hasLiveness: !!photoUri2 });
     const form = new FormData();
-    
+
     // Main Photo for Recognition
     form.append(
       'photo',
@@ -549,10 +549,10 @@ export default function ShowQRScan({ onBack, onOpenOffline }: Props) {
 
   const runVerification = useCallback(async () => {
     if (!cameraRef.current) throw new Error('Camera not ready');
-    
+
     // SHOT 1
-    const photo1 = await cameraRef.current.takePicture({
-      qualityPriority: 'balanced',
+    const photo1 = await cameraRef.current.takePhoto({
+      qualityPrioritization: 'balanced',
       flash: 'off',
     });
     if (!photo1?.path) throw new Error('No image captured (Shot 1)');
@@ -561,8 +561,8 @@ export default function ShowQRScan({ onBack, onOpenOffline }: Props) {
     await new Promise(resolve => setTimeout(resolve, 300));
 
     // SHOT 2
-    const photo2 = await cameraRef.current.takePicture({
-      qualityPriority: 'balanced',
+    const photo2 = await cameraRef.current.takePhoto({
+      qualityPrioritization: 'balanced',
       flash: 'off',
     });
     if (!photo2?.path) throw new Error('No image captured (Shot 2)');
@@ -719,15 +719,15 @@ export default function ShowQRScan({ onBack, onOpenOffline }: Props) {
               ? 'Saved For Sync'
               : 'Clock Out Saved For Sync'
             : action === 'clock_in'
-            ? 'Clock In Complete'
-            : 'Clock Out Complete',
+              ? 'Clock In Complete'
+              : 'Clock Out Complete',
           offlineModeEnabled
             ? action === 'clock_in'
               ? 'Face captured. This attendance was saved offline. Open LIST OFFLINE and press SYNC NOW when ready.'
               : 'Face captured. This clock out was saved offline. Open LIST OFFLINE and press SYNC NOW when ready.'
             : action === 'clock_in'
-            ? result?.message || 'Face verified. Attendance recorded. The scanner is ready for the next user.'
-            : result?.message || 'Face verified. Logout recorded. The scanner is ready for the next user.',
+              ? result?.message || 'Face verified. Attendance recorded. The scanner is ready for the next user.'
+              : result?.message || 'Face verified. Logout recorded. The scanner is ready for the next user.',
           ''
         );
       } else if (result?.verified === false) {
@@ -809,22 +809,34 @@ export default function ShowQRScan({ onBack, onOpenOffline }: Props) {
     <View style={styles.container}>
       <StatusBar barStyle="light-content" translucent backgroundColor="transparent" />
 
-      <Camera
-        ref={cameraRef}
-        style={styles.fullScreenCamera}
-        device={device}
-        isActive={true}
-        photo={true}
-        codeScanner={codeScanner}
-        frameProcessor={frameProcessor}
-      />
+      {/* QR SCAN MODE: only codeScanner, no frameProcessor or photo */}
+      {!qrVerified && (
+        <Camera
+          style={styles.fullScreenCamera}
+          device={device}
+          isActive={true}
+          codeScanner={codeScanner}
+        />
+      )}
 
-      <Animated.View 
+      {/* FACE DETECTION MODE: frameProcessor + photo, no codeScanner */}
+      {qrVerified && (
+        <Camera
+          ref={cameraRef}
+          style={styles.fullScreenCamera}
+          device={device}
+          isActive={true}
+          photo={true}
+          frameProcessor={frameProcessor}
+        />
+      )}
+
+      <Animated.View
         style={[
-          styles.snapFlash, 
+          styles.snapFlash,
           { opacity: flashAnim }
-        ]} 
-        pointerEvents="none" 
+        ]}
+        pointerEvents="none"
       />
 
       <View style={styles.cameraTint} pointerEvents="none" />
@@ -836,9 +848,9 @@ export default function ShowQRScan({ onBack, onOpenOffline }: Props) {
             <TouchableOpacity onPress={onBack} style={styles.headerIconButton}>
               <MaterialCommunityIcons name="chevron-left" size={28} color="#fff" />
             </TouchableOpacity>
-            
-            <TouchableOpacity 
-              onPress={onOpenOffline} 
+
+            <TouchableOpacity
+              onPress={onOpenOffline}
               style={[styles.headerIconButton, { marginLeft: 10 }]}
             >
               <MaterialCommunityIcons name="history" size={22} color="#fff" />
@@ -854,14 +866,14 @@ export default function ShowQRScan({ onBack, onOpenOffline }: Props) {
           </View>
 
           <View style={styles.headerRight}>
-            <TouchableOpacity 
+            <TouchableOpacity
               onPress={() => handleOfflineModeChange(!offlineModeEnabled)}
               style={[styles.miniOfflineBadge, offlineModeEnabled && styles.miniOfflineBadgeActive]}
             >
-              <MaterialCommunityIcons 
-                name={offlineModeEnabled ? "cloud-off" : "cloud-check"} 
-                size={18} 
-                color="#fff" 
+              <MaterialCommunityIcons
+                name={offlineModeEnabled ? "cloud-off" : "cloud-check"}
+                size={18}
+                color="#fff"
               />
               <Text style={styles.miniOfflineText}>{offlineModeEnabled ? "OFFLINE" : "ONLINE"}</Text>
             </TouchableOpacity>
@@ -876,7 +888,7 @@ export default function ShowQRScan({ onBack, onOpenOffline }: Props) {
             </Text>
             {!qrVerified && <View style={styles.activeDot} />}
           </View>
-          
+
           {!isClockingOut && (
             <>
               <MaterialCommunityIcons name="chevron-right" size={20} color="rgba(255,255,255,0.4)" />
@@ -939,14 +951,14 @@ export default function ShowQRScan({ onBack, onOpenOffline }: Props) {
                     },
                   ]}
                 />
-                <MaterialCommunityIcons 
-                  name={livenessDetected ? "emoticon-happy-outline" : "face-recognition"} 
-                  size={120} 
-                  color={livenessDetected ? "#28a745" : "rgba(255,255,255,0.2)"} 
+                <MaterialCommunityIcons
+                  name={livenessDetected ? "emoticon-happy-outline" : "face-recognition"}
+                  size={120}
+                  color={livenessDetected ? "#28a745" : "rgba(255,255,255,0.2)"}
                   style={styles.faceIconBackground}
                 />
               </View>
-              <Text style={[styles.scanInstructionText, livenessDetected && {color: '#28a745'}]}>
+              <Text style={[styles.scanInstructionText, livenessDetected && { color: '#28a745' }]}>
                 {livenessDetected ? 'AUTHENTICATED!' : 'SMILE OR BLINK TO START'}
               </Text>
             </View>
@@ -975,7 +987,7 @@ export default function ShowQRScan({ onBack, onOpenOffline }: Props) {
             <View style={styles.welcomeContainer}>
               <Text style={styles.welcomeLabel}>Good Morning,</Text>
               <Text style={styles.welcomeValue}>{welcomeName ?? 'Employee'}</Text>
-              
+
               <View style={[styles.actionTag, { backgroundColor: isClockingOut ? '#C0392B' : '#F27121' }]}>
                 <Text style={styles.actionTagText}>{isClockingOut ? 'CLOCK OUT' : 'CLOCK IN'}</Text>
               </View>
@@ -1026,10 +1038,10 @@ export default function ShowQRScan({ onBack, onOpenOffline }: Props) {
                     modalType === 'success'
                       ? '#d4edda'
                       : modalType === 'warning'
-                      ? '#fff3cd'
-                      : modalType === 'info'
-                      ? '#d1ecf1'
-                      : '#f8d7da',
+                        ? '#fff3cd'
+                        : modalType === 'info'
+                          ? '#d1ecf1'
+                          : '#f8d7da',
                 },
               ]}
             >
@@ -1056,10 +1068,10 @@ export default function ShowQRScan({ onBack, onOpenOffline }: Props) {
                     modalType === 'success'
                       ? '#28a745'
                       : modalType === 'warning'
-                      ? '#ffc107'
-                      : modalType === 'info'
-                      ? '#17a2b8'
-                      : '#dc3545',
+                        ? '#ffc107'
+                        : modalType === 'info'
+                          ? '#17a2b8'
+                          : '#dc3545',
                 },
               ]}
               onPress={closeModal}
@@ -1111,10 +1123,10 @@ const styles = StyleSheet.create({
     paddingTop: 10,
     height: 70,
   },
-  headerLeft: { 
+  headerLeft: {
     flexDirection: 'row',
     alignItems: 'center',
-    width: 100 
+    width: 100
   },
   headerIconButton: {
     width: 42,
