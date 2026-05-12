@@ -12,12 +12,15 @@ import {
   Text,
   TextInput,
   View,
+  Dimensions,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { BACKEND_URL } from '../config/backend';
 import { OFFLINE_MODE_KEY } from '../utils/offlineAttendance';
+import { useTheme, Colors, ThemeType, Theme } from '../config/theme';
 
 const TOUCHLESS_SETTING_KEY = 'settings_touchless_enabled';
+const { width: WINDOW_WIDTH } = Dimensions.get('window');
 
 type Props = {
   onBack: () => void;
@@ -52,13 +55,28 @@ function formatCoordinate(label: string, value?: number) {
 }
 
 function SettingRow({ title, description, extraText = [], action, danger = false, onPress, disabled = false }: SettingRowProps) {
+  const { colors } = useTheme();
+  
   const content = (
-    <View style={[styles.row, disabled && styles.rowDisabled]}>
+    <View style={[
+      styles.row, 
+      { backgroundColor: colors.surface, borderColor: colors.border },
+      disabled && styles.rowDisabled
+    ]}>
       <View style={styles.rowTextBlock}>
-        <Text style={[styles.rowTitle, danger && styles.rowTitleDanger]}>{title}</Text>
-        {description ? <Text style={styles.rowDescription}>{description}</Text> : null}
+        <Text style={[
+          styles.rowTitle, 
+          { color: danger ? '#ef4444' : Colors.powerOrange }
+        ]}>
+          {title}
+        </Text>
+        {description ? (
+          <Text style={[styles.rowDescription, { color: colors.textSecondary }]}>
+            {description}
+          </Text>
+        ) : null}
         {extraText.map((item) => (
-          <Text key={item} style={styles.rowMeta}>
+          <Text key={item} style={[styles.rowMeta, { color: Colors.steelGray }]}>
             {item}
           </Text>
         ))}
@@ -69,7 +87,9 @@ function SettingRow({ title, description, extraText = [], action, danger = false
 
   if (onPress) {
     return (
-      <Pressable onPress={onPress} disabled={disabled} style={styles.rowPressable}>
+      <Pressable onPress={onPress} disabled={disabled} style={({ pressed }) => [
+        { opacity: pressed ? 0.7 : 1 }
+      ]}>
         {content}
       </Pressable>
     );
@@ -79,6 +99,7 @@ function SettingRow({ title, description, extraText = [], action, danger = false
 }
 
 export default function Settings({ onBack }: Props) {
+  const { theme, setTheme, colors } = useTheme();
   const [touchlessEnabled, setTouchlessEnabled] = useState(false);
   const [offlineModeEnabled, setOfflineModeEnabled] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
@@ -120,17 +141,15 @@ export default function Settings({ onBack }: Props) {
       setOfflineModeEnabled(localSettings[OFFLINE_MODE_KEY] === 'true');
 
       const payload = await response.json();
-      if (!response.ok || !payload?.ok) {
-        throw new Error(payload?.message || `Settings request failed (${response.status})`);
+      if (payload?.ok) {
+        setBackendSettings((prev) => ({
+          ...prev,
+          ...payload.settings,
+        }));
+        setIntervalInput(String(payload.settings?.attendance_interval_minutes ?? 5));
       }
-
-      setBackendSettings((prev) => ({
-        ...prev,
-        ...payload.settings,
-      }));
-      setIntervalInput(String(payload.settings?.attendance_interval_minutes ?? 5));
     } catch (error: any) {
-      Alert.alert('Settings', error?.message || 'Failed to load settings.');
+      console.log('Settings load error', error);
     } finally {
       setIsLoading(false);
     }
@@ -147,7 +166,6 @@ export default function Settings({ onBack }: Props) {
       await AsyncStorage.setItem(TOUCHLESS_SETTING_KEY, value ? 'true' : 'false');
     } catch {
       setTouchlessEnabled(!value);
-      Alert.alert('Touchless', 'Failed to save touchless setting.');
     } finally {
       setIsSavingTouchless(false);
     }
@@ -160,7 +178,6 @@ export default function Settings({ onBack }: Props) {
       await AsyncStorage.setItem(OFFLINE_MODE_KEY, value ? 'true' : 'false');
     } catch {
       setOfflineModeEnabled(!value);
-      Alert.alert('Offline Mode', 'Failed to save offline mode setting.');
     } finally {
       setIsSavingOfflineMode(false);
     }
@@ -195,7 +212,7 @@ export default function Settings({ onBack }: Props) {
     try {
       const permission = await Location.requestForegroundPermissionsAsync();
       if (permission.status !== 'granted') {
-        throw new Error('Location permission is required to set the attendance location.');
+        throw new Error('Location permission is required.');
       }
 
       const position = await Location.getCurrentPositionAsync({
@@ -208,9 +225,9 @@ export default function Settings({ onBack }: Props) {
         longitude: position.coords.longitude,
       });
 
-      Alert.alert('Attendance Location', 'Attendance location updated successfully.');
+      Alert.alert('Success', 'Attendance location updated.');
     } catch (error: any) {
-      Alert.alert('Attendance Location', error?.message || 'Failed to update attendance location.');
+      Alert.alert('Error', error?.message || 'Failed to update location.');
     } finally {
       setIsSavingLocation(false);
     }
@@ -230,63 +247,41 @@ export default function Settings({ onBack }: Props) {
   const closeDialog = useCallback(() => {
     if (isSubmittingDialog) return;
     setDialogMode(null);
-    setCurrentPassword('');
-    setNewPassword('');
   }, [isSubmittingDialog]);
 
   const handleDialogSubmit = useCallback(async () => {
     if (!dialogMode) return;
-
     setIsSubmittingDialog(true);
     try {
       if (dialogMode === 'password') {
-        if (!currentPassword.trim() || !newPassword.trim()) {
-          throw new Error('Enter both current and new admin password.');
-        }
-
         await saveBackendSettings({
           action: 'change_admin_password',
           current_password: currentPassword,
           new_password: newPassword,
         });
-        Alert.alert('Admin Password', 'Admin password updated successfully.');
-      }
-
-      if (dialogMode === 'interval') {
-        const parsed = Number(intervalInput);
-        if (!Number.isInteger(parsed) || parsed < 1) {
-          throw new Error('Attendance interval must be a whole number greater than 0.');
-        }
-
+      } else if (dialogMode === 'interval') {
         await saveBackendSettings({
           action: 'set_interval',
-          interval_minutes: parsed,
+          interval_minutes: Number(intervalInput),
         });
-        setIntervalInput(String(parsed));
-        Alert.alert('Attendance Interval', 'Attendance interval updated successfully.');
       }
-
       closeDialog();
     } catch (error: any) {
-      Alert.alert('Settings', error?.message || 'Failed to save setting.');
+      Alert.alert('Error', error?.message || 'Failed to save.');
     } finally {
       setIsSubmittingDialog(false);
     }
   }, [closeDialog, currentPassword, dialogMode, intervalInput, newPassword, saveBackendSettings]);
 
   const handleLogout = useCallback(() => {
-    Alert.alert('Logout', 'Clear the current stored session and return to the home screen?', [
+    Alert.alert('Logout', 'Are you sure?', [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Logout',
         style: 'destructive',
         onPress: async () => {
-          try {
-            await AsyncStorage.multiRemove(['userId', 'username', 'emp_id']);
-            onBack();
-          } catch {
-            Alert.alert('Logout', 'Failed to clear local session.');
-          }
+          await AsyncStorage.multiRemove(['userId', 'username', 'emp_id']);
+          onBack();
         },
       },
     ]);
@@ -294,129 +289,155 @@ export default function Settings({ onBack }: Props) {
 
   if (isLoading) {
     return (
-      <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
+      <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]}>
         <View style={styles.loadingWrap}>
-          <ActivityIndicator size="large" color="#cf8d8f" />
-          <Text style={styles.loadingText}>Loading settings...</Text>
+          <ActivityIndicator size="large" color={Colors.powerOrange} />
         </View>
       </SafeAreaView>
     );
   }
 
   return (
-    <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
-      <View style={styles.container}>
-        <View style={styles.header}>
-          <Pressable onPress={onBack} style={styles.backButton}>
-            <Text style={styles.backArrow}>{'<'}</Text>
-          </Pressable>
-          <Text style={styles.headerTitle}>Settings</Text>
-        </View>
-
-        <ScrollView contentContainerStyle={styles.listContent} showsVerticalScrollIndicator={false}>
-          <SettingRow
-            title="Touchless"
-            description="Enable take picture without tap button in application"
-            action={
-              <View style={styles.switchWrap}>
-                {isSavingTouchless ? <ActivityIndicator size="small" color="#cf8d8f" /> : null}
-                <Switch
-                  value={touchlessEnabled}
-                  onValueChange={handleTouchlessChange}
-                  trackColor={{ false: '#d8dde6', true: '#e9b8b5' }}
-                  thumbColor="#f7f8fb"
-                  ios_backgroundColor="#d8dde6"
-                />
-              </View>
-            }
-          />
-
-          <SettingRow
-            title="Offline Mode"
-            description="Use local QR and face capture first, then insert attendance into the database only when you press sync"
-            action={
-              <View style={styles.switchWrap}>
-                {isSavingOfflineMode ? <ActivityIndicator size="small" color="#cf8d8f" /> : null}
-                <Switch
-                  value={offlineModeEnabled}
-                  onValueChange={handleOfflineModeChange}
-                  trackColor={{ false: '#d8dde6', true: '#e9b8b5' }}
-                  thumbColor="#f7f8fb"
-                  ios_backgroundColor="#d8dde6"
-                />
-              </View>
-            }
-          />
-
-          <SettingRow title="Admin Password" description="Tap here to change Admin Password" onPress={openPasswordDialog} />
-
-          <SettingRow
-            title="Attendance Location"
-            description={isSavingLocation ? 'Updating attendance location...' : 'Set Attendance Location'}
-            extraText={locationLines}
-            onPress={handleSetAttendanceLocation}
-            disabled={isSavingLocation}
-            action={isSavingLocation ? <ActivityIndicator size="small" color="#cf8d8f" /> : null}
-          />
-
-          <SettingRow
-            title="Attendance Interval"
-            description={`Sending attendance data interval in minutes${typeof backendSettings.attendance_interval_minutes === 'number' ? ` (${backendSettings.attendance_interval_minutes} min)` : ''}`}
-            onPress={openIntervalDialog}
-          />
-
-          <SettingRow title="Logout" danger onPress={handleLogout} />
-        </ScrollView>
+    <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]} edges={['top', 'left', 'right']}>
+      <View style={styles.header}>
+        <Pressable onPress={onBack} style={styles.backButton}>
+          <Text style={[styles.backArrow, { color: colors.text }]}>{'<'}</Text>
+        </Pressable>
+        <Text style={[styles.headerTitle, { color: colors.text }]}>Kiosk Configuration</Text>
       </View>
 
+      <ScrollView contentContainerStyle={styles.listContent} showsVerticalScrollIndicator={false}>
+      <View style={styles.sectionContainer}>
+
+           <SettingRow
+          title="Touchless Mode"
+          description="Enable automatic face capture without manual trigger"
+          action={
+            <Switch
+              value={touchlessEnabled}
+              onValueChange={handleTouchlessChange}
+              trackColor={{ false: Colors.steelGray, true: Colors.powerOrange }}
+              thumbColor="#ffffff"
+            />
+          }
+        />
+
+
+        <SettingRow
+          title="Sync Location"
+          description="Click to synchronize kiosk with current physical coordinates"
+          extraText={locationLines}
+          onPress={handleSetAttendanceLocation}
+          disabled={isSavingLocation}
+          action={isSavingLocation ? <ActivityIndicator size="small" color={Colors.powerOrange} /> : null}
+        />
+
+        <SettingRow
+          title="Reporting Interval"
+          description={`Click to set the data sync frequency (currently set to ${backendSettings.attendance_interval_minutes} minutes)`}
+          onPress={openIntervalDialog}
+        />
+
+        <SettingRow 
+          title="Administrative Access" 
+          description="Click to update the secure admin password" 
+          onPress={openPasswordDialog} 
+        />
+
+        <SettingRow
+          title="Offline Redundancy"
+          description="Buffer attendance locally when network is unstable"
+          action={
+            <Switch
+              value={offlineModeEnabled}
+              onValueChange={handleOfflineModeChange}
+              trackColor={{ false: Colors.steelGray, true: Colors.powerOrange }}
+              thumbColor="#ffffff"
+            />
+          }
+        />
+
+        <View style={[styles.themeSection, { borderColor: colors.border }]}>
+          <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>APPLICATION THEME</Text>
+          <View style={styles.themeGrid}>
+            {(['light', 'dark', 'industrial', 'midnight'] as ThemeType[]).map((t) => (
+              <Pressable 
+                key={t}
+                onPress={() => setTheme(t)}
+                style={[
+                  styles.themeOption, 
+                  { 
+                    backgroundColor: Theme[t].background, 
+                    borderColor: theme === t ? Colors.powerOrange : colors.border 
+                  }
+                ]}
+              >
+                <View style={[styles.themePreview, { backgroundColor: Theme[t].surface }]} />
+                <Text style={[
+                  styles.themeLabel, 
+                  { color: Theme[t].text }
+                ]}>
+                  {t.toUpperCase()}
+                </Text>
+                {theme === t && <View style={styles.themeActiveDot} />}
+              </Pressable>
+            ))}
+          </View>
+        </View>
+
+        <SettingRow title="System Logout" danger onPress={handleLogout} />
+      </View>
+      </ScrollView>
       <Modal visible={dialogMode !== null} transparent animationType="fade" onRequestClose={closeDialog}>
         <View style={styles.modalOverlay}>
-          <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>{dialogMode === 'password' ? 'Change Admin Password' : 'Attendance Interval'}</Text>
+          <View style={[styles.modalCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+            <Text style={[styles.modalTitle, { color: colors.text }]}>
+              {dialogMode === 'password' ? 'Administrative Access' : 'Reporting Interval'}
+            </Text>
 
             {dialogMode === 'password' ? (
               <>
                 <TextInput
-                  style={styles.input}
-                  placeholder="Current admin password"
-                  placeholderTextColor="#b4bccb"
+                  style={[styles.input, { backgroundColor: colors.background, color: colors.text, borderColor: colors.border }]}
+                  placeholder="Current Password"
+                  placeholderTextColor={colors.textSecondary}
                   value={currentPassword}
                   onChangeText={setCurrentPassword}
                   secureTextEntry
                 />
                 <TextInput
-                  style={styles.input}
-                  placeholder="New admin password"
-                  placeholderTextColor="#b4bccb"
+                  style={[styles.input, { backgroundColor: colors.background, color: colors.text, borderColor: colors.border }]}
+                  placeholder="New Secure Password"
+                  placeholderTextColor={colors.textSecondary}
                   value={newPassword}
                   onChangeText={setNewPassword}
                   secureTextEntry
                 />
-                <Text style={styles.modalHint}>Default admin password: `admin123`</Text>
               </>
             ) : (
-              <>
-                <TextInput
-                  style={styles.input}
-                  placeholder="Minutes"
-                  placeholderTextColor="#b4bccb"
-                  value={intervalInput}
-                  onChangeText={setIntervalInput}
-                  keyboardType="number-pad"
-                />
-                <Text style={styles.modalHint}>Choose how often attendance data should be sent.</Text>
-              </>
+              <TextInput
+                style={[styles.input, { backgroundColor: colors.background, color: colors.text, borderColor: colors.border }]}
+                placeholder="Minutes (1-60)"
+                placeholderTextColor={colors.textSecondary}
+                value={intervalInput}
+                onChangeText={setIntervalInput}
+                keyboardType="number-pad"
+              />
             )}
 
             <View style={styles.modalActions}>
-              <Pressable style={[styles.modalButton, styles.modalButtonSecondary]} onPress={closeDialog} disabled={isSubmittingDialog}>
-                <Text style={styles.modalButtonSecondaryText}>Cancel</Text>
+              <Pressable style={[styles.modalButton, { backgroundColor: colors.background }]} onPress={closeDialog}>
+                <Text style={{ color: colors.textSecondary, fontWeight: '700' }}>CANCEL</Text>
               </Pressable>
-              <Pressable style={[styles.modalButton, styles.modalButtonPrimary]} onPress={handleDialogSubmit} disabled={isSubmittingDialog}>
+              <Pressable 
+                style={[styles.modalButton, { backgroundColor: Colors.powerOrange }]} 
+                onPress={handleDialogSubmit}
+                disabled={isSubmittingDialog}
+              >
                 {isSubmittingDialog ? (
                   <ActivityIndicator size="small" color="#fff" />
                 ) : (
-                  <Text style={styles.modalButtonPrimaryText}>Save</Text>
+                  <Text style={{ color: '#fff', fontWeight: '800' }}>SAVE CHANGES</Text>
                 )}
               </Pressable>
             </View>
@@ -430,162 +451,174 @@ export default function Settings({ onBack }: Props) {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: '#f7f8fb',
-  },
-  container: {
-    flex: 1,
-    backgroundColor: '#f7f8fb',
   },
   loadingWrap: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 12,
-  },
-  loadingText: {
-    color: '#6c7382',
-    fontSize: 16,
   },
   header: {
-    height: 74,
+    height: 90,
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 20,
-    backgroundColor: '#f7f8fb',
+    paddingHorizontal: 32,
     borderBottomWidth: 1,
-    borderBottomColor: '#edf0f5',
+    borderBottomColor: 'rgba(0,0,0,0.05)',
   },
   backButton: {
-    width: 40,
-    height: 40,
+    width: 50,
+    height: 50,
     alignItems: 'center',
     justifyContent: 'center',
-    marginRight: 12,
+    marginRight: 15,
   },
   backArrow: {
-    fontSize: 28,
-    color: '#4a5060',
-    lineHeight: 30,
+    fontSize: 32,
+    fontWeight: '300',
   },
   headerTitle: {
-    fontSize: 22,
-    fontWeight: '500',
-    color: '#273142',
+    fontSize: 26,
+    fontWeight: '800',
+    letterSpacing: -0.5,
   },
   listContent: {
-    paddingTop: 12,
-    paddingBottom: 24,
+    paddingBottom: 40,
   },
-  rowPressable: {
-    backgroundColor: '#fbfcfe',
+  sectionContainer: {
+    paddingHorizontal: 32,
+    paddingTop: 20,
+    gap: 16,
   },
   row: {
-    minHeight: 102,
+    minHeight: 110,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 28,
-    paddingVertical: 18,
-    backgroundColor: '#fbfcfe',
-    borderBottomWidth: 1,
-    borderBottomColor: '#edf0f5',
+    paddingVertical: 20,
+    borderRadius: 24,
+    borderWidth: 1.5,
+    shadowColor: '#000',
+    shadowOpacity: 0.03,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 2,
   },
   rowDisabled: {
-    opacity: 0.72,
+    opacity: 0.5,
   },
   rowTextBlock: {
     flex: 1,
-    paddingRight: 16,
+    paddingRight: 20,
   },
   rowTitle: {
-    fontSize: 24,
-    fontWeight: '500',
-    color: '#d38d8a',
-    marginBottom: 8,
-  },
-  rowTitleDanger: {
-    marginBottom: 0,
+    fontSize: 22,
+    fontWeight: '800',
+    marginBottom: 6,
+    letterSpacing: -0.2,
   },
   rowDescription: {
-    fontSize: 17,
-    color: '#c6ccda',
-    lineHeight: 24,
+    fontSize: 15,
+    fontWeight: '500',
+    lineHeight: 20,
   },
   rowMeta: {
-    fontSize: 17,
-    color: '#bfc6d6',
-    lineHeight: 24,
-    marginTop: 4,
+    fontSize: 14,
+    fontWeight: '700',
+    marginTop: 8,
+    fontFamily: 'monospace',
   },
   rowAction: {
-    marginLeft: 12,
-  },
-  switchWrap: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
+    marginLeft: 10,
   },
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(30, 39, 55, 0.36)',
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
     justifyContent: 'center',
-    paddingHorizontal: 24,
+    alignItems: 'center',
+    padding: 40,
   },
   modalCard: {
-    backgroundColor: '#fff',
-    borderRadius: 24,
-    padding: 22,
+    width: '100%',
+    maxWidth: 550,
+    borderRadius: 32,
+    padding: 35,
+    borderWidth: 1,
   },
   modalTitle: {
-    fontSize: 22,
-    fontWeight: '600',
-    color: '#273142',
-    marginBottom: 16,
+    fontSize: 28,
+    fontWeight: '900',
+    marginBottom: 25,
+    textAlign: 'center',
   },
   input: {
-    borderWidth: 1,
-    borderColor: '#e4e8ef',
-    borderRadius: 14,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    fontSize: 16,
-    color: '#273142',
-    marginBottom: 12,
-    backgroundColor: '#fafbfd',
-  },
-  modalHint: {
-    color: '#8b93a3',
-    fontSize: 14,
-    lineHeight: 20,
+    borderRadius: 18,
+    paddingHorizontal: 20,
+    paddingVertical: 18,
+    fontSize: 18,
+    fontWeight: '600',
+    marginBottom: 15,
+    borderWidth: 1.5,
   },
   modalActions: {
     flexDirection: 'row',
-    justifyContent: 'flex-end',
-    marginTop: 22,
-    gap: 10,
+    justifyContent: 'space-between',
+    marginTop: 25,
+    gap: 15,
   },
   modalButton: {
-    minWidth: 96,
-    borderRadius: 12,
-    paddingVertical: 12,
-    paddingHorizontal: 18,
+    flex: 1,
+    height: 65,
+    borderRadius: 18,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  modalButtonSecondary: {
-    backgroundColor: '#eff2f7',
+  themeSection: {
+    marginTop: 10,
+    padding: 24,
+    borderRadius: 24,
+    borderWidth: 1.5,
   },
-  modalButtonPrimary: {
-    backgroundColor: '#cf8d8f',
+  sectionTitle: {
+    fontSize: 14,
+    fontWeight: '900',
+    letterSpacing: 1.5,
+    marginBottom: 20,
   },
-  modalButtonSecondaryText: {
-    color: '#4e5666',
-    fontSize: 15,
-    fontWeight: '600',
+  themeGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 12,
   },
-  modalButtonPrimaryText: {
-    color: '#fff',
-    fontSize: 15,
-    fontWeight: '600',
+  themeOption: {
+    width: (WINDOW_WIDTH - 120) / 4,
+    minWidth: 80,
+    height: 100,
+    borderRadius: 16,
+    borderWidth: 2,
+    padding: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    position: 'relative',
+  },
+  themePreview: {
+    width: '100%',
+    height: 40,
+    borderRadius: 8,
+    marginBottom: 8,
+  },
+  themeLabel: {
+    fontSize: 10,
+    fontWeight: '800',
+    textAlign: 'center',
+  },
+  themeActiveDot: {
+    position: 'absolute',
+    top: 6,
+    right: 6,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: Colors.powerOrange,
   },
 });

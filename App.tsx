@@ -1,21 +1,33 @@
 import { StatusBar } from 'expo-status-bar';
 import * as ScreenOrientation from 'expo-screen-orientation';
-import { useEffect, useMemo, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { useEffect, useMemo, useState, useCallback } from 'react';
+import { Image, Pressable, StyleSheet, Text, View, Dimensions } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import ShowQRScan from './src/screens/ShowQRScan';
 import EmployeeProfileData from './src/screens/EmployeeProfileData';
 import Settings from './src/screens/Settings';
 import OfflineSync from './src/screens/OfflineSync';
 import { refreshOfflineUserCache } from './src/utils/offlineUsers';
+import { ThemeContext, Theme, getStoredTheme, saveTheme, ThemeType, Colors } from './src/config/theme';
+
+const { width: WINDOW_WIDTH } = Dimensions.get('window');
 
 export default function App() {
   const [screen, setScreen] = useState<'home' | 'qr' | 'profile' | 'settings' | 'offline'>('home');
+  const [theme, setThemeState] = useState<ThemeType>('light');
+
+  const setTheme = useCallback((newTheme: ThemeType) => {
+    setThemeState(newTheme);
+    saveTheme(newTheme);
+  }, []);
+
+  const currentTheme = useMemo(() => Theme[theme], [theme]);
 
   useEffect(() => {
-    // Dynamically unlock screen orientation to prevent tablet letterboxing
     ScreenOrientation.unlockAsync().catch(() => {});
     refreshOfflineUserCache().catch(() => undefined);
+    
+    getStoredTheme().then(setThemeState);
   }, []);
 
   const ScreenComponent = useMemo(() => {
@@ -29,161 +41,217 @@ export default function App() {
   const renderContent = () => {
     if (screen !== 'home') {
       return (
-        <>
+        <View style={{ flex: 1, backgroundColor: currentTheme.background }}>
           {ScreenComponent}
-          <StatusBar style="auto" />
-        </>
+          <StatusBar style={theme === 'light' ? 'dark' : 'light'} />
+        </View>
       );
     }
 
     return (
-      <SafeAreaView style={styles.container}>
-        <View style={styles.backgroundGlowTop} />
-        <View style={styles.backgroundGlowBottom} />
+      <View style={[styles.fullScreenContainer, { backgroundColor: currentTheme.background }]}>
+        <View style={[styles.backgroundGlowTop, { 
+          backgroundColor: theme === 'light' ? 'rgba(230, 112, 38, 0.08)' : 'rgba(230, 112, 38, 0.12)',
+          shadowColor: Colors.powerOrange,
+          shadowRadius: WINDOW_WIDTH > 600 ? 180 : 120,
+          shadowOpacity: 1,
+          shadowOffset: { width: 0, height: 0 },
+          elevation: 0,
+        } as any]} />
+        <View style={[styles.backgroundGlowBottom, { 
+          backgroundColor: theme === 'light' ? 'rgba(113, 112, 116, 0.08)' : 'rgba(113, 112, 116, 0.12)',
+          shadowColor: Colors.steelGray,
+          shadowRadius: WINDOW_WIDTH > 600 ? 160 : 100,
+          shadowOpacity: 1,
+          shadowOffset: { width: 0, height: 0 },
+          elevation: 0,
+        } as any]} />
 
-        <View style={styles.homeCard}>
-          <View style={styles.brandBlock}>
-            <View style={styles.brandRow}>
-              <Text style={[styles.brandText, styles.brandDark]}>TDT</Text>
-              <Text style={[styles.brandText, styles.brandAccent]}>POWER</Text>
-              <Text style={[styles.brandText, styles.brandLight]}>STEEL</Text>
+        <SafeAreaView style={styles.container}>
+          <View style={[styles.homeCard, { 
+            backgroundColor: theme === 'light' ? 'rgba(255, 255, 255, 0.8)' : 'rgba(36, 36, 35, 0.8)', 
+            shadowColor: '#000',
+            shadowOpacity: 0.1,
+            shadowRadius: 20,
+            shadowOffset: { width: 0, height: 10 },
+            elevation: 10,
+          }]}>
+
+            <View style={styles.brandBlock}>
+              <Image 
+                source={require('./assets/tdt-logo.png')} 
+                style={styles.mainLogo} 
+                resizeMode="contain" 
+              />
+              <Text style={[styles.brandSubcopy, { color: currentTheme.textSecondary }]}>Attendance Monitoring System</Text>
             </View>
-            <Text style={styles.brandTagline}>THE NO.1 STEEL SUPPLIER</Text>
-            <Text style={styles.brandSubcopy}>Attendance Monitoring System</Text>
-          </View>
 
-          <View style={styles.buttonStack}>
-            <Pressable style={styles.pillButton} onPress={() => setScreen('qr')}>
-              <Text style={styles.pillText}>SHOW QR SCAN</Text>
-            </Pressable>
-            <Pressable style={styles.pillButton} onPress={() => setScreen('profile')}>
-              <Text style={styles.pillText}>EMPLOYEE PROFILE DATA</Text>
-            </Pressable>
-            <Pressable style={styles.pillButton} onPress={() => setScreen('settings')}>
-              <Text style={styles.pillText}>SETTINGS</Text>
-            </Pressable>
-          </View>
-        </View>
+            <View style={styles.buttonStack}>
+              <Pressable 
+                style={({ pressed }) => [
+                  styles.largeButton, 
+                  { backgroundColor: Colors.powerOrange, shadowColor: Colors.powerOrange },
+                  pressed && { backgroundColor: Colors.deepOrange, transform: [{ scale: 0.98 }] }
+                ]} 
+                onPress={() => setScreen('qr')}
+              >
+                <Text style={styles.largeButtonText}>ATTENDANCE SCANNER</Text>
+              </Pressable>
 
-        <StatusBar style="auto" />
-      </SafeAreaView>
+              <Pressable 
+                style={({ pressed }) => [
+                  styles.secondaryButton, 
+                  { backgroundColor: currentTheme.surface, borderColor: Colors.steelGray },
+                  pressed && { backgroundColor: theme === 'light' ? '#f0f0f0' : '#2a2a29', transform: [{ scale: 0.98 }] }
+                ]} 
+                onPress={() => setScreen('profile')}
+              >
+                <Text style={[styles.secondaryButtonText, { color: currentTheme.text }]}>EMPLOYEE DIRECTORY</Text>
+              </Pressable>
+
+              <Pressable 
+                style={({ pressed }) => [
+                  styles.minimalButton, 
+                  pressed && { opacity: 0.7 }
+                ]} 
+                onPress={() => setScreen('settings')}
+              >
+                <View style={styles.settingsRow}>
+                  <Text style={[styles.settingsIcon, { color: Colors.steelGray }]}>⚙</Text>
+                  <Text style={[styles.minimalButtonText, { color: Colors.steelGray }]}>KIOSK SETTINGS</Text>
+                </View>
+              </Pressable>
+            </View>
+          </View>
+        </SafeAreaView>
+
+        <StatusBar style={theme === 'light' ? 'dark' : 'light'} />
+      </View>
     );
   };
 
   return (
-    <SafeAreaProvider>
-      {renderContent()}
-    </SafeAreaProvider>
+    <ThemeContext.Provider value={{ theme, setTheme, colors: currentTheme }}>
+      <SafeAreaProvider>
+        {renderContent()}
+      </SafeAreaProvider>
+    </ThemeContext.Provider>
   );
 }
 
 const styles = StyleSheet.create({
-  appShell: {
+  fullScreenContainer: {
     flex: 1,
-    backgroundColor: '#d7dde6',
+    overflow: 'hidden',
   },
   container: {
     flex: 1,
-    backgroundColor: '#f6f2ed',
     justifyContent: 'center',
-    paddingHorizontal: 32,
-    overflow: 'hidden',
+    paddingHorizontal: WINDOW_WIDTH > 600 ? 40 : 20,
   },
   backgroundGlowTop: {
     position: 'absolute',
-    top: -120,
-    right: -70,
-    width: 280,
-    height: 280,
-    borderRadius: 140,
-    backgroundColor: 'rgba(200, 116, 46, 0.12)',
+    top: -200,
+    right: -150,
+    width: WINDOW_WIDTH > 600 ? 600 : 400,
+    height: WINDOW_WIDTH > 600 ? 450 : 300,
+    borderRadius: 300,
+    transform: [{ scaleX: 1.5 }, { rotate: '-15deg' }],
   },
   backgroundGlowBottom: {
     position: 'absolute',
-    bottom: -100,
-    left: -50,
-    width: 240,
-    height: 240,
-    borderRadius: 120,
-    backgroundColor: 'rgba(52, 93, 134, 0.10)',
+    bottom: -150,
+    left: -150,
+    width: WINDOW_WIDTH > 600 ? 500 : 350,
+    height: WINDOW_WIDTH > 600 ? 400 : 280,
+    borderRadius: 250,
+    transform: [{ scaleX: 1.8 }, { rotate: '25deg' }],
   },
   homeCard: {
     width: '100%',
-    maxWidth: 760,
+    maxWidth: 850,
     alignSelf: 'center',
-    backgroundColor: '#fffdf9',
-    borderRadius: 34,
-    paddingHorizontal: 26,
-    paddingVertical: 34,
-    borderWidth: 1,
-    borderColor: '#f0e6dc',
-    shadowColor: '#8f5c2a',
-    shadowOpacity: 0.12,
-    shadowRadius: 18,
-    shadowOffset: { width: 0, height: 12 },
-    elevation: 5,
+    borderRadius: 32,
+    paddingHorizontal: WINDOW_WIDTH > 600 ? 40 : 24,
+    paddingVertical: WINDOW_WIDTH > 600 ? 60 : 40,
+    shadowOpacity: 10,
+    elevation:10,
+    borderWidth: 0,
   },
   brandBlock: {
     alignItems: 'center',
-    marginBottom: 34,
+    marginBottom: WINDOW_WIDTH > 600 ? 50 : 30,
   },
-  brandRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    justifyContent: 'center',
-    flexWrap: 'wrap',
-  },
-  brandText: {
-    fontSize: 42,
-    fontWeight: '900',
-    letterSpacing: 0.5,
-  },
-  brandDark: {
-    color: '#575b61',
-  },
-  brandAccent: {
-    color: '#d96f1e',
-    marginHorizontal: 4,
-  },
-  brandLight: {
-    color: '#6d7177',
-  },
-  brandTagline: {
-    marginTop: 4,
-    fontSize: 18,
-    letterSpacing: 2.2,
-    color: '#787d84',
-    fontWeight: '500',
-    textAlign: 'center',
+  mainLogo: {
+    width: WINDOW_WIDTH > 600 ? 380 : 240,
+    height: WINDOW_WIDTH > 600 ? 120 : 80,
+    marginBottom: 20,
   },
   brandSubcopy: {
-    marginTop: 12,
-    fontSize: 15,
-    color: '#8a8179',
-    fontWeight: '600',
+    marginTop: 10,
+    fontSize: WINDOW_WIDTH > 600 ? 18 : 14,
+    fontWeight: '700',
+    letterSpacing: 1.5,
+    textTransform: 'uppercase',
     textAlign: 'center',
   },
   buttonStack: {
-    gap: 18,
+    gap: WINDOW_WIDTH > 600 ? 24 : 16,
     alignItems: 'center',
-  },
-  pillButton: {
     width: '100%',
-    maxWidth: 620,
-    backgroundColor: '#c8742e',
-    borderRadius: 999,
-    paddingVertical: 16,
-    alignItems: 'center',
-    shadowColor: '#000',
-    shadowOpacity: 0.18,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 3,
   },
-  pillText: {
-    color: '#f7f4f0',
-    fontSize: 16,
-    letterSpacing: 0.6,
+  largeButton: {
+    width: '100%',
+    maxWidth: 600,
+    height: WINDOW_WIDTH > 600 ? 90 : 70,
+    borderRadius: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+    // Removed shadows and elevation to keep button flat inside the card
+    elevation: 0,
+    shadowOpacity: 0,
+  },
+  largeButtonText: {
+    color: '#ffffff',
+    fontSize: WINDOW_WIDTH > 600 ? 18 : 15,
+    fontWeight: '800',
+    letterSpacing: 1.2,
+    textAlign: 'center',
+    paddingHorizontal: 10,
+  },
+  secondaryButton: {
+    width: '100%',
+    maxWidth: 600,
+    height: WINDOW_WIDTH > 600 ? 80 : 65,
+    borderRadius: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+  },
+  secondaryButtonText: {
+    fontSize: WINDOW_WIDTH > 600 ? 16 : 14,
+    fontWeight: '700',
+    letterSpacing: 0.8,
+    textAlign: 'center',
+    paddingHorizontal: 10,
+  },
+  minimalButton: {
+    marginTop: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+  },
+  settingsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  settingsIcon: {
+    fontSize: WINDOW_WIDTH > 600 ? 20 : 16,
+  },
+  minimalButtonText: {
+    fontSize: WINDOW_WIDTH > 600 ? 15 : 13,
     fontWeight: '600',
+    letterSpacing: 1,
+    textTransform: 'uppercase',
   },
 });
