@@ -6,13 +6,10 @@
   <component name="ChangeListManager">
     <list default="true" id="c61fd802-3d0b-4601-a359-927ccc48dd2f" name="Changes" comment="">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/App.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/App.tsx" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/app.json" beforeDir="false" afterPath="$PROJECT_DIR$/app.json" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/backend-php/verify.php" beforeDir="false" afterPath="$PROJECT_DIR$/backend-php/verify.php" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/facepp_api.php" beforeDir="false" afterPath="$PROJECT_DIR$/facepp_api.php" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/package-lock.json" beforeDir="false" afterPath="$PROJECT_DIR$/package-lock.json" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/package.json" beforeDir="false" afterPath="$PROJECT_DIR$/package.json" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/screens/ShowQRScan.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/src/screens/ShowQRScan.tsx" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/verify.php" beforeDir="false" afterPath="$PROJECT_DIR$/verify.php" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />

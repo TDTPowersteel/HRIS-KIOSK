@@ -48,3 +48,6 @@ storage/*.json
 
 # memory files
 memory_*.md
+
+#config
+src/config/backend.ts

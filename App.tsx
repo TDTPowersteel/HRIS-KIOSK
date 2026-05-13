@@ -69,10 +69,10 @@ export default function App() {
 
         <SafeAreaView style={styles.container}>
           <View style={[styles.homeCard, { 
-            backgroundColor: theme === 'light' ? 'rgba(255, 255, 255, 0.8)' : 'rgba(36, 36, 35, 0.8)', 
+            backgroundColor: theme === 'light' ? 'rgba(255, 255, 255, 1)' : 'rgba(36, 36, 35, 1)', 
             shadowColor: '#000',
             shadowOpacity: 0.1,
-            shadowRadius: 20,
+            shadowRadius: 10,
             shadowOffset: { width: 0, height: 10 },
             elevation: 10,
           }]}>
@@ -174,9 +174,6 @@ const styles = StyleSheet.create({
     borderRadius: 32,
     paddingHorizontal: WINDOW_WIDTH > 600 ? 40 : 24,
     paddingVertical: WINDOW_WIDTH > 600 ? 60 : 40,
-    shadowOpacity: 10,
-    elevation:10,
-    borderWidth: 0,
   },
   brandBlock: {
     alignItems: 'center',
