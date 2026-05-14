@@ -12,6 +12,7 @@ import { ReportingIntervalFeature } from './features/ReportingIntervalFeature';
 import { AdminAccessFeature } from './features/AdminAccessFeature';
 import { OfflineRedundancyFeature } from './features/OfflineRedundancyFeature';
 import { ThemeSelectorFeature } from './features/ThemeSelectorFeature';
+import { LivenessCheckFeature } from './features/LivenessCheckFeature';
 import { SettingRow } from './components/SettingRow';
 
 const TOUCHLESS_SETTING_KEY = 'settings_touchless_enabled';
@@ -34,6 +35,7 @@ export default function Settings({ onBack }: Props) {
   const [isLoading, setIsLoading] = useState(true);
   const [touchlessEnabled, setTouchlessEnabled] = useState(false);
   const [offlineModeEnabled, setOfflineModeEnabled] = useState(false);
+  const [livenessEnabled, setLivenessEnabled] = useState(true);
   const [backendSettings, setBackendSettings] = useState<BackendSettings>({
     attendance_location: {
       latitude: 14.6130261,
@@ -45,7 +47,7 @@ export default function Settings({ onBack }: Props) {
   const loadSettings = useCallback(async () => {
     try {
       const [settingsEntries, response] = await Promise.all([
-        AsyncStorage.multiGet([TOUCHLESS_SETTING_KEY, OFFLINE_MODE_KEY]),
+        AsyncStorage.multiGet([TOUCHLESS_SETTING_KEY, OFFLINE_MODE_KEY, 'settings_liveness_enabled']),
         fetch(`${BACKEND_URL}/settings.php`, {
           headers: {
             Accept: 'application/json',
@@ -57,6 +59,7 @@ export default function Settings({ onBack }: Props) {
       const localSettings = Object.fromEntries(settingsEntries);
       setTouchlessEnabled(localSettings[TOUCHLESS_SETTING_KEY] === 'true');
       setOfflineModeEnabled(localSettings[OFFLINE_MODE_KEY] === 'true');
+      setLivenessEnabled(localSettings['settings_liveness_enabled'] !== 'false'); // Default to true
 
       const payload = await response.json();
       if (payload?.ok) {
@@ -91,6 +94,15 @@ export default function Settings({ onBack }: Props) {
       await AsyncStorage.setItem(OFFLINE_MODE_KEY, value ? 'true' : 'false');
     } catch {
       setOfflineModeEnabled(!value);
+    }
+  }, []);
+
+  const handleLivenessChange = useCallback(async (value: boolean) => {
+    setLivenessEnabled(value);
+    try {
+      await AsyncStorage.setItem('settings_liveness_enabled', value ? 'true' : 'false');
+    } catch {
+      setLivenessEnabled(!value);
     }
   }, []);
 
@@ -164,6 +176,7 @@ export default function Settings({ onBack }: Props) {
           />
           <AdminAccessFeature saveBackendSettings={saveBackendSettings} />
           <OfflineRedundancyFeature enabled={offlineModeEnabled} onToggle={handleOfflineModeChange} />
+          <LivenessCheckFeature enabled={livenessEnabled} onToggle={handleLivenessChange} />
           <ThemeSelectorFeature />
           
           <SettingRow title="System Logout" danger onPress={handleLogout} />

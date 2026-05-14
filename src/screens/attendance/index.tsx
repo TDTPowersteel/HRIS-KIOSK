@@ -1,6 +1,5 @@
-import React, { useEffect } from 'react';
-import { ActivityIndicator, Text, TouchableOpacity, View, useWindowDimensions } from 'react-native';
-import * as ScreenOrientation from 'expo-screen-orientation';
+import React from 'react';
+import { ActivityIndicator, Text, TouchableOpacity, View } from 'react-native';
 import { styles } from './styles';
 import { useAttendance } from './useAttendance';
 import QRScanView from './QRScanView';
@@ -10,26 +9,6 @@ import type { AttendanceProps } from './types';
 
 export default function AttendanceScanner({ onBack, onOpenOffline }: AttendanceProps) {
   const state = useAttendance();
-  const { width, height } = useWindowDimensions();
-  const isTablet = Math.min(width, height) >= 600;
-
-  useEffect(() => {
-    async function lockOrientation() {
-      try {
-        if (isTablet) {
-          await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE);
-        } else {
-          await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP);
-        }
-      } catch (e) {
-        // Ignore
-      }
-    }
-    lockOrientation();
-    return () => {
-      ScreenOrientation.unlockAsync().catch(() => {});
-    };
-  }, [isTablet]);
 
   if (state.isLoading || !state.device) {
     return (
@@ -88,6 +67,7 @@ export default function AttendanceScanner({ onBack, onOpenOffline }: AttendanceP
           isClockingOut={state.isClockingOut}
           touchlessEnabled={state.touchlessEnabled}
           offlineModeEnabled={state.offlineModeEnabled}
+          livenessEnabled={state.livenessEnabled}
           pendingSyncCount={state.pendingSyncCount}
           faceCountdown={state.faceCountdown}
           clockInTime={state.clockInTime}

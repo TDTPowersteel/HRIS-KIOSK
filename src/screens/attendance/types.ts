@@ -1,5 +1,6 @@
 export const ATTENDANCE_SESSIONS_KEY = 'attendance_active_sessions';
 export const TOUCHLESS_SETTING_KEY = 'settings_touchless_enabled';
+export const LIVENESS_SETTING_KEY = 'settings_liveness_enabled';
 
 export type AttendanceProps = {
   onBack: () => void;

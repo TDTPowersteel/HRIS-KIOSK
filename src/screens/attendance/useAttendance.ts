@@ -35,7 +35,7 @@ export function useAttendance() {
 
   // Refs
   const livenessTriggeredRef = useRef(false);
-  const countdownRef = useRef(3);
+  const countdownRef = useRef(1);
   const autoCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const modalContextRef = useRef<'qr_success' | 'other'>('other');
   const lastScanRef = useRef<{ data: string | null; ts: number }>({ data: null, ts: 0 });
@@ -45,7 +45,7 @@ export function useAttendance() {
   const modalVisibleRef = useRef(false);
 
   // State
-  const [faceCountdown, setFaceCountdown] = useState(3);
+  const [faceCountdown, setFaceCountdown] = useState(1);
   const [countdownActive, setCountdownActive] = useState(false);
   const [currentTime, setCurrentTime] = useState(new Date());
   const [clockInTime, setClockInTime] = useState('');
@@ -58,6 +58,7 @@ export function useAttendance() {
   const [attendanceAction, setAttendanceAction] = useState<'clock_in' | 'clock_out'>('clock_in');
   const [touchlessEnabled, setTouchlessEnabled] = useState(false);
   const [offlineModeEnabled, setOfflineModeEnabled] = useState(false);
+  const [livenessEnabled, setLivenessEnabled] = useState(true);
   const [pendingSyncCount, setPendingSyncCount] = useState(0);
 
   // Modal state
@@ -242,12 +243,17 @@ export function useAttendance() {
     if (!cameraRef.current) throw new Error('Camera not ready');
     const photo1 = await cameraRef.current.takePhoto({ flash: 'off' });
     if (!photo1?.path) throw new Error('No image captured (Shot 1)');
-    await new Promise(resolve => setTimeout(resolve, 600));
-    const photo2 = await cameraRef.current.takePhoto({ flash: 'off' });
-    if (!photo2?.path) throw new Error('No image captured (Shot 2)');
+    
+    let photo2;
+    if (livenessEnabled) {
+      await new Promise(resolve => setTimeout(resolve, 600));
+      photo2 = await cameraRef.current.takePhoto({ flash: 'off' });
+      if (!photo2?.path) throw new Error('No image captured (Shot 2)');
+    }
+    
     if (offlineModeEnabled) return { ok: true, verified: true, offlineCaptured: true, message: 'Face photos captured offline.', photoUri: `file://${photo1.path}` };
-    return verifyFace(`file://${photo1.path}`, `file://${photo2.path}`);
-  }, [offlineModeEnabled]);
+    return verifyFace(`file://${photo1.path}`, photo2 ? `file://${photo2.path}` : undefined);
+  }, [offlineModeEnabled, livenessEnabled]);
 
   const recordAttendance = useCallback(async (action: 'clock_in' | 'clock_out') => {
     const userId = await AsyncStorage.getItem('userId');
@@ -317,7 +323,7 @@ export function useAttendance() {
         showModal('success',
           offlineModeEnabled ? (action === 'clock_in' ? 'Saved For Sync' : 'Clock Out Saved For Sync') : (action === 'clock_in' ? 'Clock In Complete' : 'Clock Out Complete'),
           offlineModeEnabled ? (action === 'clock_in' ? 'Face captured. Saved offline. Press SYNC NOW when ready.' : 'Clock out saved offline. Press SYNC NOW when ready.') : (action === 'clock_in' ? (result?.message || 'Face verified. Attendance recorded.') : (result?.message || 'Face verified. Logout recorded.')),
-          '', touchlessEnabled ? 2000 : undefined);
+          '', touchlessEnabled ? 1000 : undefined);
       } else if (result?.verified === false) {
         faceProcessingRef.current = false;
         livenessTriggeredRef.current = false;
@@ -383,13 +389,13 @@ export function useAttendance() {
       setClockInTime(existingSession?.clockInTime || '');
       setAttendanceAction(existingSession ? 'clock_out' : 'clock_in');
       setQrVerified(true);
-      setFaceCountdown(3);
-      countdownRef.current = 3;
+      setFaceCountdown(1);
+      countdownRef.current = 1;
       livenessTriggeredRef.current = false;
       touchlessTriggeredRef.current = false;
       if (touchlessEnabled) {
         modalContextRef.current = 'qr_success';
-        showModal('success', 'QR Code Verified', existingSession ? `Welcome back, ${resolved.name || resolved.username}! Clock-out starting...` : `Hello, ${resolved.name || resolved.username}! Get ready for face scan.`, '', 2000);
+        showModal('success', 'QR Code Verified', existingSession ? `Welcome back, ${resolved.name || resolved.username}! Clock-out starting...` : `Hello, ${resolved.name || resolved.username}! Get ready for face scan.`, '', 800);
       } else {
         modalContextRef.current = 'qr_success';
         showModal('success', 'QR Code Verified', existingSession ? 'This user already has an active clock-in. Press CLOCK OUT to finish logout.' : 'QR recognized. Face the camera to verify attendance.', 'No need to touch the screen. Just look at the camera!');
@@ -444,11 +450,12 @@ export function useAttendance() {
 
   useEffect(() => {
     let active = true;
-    AsyncStorage.multiGet([TOUCHLESS_SETTING_KEY, OFFLINE_MODE_KEY]).then((entries) => {
+    AsyncStorage.multiGet([TOUCHLESS_SETTING_KEY, OFFLINE_MODE_KEY, 'settings_liveness_enabled']).then((entries) => {
       if (active) {
         const mapped = Object.fromEntries(entries);
         setTouchlessEnabled(mapped[TOUCHLESS_SETTING_KEY] === 'true');
         setOfflineModeEnabled(mapped[OFFLINE_MODE_KEY] === 'true');
+        setLivenessEnabled(mapped['settings_liveness_enabled'] !== 'false'); // Default true
       }
     }).catch(() => {});
     return () => { active = false; };
@@ -495,7 +502,7 @@ export function useAttendance() {
     formattedTime, formattedDate,
     isLoading, isVerifying, isQrLoading, isClockingOut,
     qrVerified, selectedUser, clockInTime: displayClockInTime, faceCountdown,
-    touchlessEnabled, offlineModeEnabled, pendingSyncCount,
+    touchlessEnabled, offlineModeEnabled, livenessEnabled, pendingSyncCount,
     showResultModal, modalType, modalTitle, modalMessage, modalHint,
     closeModal, handleOfflineModeChange, handleAttendance,
   };

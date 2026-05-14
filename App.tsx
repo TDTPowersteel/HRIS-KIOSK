@@ -26,7 +26,6 @@ export default function App() {
   useEffect(() => {
     ScreenOrientation.unlockAsync().catch(() => {});
     refreshOfflineUserCache().catch(() => undefined);
-    
     getStoredTheme().then(setThemeState);
   }, []);
 

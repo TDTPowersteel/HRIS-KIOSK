@@ -26,6 +26,7 @@ type Props = {
   isClockingOut: boolean;
   touchlessEnabled: boolean;
   offlineModeEnabled: boolean;
+  livenessEnabled: boolean;
   pendingSyncCount: number;
   faceCountdown: number;
   clockInTime: string;
@@ -49,6 +50,7 @@ export default function FaceScanView({
   isClockingOut,
   touchlessEnabled,
   offlineModeEnabled,
+  livenessEnabled,
   pendingSyncCount,
   faceCountdown,
   clockInTime,
@@ -73,7 +75,7 @@ export default function FaceScanView({
           device={device}
           isActive={true}
           photo={true}
-          frameProcessor={frameProcessor}
+          frameProcessor={livenessEnabled ? frameProcessor : undefined}
           outputOrientation="device"
           resizeMode="cover"
         />
@@ -279,8 +281,9 @@ export default function FaceScanView({
           device={device}
           isActive={true}
           photo={true}
-          frameProcessor={frameProcessor}
+          frameProcessor={livenessEnabled ? frameProcessor : undefined}
           outputOrientation="device"
+          orientationSource="device"
           resizeMode="cover"
         />
         <Animated.View style={[styles.snapFlash, { opacity: flashAnim }]} pointerEvents="none" />
