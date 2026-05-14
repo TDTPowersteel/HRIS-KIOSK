@@ -68,18 +68,28 @@ export default function EmployeeProfileData({ onBack }: Props) {
 
   useEffect(() => {
     const fetchEmployees = async () => {
+      let responseText = '';
       try {
         setIsLoading(true);
         const response = await fetch(`${BACKEND_URL}/employees.php`);
-        const payload = await response.json();
-        if (payload?.ok && Array.isArray(payload?.data)) {
-          setEmployees(payload.data);
-          setTimeout(() => {
-            refreshOfflineUserCache().catch(() => undefined);
-          }, 100);
+        responseText = await response.text();
+        
+        try {
+          const payload = JSON.parse(responseText);
+          if (payload?.ok && Array.isArray(payload?.data)) {
+            setEmployees(payload.data);
+            setTimeout(() => {
+              refreshOfflineUserCache().catch(() => undefined);
+            }, 100);
+          }
+        } catch (parseError) {
+          console.log('employees.php JSON parse error:', parseError);
+          // Truncate long base64 data in the log to keep it readable
+          const sanitizedResponse = responseText.replace(/"(face|profile_picture|image)":"[^"]{100,}"/g, '"$1":"[face_data]"');
+          console.log('Raw response that failed to parse:', sanitizedResponse);
         }
       } catch (error) {
-        console.log('employees.php fetch error', error);
+        console.log('employees.php fetch error:', error);
       } finally {
         setIsLoading(false);
       }
