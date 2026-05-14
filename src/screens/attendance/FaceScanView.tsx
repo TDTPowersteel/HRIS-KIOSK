@@ -161,14 +161,14 @@ export default function FaceScanView({
                 )}
                 {isVerifying ? (
                   <ActivityIndicator size={80} color="#F27121" style={styles.faceIconBackground} />
-                ) : faceCountdown > 0 ? (
+                ) : (faceCountdown > 0 && touchlessEnabled) ? (
                   <Text style={styles.countdownText}>{faceCountdown}</Text>
                 ) : (
                   <MaterialCommunityIcons name="face-recognition" size={120} color="rgba(255,255,255,0.2)" style={styles.faceIconBackground} />
                 )}
               </View>
               <Text style={styles.scanInstructionText}>
-                {isVerifying ? 'VERIFYING IDENTITY...' : faceCountdown > 0 ? `GET READY... ${faceCountdown}` : 'LOOK AT THE CAMERA'}
+                {isVerifying ? 'VERIFYING IDENTITY...' : (faceCountdown > 0 && touchlessEnabled) ? `GET READY... ${faceCountdown}` : 'LOOK AT THE CAMERA'}
               </Text>
               <Text style={styles.faceHintText}>
                 {isVerifying ? 'Please wait...' : faceCountdown > 0 ? 'Position your face' : 'Face the camera • Keep eyes open • SMILE :)'}
@@ -327,14 +327,14 @@ export default function FaceScanView({
               )}
               {isVerifying ? (
                 <ActivityIndicator size={80} color="#F27121" style={styles.faceIconBackground} />
-              ) : faceCountdown > 0 ? (
+              ) : (faceCountdown > 0 && touchlessEnabled) ? (
                 <Text style={styles.countdownText}>{faceCountdown}</Text>
               ) : (
                 <MaterialCommunityIcons name="face-recognition" size={120} color="rgba(255,255,255,0.2)" style={styles.faceIconBackground} />
               )}
             </View>
             <Text style={styles.scanInstructionTextRight}>
-              {isVerifying ? 'VERIFYING IDENTITY...' : faceCountdown > 0 ? `GET READY... ${faceCountdown}` : 'LOOK AT THE CAMERA'}
+              {isVerifying ? 'VERIFYING IDENTITY...' : (faceCountdown > 0 && touchlessEnabled) ? `GET READY... ${faceCountdown}` : 'LOOK AT THE CAMERA'}
             </Text>
             <Text style={styles.faceHintTextRight}>
               {isVerifying ? 'Please wait while we verify your identity' : faceCountdown > 0 ? 'Position your face inside the frame' : 'Face the camera directly \u2022 Keep eyes open \u2022 Stay still \u2022 SMILE :)'}

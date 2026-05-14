@@ -35,7 +35,7 @@ export function useAttendance() {
 
   // Refs
   const livenessTriggeredRef = useRef(false);
-  const countdownRef = useRef(1);
+  const countdownRef = useRef(3);
   const autoCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const modalContextRef = useRef<'qr_success' | 'other'>('other');
   const lastScanRef = useRef<{ data: string | null; ts: number }>({ data: null, ts: 0 });
@@ -45,7 +45,7 @@ export function useAttendance() {
   const modalVisibleRef = useRef(false);
 
   // State
-  const [faceCountdown, setFaceCountdown] = useState(1);
+  const [faceCountdown, setFaceCountdown] = useState(3);
   const [countdownActive, setCountdownActive] = useState(false);
   const [currentTime, setCurrentTime] = useState(new Date());
   const [clockInTime, setClockInTime] = useState('');
@@ -83,7 +83,7 @@ export function useAttendance() {
   const playSnapSound = async () => {
     try {
       if (snapSound) await snapSound.replayAsync();
-    } catch {}
+    } catch { }
   };
 
   // Modal helpers
@@ -97,7 +97,13 @@ export function useAttendance() {
       setShowResultModal(false);
       scaleAnim.setValue(0);
       if (modalContextRef.current === 'qr_success') {
-        setCountdownActive(true);
+        if (touchlessEnabled) {
+          setCountdownActive(true);
+        } else {
+          setFaceCountdown(0);
+          countdownRef.current = 0;
+          setCountdownActive(false);
+        }
         modalContextRef.current = 'other';
       }
     });
@@ -137,7 +143,7 @@ export function useAttendance() {
       const parsed = raw ? JSON.parse(raw) : {};
       parsed[session.userId] = session;
       await AsyncStorage.setItem(ATTENDANCE_SESSIONS_KEY, JSON.stringify(parsed));
-    } catch {}
+    } catch { }
   }, []);
 
   const clearStoredSession = useCallback(async (userId: string) => {
@@ -145,7 +151,7 @@ export function useAttendance() {
       const raw = await AsyncStorage.getItem(ATTENDANCE_SESSIONS_KEY);
       const parsed = raw ? JSON.parse(raw) : {};
       if (parsed?.[userId]) { delete parsed[userId]; await AsyncStorage.setItem(ATTENDANCE_SESSIONS_KEY, JSON.stringify(parsed)); }
-    } catch {}
+    } catch { }
   }, []);
 
   const resetAttendanceFlow = useCallback(async () => {
@@ -162,7 +168,7 @@ export function useAttendance() {
     touchlessTriggeredRef.current = false;
     qrProcessingRef.current = false;
     faceProcessingRef.current = false;
-    try { await AsyncStorage.multiRemove(['userId', 'username']); } catch {}
+    try { await AsyncStorage.multiRemove(['userId', 'username']); } catch { }
   }, []);
 
   const handleOfflineModeChange = useCallback(async (next: boolean) => {
@@ -210,7 +216,7 @@ export function useAttendance() {
   // Face verify
   const verifyFace = async (photoUri1: string, photoUri2?: string) => {
     let userId = null;
-    try { userId = await AsyncStorage.getItem('userId'); } catch {}
+    try { userId = await AsyncStorage.getItem('userId'); } catch { }
     if (!userId) throw new Error('User not logged in (missing userId). Please log in again.');
     console.log('[Verify] Sending face to backend', { userId, hasLiveness: !!photoUri2 });
     const form = new FormData();
@@ -243,14 +249,14 @@ export function useAttendance() {
     if (!cameraRef.current) throw new Error('Camera not ready');
     const photo1 = await cameraRef.current.takePhoto({ flash: 'off' });
     if (!photo1?.path) throw new Error('No image captured (Shot 1)');
-    
+
     let photo2;
     if (livenessEnabled) {
       await new Promise(resolve => setTimeout(resolve, 600));
       photo2 = await cameraRef.current.takePhoto({ flash: 'off' });
       if (!photo2?.path) throw new Error('No image captured (Shot 2)');
     }
-    
+
     if (offlineModeEnabled) return { ok: true, verified: true, offlineCaptured: true, message: 'Face photos captured offline.', photoUri: `file://${photo1.path}` };
     return verifyFace(`file://${photo1.path}`, photo2 ? `file://${photo2.path}` : undefined);
   }, [offlineModeEnabled, livenessEnabled]);
@@ -262,7 +268,7 @@ export function useAttendance() {
     const res = await fetch(`${BACKEND_URL}/record_attendance.php`, { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'ngrok-skip-browser-warning': 'true' }, body: JSON.stringify({ user_id: userId, action }) });
     const responseText = await res.text();
     let data: any = {};
-    try { data = responseText ? JSON.parse(responseText) : {}; } catch {}
+    try { data = responseText ? JSON.parse(responseText) : {}; } catch { }
     return data;
   }, []);
 
@@ -277,7 +283,7 @@ export function useAttendance() {
       const next = Array.isArray(prev) ? prev : [];
       if (!next.some((x) => x && x.id === id)) next.unshift({ id, date, timein, timestamp: `${date}T${timein}` });
       await AsyncStorage.setItem('attendance_clockins', JSON.stringify(next.slice(0, 20)));
-    } catch {}
+    } catch { }
   }, []);
 
   // Main attendance handler
@@ -321,22 +327,22 @@ export function useAttendance() {
         }
         await resetAttendanceFlow();
         showModal('success',
-          offlineModeEnabled ? (action === 'clock_in' ? 'Saved For Sync' : 'Clock Out Saved For Sync') : (action === 'clock_in' ? 'Clock In Complete' : 'Clock Out Complete'),
-          offlineModeEnabled ? (action === 'clock_in' ? 'Face captured. Saved offline. Press SYNC NOW when ready.' : 'Clock out saved offline. Press SYNC NOW when ready.') : (action === 'clock_in' ? (result?.message || 'Face verified. Attendance recorded.') : (result?.message || 'Face verified. Logout recorded.')),
-          '', touchlessEnabled ? 1000 : undefined);
+          action === 'clock_in' ? 'Clock In Success' : 'Clock Out Success',
+          offlineModeEnabled ? 'Captured and saved offline.' : 'Face verified and recorded.',
+          '', 2000);
       } else if (result?.verified === false) {
         faceProcessingRef.current = false;
         livenessTriggeredRef.current = false;
-        showModal('error', 'Verification Failed', result?.message || 'Face verification failed.', result?.hint || 'Please try again.', touchlessEnabled ? 2000 : undefined);
+        showModal('error', 'Verification Failed', result?.message || 'Face verification failed.', result?.hint || 'Please try again.', 2000);
       } else {
         faceProcessingRef.current = false;
         livenessTriggeredRef.current = false;
-        showModal('error', 'Verification Failed', 'Please try again.', '', touchlessEnabled ? 2000 : undefined);
+        showModal('error', 'Verification Failed', 'Please try again.', '', 2000);
       }
     } catch (e: any) {
       faceProcessingRef.current = false;
       livenessTriggeredRef.current = false;
-      showModal('error', offlineModeEnabled ? 'Offline Mode Error' : 'Connection Error', e?.message || 'Please try again.', offlineModeEnabled ? 'Connect once to refresh employee QR cache.' : 'Check your internet connection', touchlessEnabled ? 2000 : undefined);
+      showModal('error', offlineModeEnabled ? 'Offline Mode Error' : 'Connection Error', e?.message || 'Please try again.', offlineModeEnabled ? 'Connect once to refresh employee QR cache.' : 'Check your internet connection', 2000);
     } finally {
       setIsVerifying(false);
     }
@@ -389,23 +395,23 @@ export function useAttendance() {
       setClockInTime(existingSession?.clockInTime || '');
       setAttendanceAction(existingSession ? 'clock_out' : 'clock_in');
       setQrVerified(true);
-      setFaceCountdown(1);
-      countdownRef.current = 1;
+      setFaceCountdown(3);
+      countdownRef.current = 3;
       livenessTriggeredRef.current = false;
       touchlessTriggeredRef.current = false;
       if (touchlessEnabled) {
         modalContextRef.current = 'qr_success';
-        showModal('success', 'QR Code Verified', existingSession ? `Welcome back, ${resolved.name || resolved.username}! Clock-out starting...` : `Hello, ${resolved.name || resolved.username}! Get ready for face scan.`, '', 800);
+        showModal('success', 'QR Code Verified', existingSession ? `Welcome back, ${resolved.name || resolved.username}! Starting automatic clock-out...` : `Hello, ${resolved.name || resolved.username}! Get ready for automatic face scan.`, 'No need to touch the screen. Just look at the camera!', 2000);
       } else {
         modalContextRef.current = 'qr_success';
-        showModal('success', 'QR Code Verified', existingSession ? 'This user already has an active clock-in. Press CLOCK OUT to finish logout.' : 'QR recognized. Face the camera to verify attendance.', 'No need to touch the screen. Just look at the camera!');
+        showModal('success', 'QR Code Verified', existingSession ? 'QR recognized. Tap CLOCK OUT to finish your session.' : 'QR recognized. Tap CLOCK IN and face the camera.', 'Please follow the on-screen buttons.', 2000);
       }
     } catch (e: any) {
       console.log('[QR] Validation error', e);
       setQrVerified(false);
       qrProcessingRef.current = false;
       setSelectedUser(null);
-      showModal('error', 'QR Validation Error', e?.message || 'Could not validate QR code.', '');
+      showModal('error', 'QR Validation Error', e?.message || 'Could not validate QR code.', '', 2000);
     } finally {
       setIsQrLoading(false);
     }
@@ -424,7 +430,7 @@ export function useAttendance() {
       try {
         const { sound } = await Audio.Sound.createAsync({ uri: 'https://www.soundjay.com/camera/camera-shutter-click-08.mp3' });
         setSnapSound(sound);
-      } catch {}
+      } catch { }
     }
     loadSound();
     return () => { if (snapSound) snapSound.unloadAsync(); };
@@ -448,6 +454,15 @@ export function useAttendance() {
     return () => clearTimeout(timer);
   }, [countdownActive, qrVerified, attendanceAction, isVerifying, faceCountdown]);
 
+  // Automatic trigger for touchless mode when liveness is disabled
+  useEffect(() => {
+    if (touchlessEnabled && !livenessEnabled && qrVerified && faceCountdown === 0 && !isVerifying && !livenessTriggeredRef.current) {
+      livenessTriggeredRef.current = true;
+      playSnapSound();
+      handleAttendance();
+    }
+  }, [touchlessEnabled, livenessEnabled, qrVerified, faceCountdown, isVerifying, handleAttendance]);
+
   useEffect(() => {
     let active = true;
     AsyncStorage.multiGet([TOUCHLESS_SETTING_KEY, OFFLINE_MODE_KEY, 'settings_liveness_enabled']).then((entries) => {
@@ -457,14 +472,14 @@ export function useAttendance() {
         setOfflineModeEnabled(mapped[OFFLINE_MODE_KEY] === 'true');
         setLivenessEnabled(mapped['settings_liveness_enabled'] !== 'false'); // Default true
       }
-    }).catch(() => {});
+    }).catch(() => { });
     return () => { active = false; };
   }, []);
 
   useEffect(() => { if (!hasPermission) requestPermission(); }, [hasPermission, requestPermission]);
   useEffect(() => { const timer = setInterval(() => setCurrentTime(new Date()), 1000); return () => clearInterval(timer); }, []);
   useEffect(() => { refreshPendingSyncCount(); }, [refreshPendingSyncCount]);
-  useEffect(() => { refreshOfflineUserCache().catch(() => {}); }, []);
+  useEffect(() => { refreshOfflineUserCache().catch(() => { }); }, []);
 
   useEffect(() => {
     if (!qrVerified || !touchlessEnabled || isVerifying || touchlessTriggeredRef.current) return;
