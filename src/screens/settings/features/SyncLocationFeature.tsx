@@ -41,12 +41,13 @@ export function SyncLocationFeature({ attendance_location, saveBackendSettings }
     return () => { isMounted = false; };
   }, [attendance_location]);
 
-  const handleSetLocation = useCallback(async () => {
+  const handleSetLocation = useCallback(async (silent = false) => {
     setIsSaving(true);
     try {
       const permission = await Location.requestForegroundPermissionsAsync();
       if (permission.status !== 'granted') {
-        throw new Error('Location permission is required.');
+        if (!silent) throw new Error('Location permission is required.');
+        return;
       }
 
       const position = await Location.getCurrentPositionAsync({
@@ -59,24 +60,32 @@ export function SyncLocationFeature({ attendance_location, saveBackendSettings }
         longitude: position.coords.longitude,
       });
 
-      Alert.alert('Success', 'Attendance location updated.');
+      if (!silent) Alert.alert('Success', 'Attendance location updated.');
     } catch (error: any) {
-      Alert.alert('Error', error?.message || 'Failed to update location.');
+      if (!silent) Alert.alert('Error', error?.message || 'Failed to update location.');
     } finally {
       setIsSaving(false);
     }
   }, [saveBackendSettings]);
 
+  useEffect(() => {
+    if (!attendance_location?.latitude || !attendance_location?.longitude) {
+      handleSetLocation(true);
+    }
+  }, [attendance_location, handleSetLocation]);
+
   const locationLines = useMemo(() => {
     const lat = attendance_location?.latitude;
     const lon = attendance_location?.longitude;
-    const lines = [
-      `Lat : ${lat ? lat.toFixed(7) : 'Not set'}`,
-      `Long : ${lon ? lon.toFixed(7) : 'Not set'}`
-    ];
+    const lines: string[] = [];
+
     if (address) {
       lines.push(`Address : ${address}`);
     }
+
+    lines.push(`Lat : ${lat ? lat.toFixed(7) : 'Not set'}`);
+    lines.push(`Long : ${lon ? lon.toFixed(7) : 'Not set'}`);
+
     return lines;
   }, [attendance_location, address]);
 

@@ -11,7 +11,7 @@ export function LivenessCheckFeature({ enabled, onToggle }: Props) {
   return (
     <SettingRow
       title="Liveness Check"
-      description="When enabled, uses on-device face detection for liveness verification before sending to Face++. When disabled, only Face++ matching is used."
+      description="Confirms a live person is present to prevent using photos or videos for attendance. Turn this off for faster scanning."
       action={
         <Switch
           value={enabled}

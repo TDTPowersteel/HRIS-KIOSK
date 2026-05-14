@@ -160,25 +160,26 @@ export default function Settings({ onBack }: Props) {
         <Pressable onPress={onBack} style={styles.backButton}>
           <Text style={[styles.backArrow, { color: colors.text }]}>{'<'}</Text>
         </Pressable>
-        <Text style={[styles.headerTitle, { color: colors.text }]}>Kiosk Configuration</Text>
+        <Text style={[styles.headerTitle, { color: colors.text }]}>Settings</Text>
       </View>
 
       <ScrollView contentContainerStyle={styles.listContent} showsVerticalScrollIndicator={false}>
         <View style={styles.sectionContainer}>
+
           <TouchlessModeFeature enabled={touchlessEnabled} onToggle={handleTouchlessChange} />
-          <SyncLocationFeature 
-            attendance_location={backendSettings.attendance_location} 
-            saveBackendSettings={saveBackendSettings} 
+          <LivenessCheckFeature enabled={livenessEnabled} onToggle={handleLivenessChange} />
+          <SyncLocationFeature
+            attendance_location={backendSettings.attendance_location}
+            saveBackendSettings={saveBackendSettings}
           />
-          <ReportingIntervalFeature 
-            currentInterval={backendSettings.attendance_interval_minutes ?? 5} 
-            saveBackendSettings={saveBackendSettings} 
+          <ReportingIntervalFeature
+            currentInterval={backendSettings.attendance_interval_minutes ?? 5}
+            saveBackendSettings={saveBackendSettings}
           />
           <AdminAccessFeature saveBackendSettings={saveBackendSettings} />
           <OfflineRedundancyFeature enabled={offlineModeEnabled} onToggle={handleOfflineModeChange} />
-          <LivenessCheckFeature enabled={livenessEnabled} onToggle={handleLivenessChange} />
+
           <ThemeSelectorFeature />
-          
           <SettingRow title="System Logout" danger onPress={handleLogout} />
         </View>
       </ScrollView>
