@@ -51,3 +51,4 @@ memory_*.md
 
 #config
 src/config/backend.ts
+./idea/*

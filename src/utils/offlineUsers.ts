@@ -8,23 +8,30 @@ export type CachedOfflineUser = {
   username: string;
   name?: string | null;
   qrCode?: string | null;
+  profile_picture?: string | null;
+  role?: string | null;
+  department?: string | null;
 };
 
 type EmployeesPayload = {
   ok?: boolean;
   data?: Array<{
     name?: string | null;
+    role?: string | null;
     log_id?: number | string | null;
+    departments?: { name?: string | null } | null;
     accounts?:
       | {
           log_id?: number | string | null;
           username?: string | null;
           qr_code?: string | null;
+          profile_picture?: string | null;
         }
       | Array<{
           log_id?: number | string | null;
           username?: string | null;
           qr_code?: string | null;
+          profile_picture?: string | null;
         }>
       | null;
   }>;
@@ -77,39 +84,58 @@ export async function saveOfflineUserCache(users: CachedOfflineUser[]): Promise<
   await AsyncStorage.setItem(OFFLINE_USER_CACHE_KEY, JSON.stringify(users));
 }
 
+export async function clearOfflineUserCache(): Promise<void> {
+  await AsyncStorage.removeItem(OFFLINE_USER_CACHE_KEY);
+}
+
 export async function refreshOfflineUserCache(): Promise<CachedOfflineUser[]> {
-  const response = await fetch(`${BACKEND_URL}/employees.php`, {
-    headers: {
-      Accept: 'application/json',
-      'ngrok-skip-browser-warning': 'true',
-    },
-  });
+  let responseText = '';
+  try {
+    const response = await fetch(`${BACKEND_URL}/employees.php`, {
+      headers: {
+        Accept: 'application/json',
+        'ngrok-skip-browser-warning': 'true',
+      },
+    });
 
-  const payload = (await response.json()) as EmployeesPayload;
-  if (!response.ok || !payload?.ok || !Array.isArray(payload.data)) {
-    throw new Error('Unable to refresh offline user cache');
+    responseText = await response.text();
+    const payload = JSON.parse(responseText) as EmployeesPayload;
+
+    if (!response.ok || !payload?.ok || !Array.isArray(payload.data)) {
+      throw new Error('Unable to refresh offline user cache');
+    }
+
+    const users = payload.data
+      .map((employee): CachedOfflineUser | null => {
+        const account = normalizeAccount(employee.accounts as any);
+        const userId = String(account?.log_id ?? employee.log_id ?? '').trim();
+        const username = String(account?.username ?? '').trim();
+
+        if (!userId || !username) {
+          return null;
+        }
+        return {
+          userId,
+          username,
+          name: employee.name,
+          role: employee.role ?? '',
+          profilePicture: account?.profile_picture ?? null,
+          qrCode: account?.qr_code ?? null,
+        };
+      })
+      .filter((u): u is CachedOfflineUser => u !== null);
+
+    await saveOfflineUserCache(users);
+    return users;
+  } catch (error) {
+    console.error('refreshOfflineUserCache error:', error);
+    if (responseText) {
+      // Truncate long base64 data in the log to keep it readable
+      const sanitizedResponse = responseText.replace(/"(face|profile_picture|image)":"[^"]{100,}"/g, '"$1":"[face_data]"');
+      console.error('Raw response that failed to parse:', sanitizedResponse);
+    }
+    throw error;
   }
-
-  const users = payload.data
-    .map((employee): CachedOfflineUser | null => {
-      const account = normalizeAccount(employee.accounts);
-      const userId = String(account?.log_id ?? employee.log_id ?? '').trim();
-      const username = String(account?.username ?? '').trim();
-
-      if (!userId || !username) {
-        return null;
-      }
-      return {
-        userId,
-        username,
-        name: employee.name ?? null,
-        qrCode: account?.qr_code?.trim() || null,
-      };
-    })
-    .filter((item): item is CachedOfflineUser => item !== null);
-
-  await saveOfflineUserCache(users);
-  return users;
 }
 
 export async function resolveOfflineUserFromQr(qrData: string): Promise<CachedOfflineUser | null> {

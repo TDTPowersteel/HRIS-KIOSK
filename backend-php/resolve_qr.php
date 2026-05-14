@@ -3,6 +3,7 @@
 
 ini_set('display_errors', '0');
 ini_set('display_startup_errors', '0');
+ini_set('memory_limit', '512M');
 error_reporting(E_ALL);
 ob_start();
 
@@ -140,63 +141,42 @@ $department = null;
 if ($resolvedLogId) {
     // First get basic employee data
     $employeeQuery = "rest/v1/employees?log_id=eq." . urlencode($resolvedLogId) . "&select=name,role,dept_id";
-    error_log("resolve_qr.php: DEBUG - Employee query URL: $employeeQuery");
 
     [$s2, $empRows, $e2] = supabase_request(
         'GET',
         $employeeQuery
     );
 
-    error_log("resolve_qr.php: DEBUG - Employee query raw response: " . json_encode($empRows));
-    error_log("resolve_qr.php: Basic employee query - Status: $s2, Error: " . ($e2 ?: 'none') . ", Rows: " . count($empRows ?? []));
 
     // Debug: Get all departments to see table structure
-    error_log("resolve_qr.php: DEBUG - Getting all departments to check table structure");
     $tableQueries = [
         "rest/v1/departments?select=*&limit=10",
         "rest/v1/department?select=*&limit=10"
     ];
 
     foreach ($tableQueries as $index => $query) {
-        error_log("resolve_qr.php: DEBUG - Trying table query " . ($index + 1) . ": $query");
         [$allDeptStatus, $allDeptRows, $allDeptError] = supabase_request('GET', $query);
-        error_log("resolve_qr.php: DEBUG - Table query " . ($index + 1) . " status: $allDeptStatus, error: " . ($allDeptError ?: 'none') . ", rows: " . count($allDeptRows ?? []));
 
         if ($allDeptRows && count($allDeptRows) > 0) {
-            error_log("resolve_qr.php: DEBUG - Found table with query " . ($index + 1));
-            error_log("resolve_qr.php: DEBUG - Sample department row: " . json_encode($allDeptRows[0]));
-            error_log("resolve_qr.php: DEBUG - Department table columns: " . implode(', ', array_keys($allDeptRows[0])));
-            error_log("resolve_qr.php: DEBUG - First 3 departments: " . json_encode(array_slice($allDeptRows, 0, 3)));
             break;
         }
     }
 
     if ($empRows && count($empRows) > 0) {
         $employee = $empRows[0];
-        error_log("resolve_qr.php: DEBUG - Employee data: " . json_encode($employee));
-        error_log("resolve_qr.php: DEBUG - Employee keys: " . implode(', ', array_keys($employee)));
-        error_log("resolve_qr.php: DEBUG - dept_id value: " . ($employee['dept_id'] ?? 'NOT SET'));
-        error_log("resolve_qr.php: DEBUG - dept_id type: " . gettype($employee['dept_id'] ?? null));
     }
 
     if (!$e2 && is_array($empRows) && count($empRows) > 0) {
         $employee = $empRows[0];
-        error_log("resolve_qr.php: Basic employee data: " . json_encode($employee));
 
         $displayName = normalize_value($employee['name'] ?? null);
         $role = normalize_value($employee['role'] ?? null);
         $deptId = $employee['dept_id'] ?? null;
 
-        error_log("resolve_qr.php: DEBUG - employee array keys: " . implode(", ", array_keys($employee)));
-        error_log("resolve_qr.php: DEBUG - dept_id value: " . var_export($deptId, true));
-        error_log("resolve_qr.php: DEBUG - dept_id type: " . gettype($deptId));
-        error_log("resolve_qr.php: DEBUG - dept_id is_null: " . var_export(is_null($deptId), true));
-        error_log("resolve_qr.php: DEBUG - dept_id is_empty: " . var_export(empty($deptId), true));
 
         // Get department name if dept_id exists
         $department = null;
         if ($deptId) {
-            error_log("resolve_qr.php: DEBUG - Looking up department with id: '$deptId'");
 
             // Try the actual departments table schema you showed: dept_id key and name column.
             $deptQueries = [
@@ -205,20 +185,15 @@ if ($resolvedLogId) {
             ];
 
             foreach ($deptQueries as $index => $query) {
-                error_log("resolve_qr.php: DEBUG - Trying department query " . ($index + 1) . ": $query");
                 [$s3, $deptRows, $e3] = supabase_request('GET', $query);
-                error_log("resolve_qr.php: DEBUG - Query " . ($index + 1) . " status: $s3, error: " . ($e3 ?: 'none') . ", rows: " . count($deptRows ?? []));
 
                 if (!$e3 && is_array($deptRows) && count($deptRows) > 0) {
-                    error_log("resolve_qr.php: DEBUG - Found department with query " . ($index + 1) . ": " . json_encode($deptRows[0]));
                     $department = normalize_value($deptRows[0]['name'] ?? null);
                     break; // Stop trying other queries once we find a match
                 }
             }
 
-            error_log("resolve_qr.php: Department query - dept_id: $deptId, department: '$department'");
         } else {
-            error_log("resolve_qr.php: DEBUG - dept_id is empty or null");
         }
 
         // Get profile picture
@@ -230,15 +205,12 @@ if ($resolvedLogId) {
         if (!$e4 && is_array($accountRows) && count($accountRows) > 0) {
             $profilePicture = normalize_value($accountRows[0]['profile_picture'] ?? null);
         }
-        error_log("resolve_qr.php: Account query - profile_picture: '$profilePicture'");
 
-        error_log("resolve_qr.php: Final processed values - name: '$displayName', role: '$role', department: '$department', profile_picture: '$profilePicture'");
     } else {
-        error_log("resolve_qr.php: No employee data found for log_id: $resolvedLogId");
     }
 }
 
-echo json_encode([
+$jsonResponse = json_encode([
     'ok' => true,
     'user' => [
         'log_id' => $resolvedLogId,
@@ -250,17 +222,8 @@ echo json_encode([
     ],
 ]);
 
-error_log("resolve_qr.php: Final response: " . json_encode([
-    'ok' => true,
-    'user' => [
-        'log_id' => $resolvedLogId,
-        'username' => $resolvedUsername,
-        'name' => $displayName,
-        'profile_picture' => $profilePicture,
-        'role' => $role,
-        'department' => $department,
-    ],
-]));
+header('Content-Length: ' . strlen($jsonResponse));
+echo $jsonResponse;
 
 if (ob_get_level()) {
     ob_end_flush();

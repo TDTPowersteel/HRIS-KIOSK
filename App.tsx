@@ -5,7 +5,7 @@ import { Image, Pressable, StyleSheet, Text, View, Dimensions } from 'react-nati
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import ShowQRScan from './src/screens/ShowQRScan';
 import EmployeeProfileData from './src/screens/EmployeeProfileData';
-import Settings from './src/screens/Settings';
+import Settings from './src/screens/settings';
 import OfflineSync from './src/screens/OfflineSync';
 import { refreshOfflineUserCache } from './src/utils/offlineUsers';
 import { ThemeContext, Theme, getStoredTheme, saveTheme, ThemeType, Colors } from './src/config/theme';
