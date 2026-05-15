@@ -729,18 +729,27 @@ export function useAttendance() {
         setIsQrLoading(false);
 
         // Show the success checkmark for 600ms before transitioning
-        setTimeout(() => {
+        setTimeout(async () => {
           setQrSuccessLocal(false);
           setQrVerified(true);
-          const initialCountdown = livenessEnabled ? 2 : 0;
-          setFaceCountdown(initialCountdown);
-          countdownRef.current = initialCountdown;
-          livenessTriggeredRef.current = false;
-          touchlessTriggeredRef.current = false;
-          if (touchlessEnabled) {
-            setCountdownActive(true);
+          
+          const isClockOut = localSession ? true : false;
+          
+          // Automatic clock-out if touchless is enabled
+          if (isClockOut && touchlessEnabled) {
+             setAttendanceAction('clock_out');
+             await handleAttendance();
           } else {
-            setCountdownActive(false);
+             const initialCountdown = livenessEnabled ? 2 : 0;
+             setFaceCountdown(initialCountdown);
+             countdownRef.current = initialCountdown;
+             livenessTriggeredRef.current = false;
+             touchlessTriggeredRef.current = false;
+             if (touchlessEnabled) {
+               setCountdownActive(true);
+             } else {
+               setCountdownActive(false);
+             }
           }
         }, 600);
 
