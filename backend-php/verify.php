@@ -94,6 +94,10 @@ if (!$userId) {
 $faceppConfigured = function_exists('facepp_api_configured') ? facepp_api_configured() : false;
 $lScore = null;
 
+if (isset($_POST['liveness_score'])) {
+    $lScore = floatval($_POST['liveness_score']);
+}
+
 if ($photoLivenessBase64 && $faceppConfigured && function_exists('facepp_compare_faces')) {
     $livenessResult = facepp_compare_faces($photoBase64, $photoLivenessBase64);
 

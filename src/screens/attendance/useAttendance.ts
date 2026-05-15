@@ -64,6 +64,7 @@ export function useAttendance() {
   const lastOfflineToastAtRef = useRef(0);
   const identityStatusRef = useRef<'idle' | 'pending' | 'passed' | 'failed'>('idle');
   const livenessStatusRef = useRef<'idle' | 'pending' | 'passed'>('idle');
+  const livenessScoreRef = useRef<number | null>(null);
 
   // Shared Values (moved up to avoid use-before-declaration)
   const workletPhase = useSharedValue(0);
@@ -170,6 +171,7 @@ export function useAttendance() {
         setLivenessMessage('Face the camera directly');
         identityStatusRef.current = 'idle';
         livenessStatusRef.current = 'idle';
+        livenessScoreRef.current = null;
         modalContextRef.current = 'other';
       }
     });
@@ -336,6 +338,12 @@ export function useAttendance() {
     if (photoUri2) form.append('photo_liveness', { uri: photoUri2, name: 'selfie_2.jpg', type: 'image/jpeg' } as any);
     form.append('clock_time', new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
     form.append('user_id', userId);
+    
+    // Add client-side active liveness score if available
+    if (livenessScoreRef.current !== null) {
+      form.append('liveness_score', livenessScoreRef.current.toFixed(4));
+    }
+
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 28000);
     const response = await fetch(`${BACKEND_URL}/verify.php`, { method: 'POST', body: form, headers: { Accept: 'application/json', 'ngrok-skip-browser-warning': 'true' }, signal: controller.signal });
@@ -419,6 +427,7 @@ export function useAttendance() {
         await refreshPendingSyncCount();
       } else {
         try {
+          console.log(`[Attendance] Recording finalized. Identity Passed. Active Liveness Passed (Score: ${livenessScoreRef.current?.toFixed(3) ?? 'N/A'})`);
           data = await recordAttendance(action);
         } catch (error) {
           if (!isLikelyConnectivityError(error)) throw error;
@@ -561,17 +570,18 @@ export function useAttendance() {
     handleAttendance();
   });
 
-  const onActiveLivenessPassed = Worklets.createRunOnJS(() => {
+  const onActiveLivenessPassed = Worklets.createRunOnJS((score: number) => {
     if (livenessStatusRef.current === 'passed' || modalVisibleRef.current || !qrVerified || attendanceAction !== 'clock_in') return;
-    console.log('[Liveness] ✅ Active Liveness (Physical Blink/Smile) Verified!');
+    console.log(`[Liveness] ✅ Active Liveness (Physical Blink/Smile) Verified! Accuracy Score: ${score.toFixed(3)}`);
     livenessStatusRef.current = 'passed';
+    livenessScoreRef.current = score;
     
     if (identityStatusRef.current === 'passed') {
       // Face++ already finished and matched!
       executeAttendanceRecording();
     } else if (identityStatusRef.current === 'pending') {
       // Still waiting on Face++ network request
-      setLivenessMessage('Liveness passed!\nWaiting for network...');
+      setLivenessMessage(`Liveness passed (${(score * 100).toFixed(0)}%)\nWaiting for network...`);
       setIsVerifying(true); // Show spinner while network finishes
     }
   });
@@ -642,7 +652,7 @@ export function useAttendance() {
               } else if (isSmiling) {
                 blinkState.value = 3; // Genuine new smile detected
                 updateLivenessMessage('Verified!');
-                onActiveLivenessPassed();
+                onActiveLivenessPassed(smileProb);
               }
             } else if (blinkState.value === 10) {
               if (isEyesClosed) {
@@ -657,7 +667,10 @@ export function useAttendance() {
               if (isEyesOpen) {
                 blinkState.value = 3; // Blink completed
                 updateLivenessMessage('Verified!');
-                onActiveLivenessPassed();
+                // For a blink, "accuracy" is how deep the blink was (lowest eye prob seen)
+                // Since we're here, we already passed the threshold. We'll send a high confidence score.
+                const blinkDepth = 1 - Math.min(leftOpenProb, rightOpenProb);
+                onActiveLivenessPassed(blinkDepth);
               }
             }
           }
