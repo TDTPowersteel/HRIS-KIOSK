@@ -111,6 +111,9 @@ $userId = isset($body['user_id']) ? trim((string)$body['user_id']) : '';
 $action = isset($body['action']) ? trim((string)$body['action']) : '';
 $providedDate = isset($body['date']) ? trim((string)$body['date']) : '';
 $providedTime = isset($body['time']) ? trim((string)$body['time']) : '';
+$lat = isset($body['latitude']) ? trim((string)$body['latitude']) : null;
+$lng = isset($body['longitude']) ? trim((string)$body['longitude']) : null;
+$radius = isset($body['radius']) ? trim((string)$body['radius']) : null;
 
 if ($userId === '' || !in_array($action, ['clock_in', 'clock_out'], true)) {
     http_response_code(400);
@@ -174,13 +177,19 @@ if ($action === 'clock_in') {
 
     // Allow multiple clock-ins per day - always create new record
     error_log("Attempting to insert attendance record for emp_id: {$emp_id}, timein: {$nowTime}, date: {$today}");
-    [$status, $result, $err] = supabase_insert('attendance', [
+    $insertData = [
         'emp_id' => $emp_id,
         'timein' => $nowTime,
         'timeout' => null,
         'date'   => $today,
-    ]);
+        'latitude_in' => $lat,
+        'longitude_in' => $lng,
+        'actual_radius_in' => $radius,
+    ];
+    
+    [$status, $result, $err] = supabase_insert('attendance', $insertData);
     error_log("Insert result - Status: {$status}, Error: " . ($err ?: 'none') . ", Result: " . json_encode($result));
+
 
     if ($err) {
         error_log("Database error during clock-in: {$err}");
@@ -231,10 +240,16 @@ if ($status !== 200 || !is_array($rows) || count($rows) === 0) {
 $att_id = (int)$rows[0]['att_id'];
 error_log("Found open attendance record att_id: {$att_id} for clock-out");
 
+$patchData = [
+    'timeout' => $nowTime,
+    'latitude_out' => $lat,
+    'longitude_out' => $lng,
+    'actual_radius_out' => $radius,
+];
 [$status, $result, $err] = supabase_request(
     'PATCH',
     "rest/v1/attendance?att_id=eq.{$att_id}",
-    ['timeout' => $nowTime],
+    $patchData,
     ['Prefer: return=representation']
 );
 error_log("Clock-out update result - Status: {$status}, Error: " . ($err ?: 'none') . ", Result: " . json_encode($result));

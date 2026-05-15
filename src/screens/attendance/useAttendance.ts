@@ -1,3 +1,4 @@
+import * as Location from 'expo-location';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Audio } from 'expo-av';
 import {
@@ -384,11 +385,20 @@ export function useAttendance() {
     return verifyFace(`file://${photo1.path}`);
   }, [offlineModeEnabled]);
 
-  const recordAttendance = useCallback(async (action: 'clock_in' | 'clock_out') => {
+  const recordAttendance = useCallback(async (action: 'clock_in' | 'clock_out', location: { address?: string; latitude?: number; longitude?: number } = {}) => {
     const userId = await AsyncStorage.getItem('userId');
     if (!userId) return;
-    console.log('[Attendance] Recording', { userId, action });
-    const res = await fetch(`${BACKEND_URL}/record_attendance.php`, { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'ngrok-skip-browser-warning': 'true' }, body: JSON.stringify({ user_id: userId, action }) });
+    console.log('[Attendance] Recording', { userId, action, location });
+    const payload = { 
+      user_id: userId, 
+      action, 
+      ...location 
+    };
+    const res = await fetch(`${BACKEND_URL}/record_attendance.php`, { 
+      method: 'POST', 
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'ngrok-skip-browser-warning': 'true' }, 
+      body: JSON.stringify(payload) 
+    });
     const responseText = await res.text();
     let data: any = {};
     try { data = responseText ? JSON.parse(responseText) : {}; }
@@ -419,22 +429,57 @@ export function useAttendance() {
       const now = new Date();
       const localDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
       const localTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
+      
+      // Capture location
+      let locationData: { address?: string; latitude?: number; longitude?: number; radius?: number } = {};
+      try {
+        const { status } = await Location.requestForegroundPermissionsAsync();
+        if (status === 'granted') {
+          const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+          const [addressRes] = await Location.reverseGeocodeAsync({ latitude: loc.coords.latitude, longitude: loc.coords.longitude });
+          locationData = {
+            latitude: loc.coords.latitude,
+            longitude: loc.coords.longitude,
+            radius: loc.coords.accuracy ?? 0,
+            address: addressRes ? `${addressRes.street || ''}, ${addressRes.city || ''}, ${addressRes.region || ''}`.replace(/^, |, $/g, '') : 'Unknown'
+          };
+        }
+      } catch (e) {
+        console.log('[Attendance] Could not capture location', e);
+      }
+
       let data: any = null;
       let capturedOffline = offlineModeEnabled;
 
       if (capturedOffline) {
-        await enqueueOfflineAttendance({ userId: selectedUser!.userId, username: selectedUser!.username, name: selectedUser!.name ?? null, action, date: localDate, time: localTime });
+        await enqueueOfflineAttendance({ 
+            userId: selectedUser!.userId, 
+            username: selectedUser!.username, 
+            name: selectedUser!.name ?? null, 
+            action, 
+            date: localDate, 
+            time: localTime,
+            ...locationData
+        });
         await refreshPendingSyncCount();
       } else {
         try {
           console.log(`[Attendance] Recording finalized. Identity Passed. Active Liveness Passed (Score: ${livenessScoreRef.current?.toFixed(3) ?? 'N/A'})`);
-          data = await recordAttendance(action);
+          data = await recordAttendance(action, locationData);
         } catch (error) {
           if (!isLikelyConnectivityError(error)) throw error;
           capturedOffline = true;
           setOfflineModeEnabled(true);
           showOfflineToast();
-          await enqueueOfflineAttendance({ userId: selectedUser!.userId, username: selectedUser!.username, name: selectedUser!.name ?? null, action, date: localDate, time: localTime });
+          await enqueueOfflineAttendance({ 
+              userId: selectedUser!.userId, 
+              username: selectedUser!.username, 
+              name: selectedUser!.name ?? null, 
+              action, 
+              date: localDate, 
+              time: localTime,
+              ...locationData
+          });
           await refreshPendingSyncCount();
         }
       }
@@ -470,17 +515,20 @@ export function useAttendance() {
       showModal('warning', 'Scan QR Code First', 'Please scan your personal QR code before continuing.', 'The user must scan a QR code.');
       return;
     }
-    if (!hasPermission) { showModal('warning', 'Camera Required', 'Please allow camera access to verify your identity.', ''); return; }
     
-    faceProcessingRef.current = true;
-    identityStatusRef.current = 'pending';
-    
-    if (attendanceAction === 'clock_out') {
+    // Auto-clockout in touchless mode: skip face verification
+    if (attendanceAction === 'clock_out' && touchlessEnabled) {
+      faceProcessingRef.current = true;
       setIsVerifying(true);
       await executeAttendanceRecording();
       return;
     }
 
+    if (!hasPermission) { showModal('warning', 'Camera Required', 'Please allow camera access to verify your identity.', ''); return; }
+    
+    faceProcessingRef.current = true;
+    identityStatusRef.current = 'pending';
+    
     console.log('[Attendance] Starting Concurrent Identity & Liveness Verification', { action: attendanceAction, userId: selectedUser.userId });
     
     let photoUri: string | undefined;
@@ -562,7 +610,7 @@ export function useAttendance() {
       const showOfflineError = offlineModeEnabled || isLikelyConnectivityError(e);
       showModal('error', showOfflineError ? 'Offline Mode Error' : 'Connection Error', e?.message || 'Please try again.', showOfflineError ? 'Connect once to refresh employee QR cache.' : 'Check your internet connection', 2000);
     }
-  }, [attendanceAction, hasPermission, isLikelyConnectivityError, livenessEnabled, offlineModeEnabled, qrVerified, selectedUser, showModal, workletPhase, executeAttendanceRecording, verifyFace, flashAnim]);
+  }, [attendanceAction, touchlessEnabled, hasPermission, isLikelyConnectivityError, livenessEnabled, offlineModeEnabled, qrVerified, selectedUser, showModal, workletPhase, executeAttendanceRecording, verifyFace, flashAnim]);
 
   const onFaceDetectedForIdentity = Worklets.createRunOnJS(() => {
     if (!touchlessEnabled || modalVisibleRef.current || !qrVerified || attendanceAction !== 'clock_in' || countdownRef.current > 0 || faceProcessingRef.current || isVerifying) return;
