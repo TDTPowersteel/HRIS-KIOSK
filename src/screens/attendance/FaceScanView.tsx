@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Animated,
@@ -7,10 +7,12 @@ import {
   TouchableOpacity,
   View,
   useWindowDimensions,
+  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Camera, CameraProps } from 'react-native-vision-camera';
+import * as ScreenOrientation from 'expo-screen-orientation';
 import { styles } from './styles';
 import type { ResolvedUser } from './types';
 
@@ -63,18 +65,58 @@ export default function FaceScanView({
   const isLandscape = width > height;
   const isTablet = Math.min(width, height) >= 600;
 
+  // Track the actual device orientation via Expo to apply manual rotation fixes on Android
+  const [orientation, setOrientation] = useState<ScreenOrientation.Orientation>(
+    ScreenOrientation.Orientation.PORTRAIT_UP
+  );
+
+  useEffect(() => {
+    let subscription: ScreenOrientation.Subscription;
+    ScreenOrientation.getOrientationAsync().then(setOrientation);
+    subscription = ScreenOrientation.addOrientationChangeListener((evt) => {
+      setOrientation(evt.orientationInfo.orientation);
+    });
+    return () => {
+      ScreenOrientation.removeOrientationChangeListener(subscription);
+    };
+  }, []);
+
+  // Determine if we need to apply a manual rotation fix for Android + FrameProcessor
+  const requiresAndroidRotationFix = Platform.OS === 'android' && livenessEnabled;
+  
+  // Calculate scale to prevent squishing when applying CSS rotation to a non-square container
+  // For portrait, the camera takes full screen (width x height)
+  // For landscape, the camera takes the right panel (width * 0.6 x height)
+  const cameraContainerWidth = isLandscape ? width * 0.6 : width;
+  const cameraContainerHeight = height;
+  const scaleRatio = Math.max(
+    cameraContainerWidth / cameraContainerHeight,
+    cameraContainerHeight / cameraContainerWidth
+  );
+  
+  let cameraTransform = [];
+  if (requiresAndroidRotationFix) {
+    if (orientation === ScreenOrientation.Orientation.LANDSCAPE_LEFT) {
+      cameraTransform = [{ rotate: '90deg' }, { scale: scaleRatio }];
+    } else if (orientation === ScreenOrientation.Orientation.LANDSCAPE_RIGHT) {
+      cameraTransform = [{ rotate: '-90deg' }, { scale: scaleRatio }];
+    } else if (orientation === ScreenOrientation.Orientation.PORTRAIT_DOWN) {
+      cameraTransform = [{ rotate: '180deg' }];
+    }
+  }
+
   // Portrait mode (phones) — full-screen camera with compact profile bar
   if (!isLandscape) {
     return (
       <View style={styles.portraitFaceContainer}>
         <Camera
           ref={cameraRef}
-          style={styles.fullScreenCamera}
+          style={[styles.fullScreenCamera, { transform: cameraTransform }]}
           device={device}
           isActive={true}
           photo={true}
           frameProcessor={livenessEnabled ? frameProcessor : undefined}
-          outputOrientation="device"
+          androidPreviewViewType="texture-view"
           resizeMode="cover"
         />
         <Animated.View style={[styles.snapFlash, { opacity: flashAnim }]} pointerEvents="none" />
@@ -274,13 +316,12 @@ export default function FaceScanView({
       <View style={styles.rightPanel}>
         <Camera
           ref={cameraRef}
-          style={styles.fullScreenCamera}
+          style={[styles.fullScreenCamera, { transform: cameraTransform }]}
           device={device}
           isActive={true}
           photo={true}
           frameProcessor={livenessEnabled ? frameProcessor : undefined}
-          outputOrientation="device"
-          orientationSource="device"
+          androidPreviewViewType="texture-view"
           resizeMode="cover"
         />
         <Animated.View style={[styles.snapFlash, { opacity: flashAnim }]} pointerEvents="none" />

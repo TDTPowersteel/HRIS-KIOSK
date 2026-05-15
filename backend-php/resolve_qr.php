@@ -62,7 +62,7 @@ if (preg_match('/(?:LOG_?ID|USER):([^|]+)/i', $qr, $m)) {
 
 if (!$logId && !$username) {
     http_response_code(400);
-    echo json_encode(['ok' => false, 'message' => 'Invalid QR format (missing LOGID or USER)']);
+    echo json_encode(['ok' => false, 'message' => 'Invalid QR!']);
     exit;
 }
 

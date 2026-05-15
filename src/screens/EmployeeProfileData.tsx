@@ -47,7 +47,7 @@ export default function EmployeeProfileData({ onBack }: Props) {
   const [employees, setEmployees] = useState<EmployeeRow[]>(globalEmployeesCache);
   const [currentPage, setCurrentPage] = useState(0);
   const [hasMore, setHasMore] = useState(true);
-  const ITEMS_PER_PAGE = 50;
+  const ITEMS_PER_PAGE = 25;
   
   const setUniqueEmployees = useCallback((data: EmployeeRow[], append: boolean = false) => {
     const seen = new Set<number>();

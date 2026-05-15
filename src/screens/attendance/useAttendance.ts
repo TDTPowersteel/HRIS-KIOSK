@@ -6,9 +6,10 @@ import {
   useCameraPermission,
   useCodeScanner,
   useFrameProcessor,
+  runAsync,
 } from 'react-native-vision-camera';
 import { useFaceDetector } from 'react-native-vision-camera-face-detector';
-import { Worklets } from 'react-native-worklets-core';
+import { Worklets, useSharedValue } from 'react-native-worklets-core';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Alert, Animated, Platform, ToastAndroid } from 'react-native';
 import { BACKEND_URL } from '../../config/backend';
@@ -340,7 +341,7 @@ export function useAttendance() {
 
     let photo2;
     if (livenessEnabled) {
-      await new Promise(resolve => setTimeout(resolve, 300));
+      await new Promise(resolve => setTimeout(resolve, 700)); // Increased from 300ms to 700ms for stricter liveness
       photo2 = await cameraRef.current.takePhoto({ 
         flash: 'off',
         qualityPrioritization: 'balanced',
@@ -456,22 +457,35 @@ export function useAttendance() {
   // Liveness callback
   const onLivenessDetected = Worklets.createRunOnJS(() => {
     if (!livenessTriggeredRef.current && !modalVisibleRef.current && qrVerified && attendanceAction === 'clock_in' && countdownRef.current <= 0) {
+      console.log('[Liveness] ✅ Face liveness detected (eyes open)! Triggering attendance capture...');
       playSnapSound();
       handleAttendance();
       livenessTriggeredRef.current = true;
     }
   });
 
+  const isProcessingFace = useSharedValue(false);
+
   const frameProcessor = useFrameProcessor((frame) => {
     'worklet';
-    const faces = detectFaces(frame);
-    if (faces.length > 0) {
-      const face = faces[0];
-      const leftOpen = (face.leftEyeOpenProbability || 0) > 0.4;
-      const rightOpen = (face.rightEyeOpenProbability || 0) > 0.4;
-      if (leftOpen || rightOpen) onLivenessDetected();
-    }
-  }, [qrVerified, attendanceAction]);
+    if (isProcessingFace.value) return;
+    
+    isProcessingFace.value = true;
+    runAsync(frame, () => {
+      'worklet';
+      try {
+        const faces = detectFaces(frame);
+        if (faces.length > 0) {
+          const face = faces[0];
+          const leftOpen = (face.leftEyeOpenProbability || 0) > 0.4;
+          const rightOpen = (face.rightEyeOpenProbability || 0) > 0.4;
+          if (leftOpen || rightOpen) onLivenessDetected();
+        }
+      } finally {
+        isProcessingFace.value = false;
+      }
+    });
+  }, [qrVerified, attendanceAction, detectFaces]);
 
   // QR scanner
   const handleBarcodeScanned = async (event: any) => {
