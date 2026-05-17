@@ -1,6 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Animated, Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Animated, Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { BACKEND_URL } from '../config/backend';
 import { updateOfflineUserCacheFromEmployees, getOfflineUserCache, clearOfflineUserCache } from '../utils/offlineUsers';
@@ -83,6 +83,7 @@ export default function EmployeeProfileData({ onBack }: Props) {
   const [isBootstrapping, setIsBootstrapping] = useState(globalEmployeesCache.length === 0);
   const [lastUpdatedAt, setLastUpdatedAt] = useState<number | null>(globalLastSyncCache);
   const { colors, theme } = useTheme();
+  const { width: windowWidth } = useWindowDimensions();
   const isFetchingRef = useRef(false);
   const mountedRef = useRef(true);
 
@@ -333,8 +334,19 @@ export default function EmployeeProfileData({ onBack }: Props) {
     </View>
   );
 
+  const cardWidth = useMemo(() => {
+    const availableWidth = windowWidth - 64; // 32 horizontal padding on each side
+    const gap = 20;
+    let cols = 1;
+    if (windowWidth >= 1200) cols = 4;
+    else if (windowWidth >= 900) cols = 3;
+    else if (windowWidth >= 600) cols = 2;
+    
+    return Math.max(availableWidth - (gap * (cols - 1)), 0) / cols;
+  }, [windowWidth]);
+
   const SkeletonCard = () => (
-    <View style={[styles.employeeCard, { backgroundColor: colors.surface, borderColor: colors.border, overflow: 'hidden' }]}>
+    <View style={[styles.employeeCard, { width: cardWidth, backgroundColor: colors.surface, borderColor: colors.border, overflow: 'hidden' }]}>
       <Animated.View 
         style={[
           styles.shimmerStreak, 
@@ -462,7 +474,7 @@ export default function EmployeeProfileData({ onBack }: Props) {
             {sortedAndFilteredEmployees.map((emp) => (
               <View 
                 key={emp.emp_id} 
-                style={[styles.employeeCard, { backgroundColor: colors.surface, borderColor: colors.border }]}
+                style={[styles.employeeCard, { width: cardWidth, backgroundColor: colors.surface, borderColor: colors.border }]}
               >
                 <View style={styles.accentStrip} />
                 <View style={styles.cardContent}>
@@ -678,8 +690,8 @@ const styles = StyleSheet.create({
     width: '100%',
     flexDirection: 'row',
     flexWrap: 'wrap',
-    justifyContent: 'space-between',
-    rowGap: 20,
+    justifyContent: 'flex-start',
+    gap: 20,
   },
   emptyContainer: {
     paddingTop: 100,
@@ -690,7 +702,6 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   employeeCard: {
-    width: '49%',
     minHeight: 140,
     borderRadius: 24,
     borderWidth: 1.5,
