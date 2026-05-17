@@ -4,7 +4,8 @@ import { BACKEND_URL } from '../config/backend';
 export const OFFLINE_USER_CACHE_KEY = 'offline_user_cache_v1';
 
 export type CachedOfflineUser = {
-  userId: string;
+  userId: string; // This is the log_id/scanner ID
+  empId: string;  // This is the database primary key
   username: string;
   name?: string | null;
   qrCode?: string | null;
@@ -14,6 +15,7 @@ export type CachedOfflineUser = {
 };
 
 export type EmployeePayloadRow = {
+  emp_id?: number | string | null;
   name?: string | null;
   role?: string | null;
   log_id?: number | string | null;
@@ -94,6 +96,7 @@ export async function clearOfflineUserCache(): Promise<void> {
 
 export function mapEmployeesToOfflineUsers(data: EmployeePayloadRow[]): CachedOfflineUser[] {
   return data
+    .filter(e => e !== null && typeof e === 'object')
     .map((employee): CachedOfflineUser | null => {
       const account = normalizeAccount(employee.accounts);
       const userId = String(account?.log_id ?? employee.log_id ?? '').trim();
@@ -107,6 +110,7 @@ export function mapEmployeesToOfflineUsers(data: EmployeePayloadRow[]): CachedOf
 
       return {
         userId,
+        empId: String(employee.emp_id ?? '').trim(),
         username,
         name: employee.name ?? null,
         role: employee.role ?? null,

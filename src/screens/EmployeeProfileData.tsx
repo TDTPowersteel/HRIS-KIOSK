@@ -1,6 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Animated, Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native';
+import EmployeeDetailsModal from './settings/components/EmployeeDetailsModal';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { BACKEND_URL } from '../config/backend';
 import { updateOfflineUserCacheFromEmployees, getOfflineUserCache, clearOfflineUserCache } from '../utils/offlineUsers';
@@ -47,13 +48,13 @@ export default function EmployeeProfileData({ onBack }: Props) {
   const [employees, setEmployees] = useState<EmployeeRow[]>(globalEmployeesCache);
   const [currentPage, setCurrentPage] = useState(0);
   const [hasMore, setHasMore] = useState(true);
-  const ITEMS_PER_PAGE = 25;
+  const ITEMS_PER_PAGE = 50;
   
   const setUniqueEmployees = useCallback((data: EmployeeRow[], append: boolean = false) => {
     const seen = new Set<number>();
     const sourceData = append ? [...employeesRef.current, ...data] : data;
     const unique = sourceData.filter(emp => {
-      if (!emp.emp_id || seen.has(emp.emp_id)) return false;
+      if (!emp || !emp.emp_id || seen.has(emp.emp_id)) return false;
       seen.add(emp.emp_id);
       return true;
     });
@@ -82,6 +83,7 @@ export default function EmployeeProfileData({ onBack }: Props) {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isBootstrapping, setIsBootstrapping] = useState(globalEmployeesCache.length === 0);
   const [lastUpdatedAt, setLastUpdatedAt] = useState<number | null>(globalLastSyncCache);
+  const [selectedEmployee, setSelectedEmployee] = useState<EmployeeRow | null>(null);
   const { colors, theme } = useTheme();
   const { width: windowWidth } = useWindowDimensions();
   const isFetchingRef = useRef(false);
@@ -169,6 +171,7 @@ export default function EmployeeProfileData({ onBack }: Props) {
   const departments = useMemo(() => {
     const depts = new Set<string>();
     employees.forEach(emp => {
+      if (!emp) return;
       const deptName = emp?.departments?.name;
       if (deptName) depts.add(deptName);
     });
@@ -178,6 +181,7 @@ export default function EmployeeProfileData({ onBack }: Props) {
   const roles = useMemo(() => {
     const rls = new Set<string>();
     employees.forEach(emp => {
+      if (!emp) return;
       const matchesDept = selectedDept === 'All Departments' || emp.departments?.name === selectedDept;
       if (matchesDept && emp?.role) rls.add(emp.role);
     });
@@ -207,20 +211,22 @@ export default function EmployeeProfileData({ onBack }: Props) {
         }
 
         if (cached && cached.length > 0) {
-          const mapped: EmployeeRow[] = cached.map(u => ({
-            emp_id: parseInt(u.userId) || 0,
-            name: u.name || '',
-            role: u.role || null,
-            dept_id: null,
-            log_id: parseInt(u.userId) || null,
-            accounts: {
-              log_id: parseInt(u.userId) || 0,
-              username: u.username,
-              qr_code: u.qrCode,
-              profile_picture: u.profile_picture
-            },
-            departments: { name: u.department }
-          }));
+          const mapped: EmployeeRow[] = cached
+            .filter(u => u !== null && typeof u === 'object')
+            .map(u => ({
+              emp_id: parseInt(u.empId) || 0,
+              name: u.name || '',
+              role: u.role || null,
+              dept_id: null,
+              log_id: parseInt(u.userId) || null,
+              accounts: {
+                log_id: parseInt(u.userId) || 0,
+                username: u.username,
+                qr_code: u.qrCode,
+                profile_picture: u.profile_picture
+              },
+              departments: { name: u.department }
+            }));
           setUniqueEmployees(mapped);
           setIsBootstrapping(false);
           // Sync silently in background (first page)
@@ -260,6 +266,7 @@ export default function EmployeeProfileData({ onBack }: Props) {
   }, [fetchEmployees, currentPage, isLoadingMore, hasMore]);
 
   const sortedAndFilteredEmployees = useMemo(() => {
+    console.log('Filtering. Total loaded employees:', employees.length);
     let result = employees.filter(emp => {
       const matchesSearch = emp.name.toLowerCase().includes(debouncedSearchText.toLowerCase()) ||
         (emp.role && emp.role.toLowerCase().includes(debouncedSearchText.toLowerCase()));
@@ -275,7 +282,8 @@ export default function EmployeeProfileData({ onBack }: Props) {
     } else if (sortBy === 'name_desc') {
       result.sort((a, b) => b.name.localeCompare(a.name));
     }
-
+    
+    console.log('Filtered result count:', result.length);
     return result;
   }, [employees, debouncedSearchText, sortBy, selectedDept, selectedRole]);
 
@@ -458,10 +466,16 @@ export default function EmployeeProfileData({ onBack }: Props) {
         </View>
         <Text style={[styles.cacheStatusText, { color: colors.textSecondary }]}>
           {lastUpdatedAt
-            ? `Last Sync: ${new Date(lastUpdatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}`
+            ? `Last Sync: ${new Date(lastUpdatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit'})}`
             : 'Last Sync: Not yet synced'}
         </Text>
       </View>
+
+      <EmployeeDetailsModal 
+        visible={!!selectedEmployee} 
+        onClose={() => setSelectedEmployee(null)} 
+        employee={selectedEmployee} 
+      />
 
       {(isRefreshing || (isLoading && employees.length === 0)) ? (
         <ScrollView contentContainerStyle={styles.list} scrollEnabled={false}>
@@ -473,8 +487,9 @@ export default function EmployeeProfileData({ onBack }: Props) {
         <ScrollView contentContainerStyle={styles.list} scrollEnabled={!showDeptDropdown && !showRoleDropdown}>
           <View style={styles.gridContainer}>
             {sortedAndFilteredEmployees.map((emp) => (
-              <View 
+              <Pressable 
                 key={emp.emp_id} 
+                onPress={() => setSelectedEmployee(emp)}
                 style={[styles.employeeCard, { width: cardWidth, backgroundColor: colors.surface, borderColor: colors.border }]}
               >
                 <View style={styles.accentStrip} />
@@ -482,7 +497,8 @@ export default function EmployeeProfileData({ onBack }: Props) {
                   <View style={styles.cardHeader}>
                     <View style={[styles.avatarRing, { borderColor: Colors.powerOrange }]}>
                       {(() => {
-                        const acc = normalizeAccount(emp.accounts);
+                        if (!emp) return null;
+                        const acc = normalizeAccount(emp.accounts ?? null);
                         return acc?.profile_picture ? (
                           <Image 
                             source={{ uri: acc.profile_picture }} 
@@ -490,14 +506,14 @@ export default function EmployeeProfileData({ onBack }: Props) {
                           />
                         ) : (
                           <View style={[styles.profileImage, { backgroundColor: colors.background, justifyContent: 'center', alignItems: 'center' }]}>
-                            <Text style={{ color: colors.textSecondary, fontWeight: '800', fontSize: 24 }}>{emp.name.charAt(0)}</Text>
+                            <Text style={{ color: colors.textSecondary, fontWeight: '800', fontSize: 24 }}>{emp.name?.charAt(0) || '?'}</Text>
                           </View>
                         );
                       })()}
                     </View>
                     <View style={styles.infoBlock}>
-                      <Text style={[styles.employeeName, { color: colors.text }]} numberOfLines={1}>{emp.name}</Text>
-                      <Text style={[styles.employeeRole, { color: Colors.steelGray }]} numberOfLines={1}>{emp.role ?? 'Unassigned Role'}</Text>
+                      <Text style={[styles.employeeName, { color: colors.text }]} numberOfLines={1}>{emp?.name || 'Unknown'}</Text>
+                      <Text style={[styles.employeeRole, { color: Colors.steelGray }]} numberOfLines={1}>{emp?.role ?? 'Unassigned Role'}</Text>
                     </View>
                   </View>
                   
@@ -509,7 +525,7 @@ export default function EmployeeProfileData({ onBack }: Props) {
                     </View>
                   </View>
                 </View>
-              </View>
+              </Pressable>
             ))}
           </View>
           
