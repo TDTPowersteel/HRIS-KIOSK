@@ -117,6 +117,7 @@ export default function FaceScanView({
           device={device}
           isActive={true}
           photo={true}
+          pixelFormat="rgb"
           frameProcessor={frameProcessor}
           androidPreviewViewType="texture-view"
           resizeMode="cover"
@@ -316,6 +317,7 @@ export default function FaceScanView({
           device={device}
           isActive={true}
           photo={true}
+          pixelFormat="rgb"
           frameProcessor={frameProcessor}
           androidPreviewViewType="texture-view"
           resizeMode="cover"
