@@ -138,6 +138,8 @@ $phone = null;
 $email = null;
 $department = null;
 $openSession = null;
+$face = null;
+$faceEmbedding = null;
 
 if ($resolvedLogId) {
     // First get basic employee data
@@ -197,13 +199,14 @@ if ($resolvedLogId) {
         // Get profile picture and face
         [$s4, $accountRows, $e4] = supabase_request(
             'GET',
-            "rest/v1/accounts?log_id=eq." . urlencode($resolvedLogId) . "&select=profile_picture,face"
+            "rest/v1/accounts?log_id=eq." . urlencode($resolvedLogId) . "&select=profile_picture,face,face_embedding"
         );
         $profilePicture = null;
         $face = null;
         if (!$e4 && is_array($accountRows) && count($accountRows) > 0) {
             $profilePicture = normalize_value($accountRows[0]['profile_picture'] ?? null);
             $face = normalize_value($accountRows[0]['face'] ?? null);
+            $faceEmbedding = normalize_value($accountRows[0]['face_embedding'] ?? null);
         }
 
     } else {
@@ -218,6 +221,7 @@ $jsonResponse = json_encode([
         'name' => $displayName,
         'profile_picture' => $profilePicture,
         'face' => $face,
+        'face_embedding' => $faceEmbedding,
         'role' => $role,
         'department' => $department,
         'open_session' => $openSession,

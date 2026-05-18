@@ -4,14 +4,15 @@ import { BACKEND_URL } from '../config/backend';
 export const OFFLINE_USER_CACHE_KEY = 'offline_user_cache_v1';
 
 export type CachedOfflineUser = {
-  userId: string; // This is the log_id/scanner ID
-  empId: string;  // This is the database primary key
+  userId: string;
+  empId: string;
   username: string;
   name?: string | null;
   qrCode?: string | null;
   profile_picture?: string | null;
   role?: string | null;
   department?: string | null;
+  face_embedding?: string | null;
 };
 
 export type EmployeePayloadRow = {

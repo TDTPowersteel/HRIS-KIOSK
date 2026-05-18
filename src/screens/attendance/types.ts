@@ -13,6 +13,7 @@ export type ResolvedUser = {
   name?: string | null;
   profile_picture?: string | null;
   face?: string | null;
+  face_embedding?: string | null;
   role?: string | null;
   department?: string | null;
   open_session?: {

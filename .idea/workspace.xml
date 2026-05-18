@@ -4,13 +4,7 @@
     <option name="autoReloadType" value="NONE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="c61fd802-3d0b-4601-a359-927ccc48dd2f" name="Changes" comment="">
-      <change beforePath="$PROJECT_DIR$/.idea/caches/deviceStreaming.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/caches/deviceStreaming.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/backend-php/employees.php" beforeDir="false" afterPath="$PROJECT_DIR$/backend-php/employees.php" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/employees.php" beforeDir="false" afterPath="$PROJECT_DIR$/employees.php" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/screens/settings/components/EmployeeDetailsModal.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/src/screens/settings/components/EmployeeDetailsModal.tsx" afterDir="false" />
-    </list>
+    <list default="true" id="c61fd802-3d0b-4601-a359-927ccc48dd2f" name="Changes" comment="" />
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
     <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
@@ -40,7 +34,7 @@
     "RunOnceActivity.readMode.enableVisualFormatting": "true",
     "cf.first.check.clang-format": "false",
     "cidr.known.project.marker": "true",
-    "git-widget-placeholder": "feat/attendance-history",
+    "git-widget-placeholder": "feat/update-face-recog",
     "kotlin-language-version-configured": "true",
     "last_opened_file_path": "C:/Users/Admin/Downloads/HRIS-KIOSK",
     "settings.editor.selected.configurable": "emulator"
