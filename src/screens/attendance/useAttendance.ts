@@ -17,6 +17,8 @@ import { BACKEND_URL } from '../../config/backend';
 import { enqueueOfflineAttendance, getOfflineAttendanceQueue } from '../../utils/offlineAttendance';
 import { resolveOfflineUserFromQr, upsertOfflineUserCacheUser } from '../../utils/offlineUsers';
 import { useTheme } from '../../config/theme';
+import { generateEmbedding, compareEmbeddings, isMatch } from '../../utils/face-embedding';
+import type { FaceEngine } from '../settings/features/FaceRecogEngineFeature';
 import {
   ATTENDANCE_SESSIONS_KEY,
   TOUCHLESS_SETTING_KEY,
@@ -97,6 +99,7 @@ export function useAttendance() {
   const [touchlessEnabled, setTouchlessEnabled] = useState(false);
   const [offlineModeEnabled, setOfflineModeEnabled] = useState(false);
   const [livenessEnabled, setLivenessEnabled] = useState(true);
+  const [faceEngine, setFaceEngine] = useState<FaceEngine>('facepp');
   const [pendingSyncCount, setPendingSyncCount] = useState(0);
 
   // Modal state
@@ -283,6 +286,7 @@ export function useAttendance() {
         name: payload.user.name ?? null,
         profile_picture: payload.user.profile_picture ?? null,
         face: payload.user.face ?? null,
+        face_embedding: payload.user.face_embedding ?? null,
         role: payload.user.role ?? null,
         department: payload.user.department ?? null,
         open_session: payload.user.open_session ?? null,
@@ -312,6 +316,7 @@ export function useAttendance() {
         profile_picture: user.profile_picture ?? null,
         role: user.role ?? null,
         department: user.department ?? null,
+        face_embedding: user.face_embedding ?? null,
       });
       return user;
     } catch (error) {
@@ -384,6 +389,56 @@ export function useAttendance() {
     if (offlineModeEnabled) return { ok: true, verified: true, offlineCaptured: true, message: 'Face photos captured offline.', photoUri: `file://${photo1.path}` };
     return verifyFace(`file://${photo1.path}`);
   }, [offlineModeEnabled]);
+
+  const verifyFaceLocal = useCallback(async (photoUri: string): Promise<{ ok: boolean; verified: boolean; message?: string; hint?: string }> => {
+    const storedEmbeddingStr = selectedUser?.face_embedding;
+    if (!storedEmbeddingStr) {
+      console.warn('[CameraVision] No face_embedding on record — falling back to Face++');
+      return verifyFace(photoUri);
+    }
+
+    let storedEmbedding: number[];
+    try {
+      storedEmbedding = JSON.parse(storedEmbeddingStr);
+    } catch {
+      console.warn('[CameraVision] face_embedding parse error — falling back to Face++');
+      return verifyFace(photoUri);
+    }
+
+    try {
+      const response = await fetch(photoUri);
+      const blob = await response.blob();
+      const base64 = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          const dataUrl = reader.result as string;
+          const idx = dataUrl.indexOf(',');
+          resolve(idx !== -1 ? dataUrl.substring(idx + 1) : dataUrl);
+        };
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      });
+
+      const liveEmbedding = await generateEmbedding(base64);
+      if (!liveEmbedding) throw new Error('Failed to generate face embedding from live photo');
+
+      const similarity = compareEmbeddings(liveEmbedding, storedEmbedding);
+      console.log(`[CameraVision] Cosine similarity: ${(similarity * 100).toFixed(2)}%`);
+
+      if (isMatch(similarity)) {
+        return { ok: true, verified: true };
+      }
+      return {
+        ok: false,
+        verified: false,
+        message: `Face does not match. Similarity: ${(similarity * 100).toFixed(0)}%`,
+        hint: 'Ensure good lighting and face the camera directly.',
+      };
+    } catch (error) {
+      console.warn('[CameraVision] Local verification error — falling back to Face++:', error);
+      return verifyFace(photoUri);
+    }
+  }, [selectedUser, verifyFace]);
 
   const recordAttendance = useCallback(async (action: 'clock_in' | 'clock_out', location: { address?: string; latitude?: number; longitude?: number } = {}) => {
     const userId = await AsyncStorage.getItem('userId');
@@ -573,7 +628,9 @@ export function useAttendance() {
     try {
       const result = offlineModeEnabled 
         ? { ok: true, verified: true, offlineCaptured: true, message: 'Face photos captured offline.', photoUri }
-        : await verifyFace(photoUri);
+        : faceEngine === 'camera_vision'
+          ? await verifyFaceLocal(photoUri)
+          : await verifyFace(photoUri);
 
       if (result?.match_score != null) console.log(`[Verify] Identity Match Accuracy: ${(result.match_score * 100).toFixed(2)}%`);
 
@@ -610,7 +667,7 @@ export function useAttendance() {
       const showOfflineError = offlineModeEnabled || isLikelyConnectivityError(e);
       showModal('error', showOfflineError ? 'Offline Mode Error' : 'Connection Error', e?.message || 'Please try again.', showOfflineError ? 'Connect once to refresh employee QR cache.' : 'Check your internet connection', 2000);
     }
-  }, [attendanceAction, touchlessEnabled, hasPermission, isLikelyConnectivityError, livenessEnabled, offlineModeEnabled, qrVerified, selectedUser, showModal, workletPhase, executeAttendanceRecording, verifyFace, flashAnim]);
+  }, [attendanceAction, touchlessEnabled, hasPermission, isLikelyConnectivityError, livenessEnabled, offlineModeEnabled, qrVerified, selectedUser, showModal, workletPhase, executeAttendanceRecording, verifyFace, verifyFaceLocal, faceEngine, flashAnim]);
 
   const onFaceDetectedForIdentity = Worklets.createRunOnJS(() => {
     if (!touchlessEnabled || modalVisibleRef.current || !qrVerified || attendanceAction !== 'clock_in' || countdownRef.current > 0 || faceProcessingRef.current || isVerifying) return;
@@ -910,13 +967,14 @@ export function useAttendance() {
 
   useEffect(() => {
     let active = true;
-    AsyncStorage.multiGet([TOUCHLESS_SETTING_KEY, 'settings_liveness_enabled']).then((entries) => {
+    AsyncStorage.multiGet([TOUCHLESS_SETTING_KEY, 'settings_liveness_enabled', 'settings_face_engine']).then((entries) => {
       if (active) {
         const mapped = Object.fromEntries(entries);
         const touchless = mapped[TOUCHLESS_SETTING_KEY] === 'true';
         const liveness = mapped['settings_liveness_enabled'] !== 'false';
         setTouchlessEnabled(touchless);
         setLivenessEnabled(liveness);
+        setFaceEngine((mapped['settings_face_engine'] as FaceEngine) || 'facepp');
         sharedTouchlessEnabled.value = touchless;
         sharedLivenessEnabled.value = liveness;
       }
@@ -970,7 +1028,7 @@ export function useAttendance() {
     formattedTime, formattedDate,
     isLoading, isVerifying, isQrLoading, isClockingOut, isCapturingHardware: uiCapturingHardware,
     qrVerified, qrSuccessLocal, selectedUser, clockInTime: displayClockInTime, faceCountdown,
-    touchlessEnabled, offlineModeEnabled, livenessEnabled, pendingSyncCount,
+    touchlessEnabled, offlineModeEnabled, livenessEnabled, faceEngine, pendingSyncCount,
     showResultModal, modalType, modalTitle, modalMessage, modalHint, livenessMessage,
     closeModal, handleAttendance,
   };
