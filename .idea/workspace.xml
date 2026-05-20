@@ -5,16 +5,7 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="c61fd802-3d0b-4601-a359-927ccc48dd2f" name="Changes" comment="">
-      <change afterPath="$PROJECT_DIR$/.github/agents/face-recognition-tuner.agent.md" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/.github/agents/mobile-animation-tuner.agent.md" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/.github/agents/react-native-qa.agent.md" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/config/backend.ts" beforeDir="false" afterPath="$PROJECT_DIR$/src/config/backend.ts" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/screens/attendance/FaceScanView.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/src/screens/attendance/FaceScanView.tsx" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/screens/attendance/index.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/src/screens/attendance/index.tsx" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/screens/attendance/styles.ts" beforeDir="false" afterPath="$PROJECT_DIR$/src/screens/attendance/styles.ts" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/screens/attendance/types.ts" beforeDir="false" afterPath="$PROJECT_DIR$/src/screens/attendance/types.ts" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/screens/attendance/useAttendance.ts" beforeDir="false" afterPath="$PROJECT_DIR$/src/screens/attendance/useAttendance.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/changes_summary.md" beforeDir="false" afterPath="$PROJECT_DIR$/changes_summary.md" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />

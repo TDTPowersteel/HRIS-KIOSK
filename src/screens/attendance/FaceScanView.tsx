@@ -39,6 +39,7 @@ type Props = {
   cameraVisionFaceDetected: boolean;
   cameraVisionReadiness: number;
   cameraVisionFaceBox: { left: number; top: number; width: number; height: number; frameWidth?: number; frameHeight?: number } | null;
+  cameraVisionAllFaces?: Array<{ id: string; left: number; top: number; width: number; height: number; isTarget: boolean; frameWidth?: number; frameHeight?: number }> | null;
   cameraVisionFaceTelemetry: CameraVisionFaceTelemetry | null;
   successAnimationTick: number;
   pendingSyncCount: number;
@@ -72,6 +73,7 @@ export default function FaceScanView({
   cameraVisionFaceDetected,
   cameraVisionReadiness,
   cameraVisionFaceBox,
+  cameraVisionAllFaces = [],
   cameraVisionFaceTelemetry,
   successAnimationTick,
   pendingSyncCount,
@@ -164,29 +166,20 @@ export default function FaceScanView({
   const animatedFaceBoxWidth = useSharedValue(fallbackFaceBoxPx.width);
   const animatedFaceBoxHeight = useSharedValue(fallbackFaceBoxPx.height);
 
-  useEffect(() => {
-    const animation = { duration: 80 };
-    if (!cameraVisionFaceBox) {
-      animatedFaceBoxLeft.value = withTiming(fallbackFaceBoxPx.left, animation);
-      animatedFaceBoxTop.value = withTiming(fallbackFaceBoxPx.top, animation);
-      animatedFaceBoxWidth.value = withTiming(fallbackFaceBoxPx.width, animation);
-      animatedFaceBoxHeight.value = withTiming(fallbackFaceBoxPx.height, animation);
-      return;
-    }
-
+  const mapFaceBoxToPx = (box: { left: number; top: number; width: number; height: number; frameWidth?: number; frameHeight?: number }) => {
     let nextPx: { left: number; top: number; width: number; height: number };
-    if (cameraVisionFaceBox.width <= 1 && cameraVisionFaceBox.height <= 1) {
-      const sourceFrameWidth = cameraVisionFaceBox.frameWidth || overlayWidth;
-      const sourceFrameHeight = cameraVisionFaceBox.frameHeight || overlayHeight;
+    if (box.width <= 1 && box.height <= 1) {
+      const sourceFrameWidth = box.frameWidth || overlayWidth;
+      const sourceFrameHeight = box.frameHeight || overlayHeight;
       const isRotated = (sourceFrameWidth > sourceFrameHeight && overlayWidth < overlayHeight) || 
                        (sourceFrameWidth < sourceFrameHeight && overlayWidth > overlayHeight);
       const orientedFrameWidth = isRotated ? sourceFrameHeight : sourceFrameWidth;
       const orientedFrameHeight = isRotated ? sourceFrameWidth : sourceFrameHeight;
 
-      const originalX = cameraVisionFaceBox.left * sourceFrameWidth;
-      const originalY = cameraVisionFaceBox.top * sourceFrameHeight;
-      const originalW = cameraVisionFaceBox.width * sourceFrameWidth;
-      const originalH = cameraVisionFaceBox.height * sourceFrameHeight;
+      const originalX = box.left * sourceFrameWidth;
+      const originalY = box.top * sourceFrameHeight;
+      const originalW = box.width * sourceFrameWidth;
+      const originalH = box.height * sourceFrameHeight;
 
       let mapped = {
         left: originalX / orientedFrameWidth,
@@ -211,10 +204,10 @@ export default function FaceScanView({
       };
     } else {
       nextPx = {
-        left: cameraVisionFaceBox.left,
-        top: cameraVisionFaceBox.top,
-        width: cameraVisionFaceBox.width,
-        height: cameraVisionFaceBox.height,
+        left: box.left,
+        top: box.top,
+        width: box.width,
+        height: box.height,
       };
     }
 
@@ -226,10 +219,29 @@ export default function FaceScanView({
     const clampedLeft = clamp(centerX - clampedWidth / 2, 0, Math.max(0, overlayWidth - clampedWidth));
     const clampedTop = clamp(centerY - clampedHeight / 2, 0, Math.max(0, overlayHeight - clampedHeight));
 
-    animatedFaceBoxLeft.value = withTiming(clampedLeft, animation);
-    animatedFaceBoxTop.value = withTiming(clampedTop, animation);
-    animatedFaceBoxWidth.value = withTiming(clampedWidth, animation);
-    animatedFaceBoxHeight.value = withTiming(clampedHeight, animation);
+    return {
+      left: clampedLeft,
+      top: clampedTop,
+      width: clampedWidth,
+      height: clampedHeight,
+    };
+  };
+
+  useEffect(() => {
+    const animation = { duration: 80 };
+    if (!cameraVisionFaceBox) {
+      animatedFaceBoxLeft.value = withTiming(fallbackFaceBoxPx.left, animation);
+      animatedFaceBoxTop.value = withTiming(fallbackFaceBoxPx.top, animation);
+      animatedFaceBoxWidth.value = withTiming(fallbackFaceBoxPx.width, animation);
+      animatedFaceBoxHeight.value = withTiming(fallbackFaceBoxPx.height, animation);
+      return;
+    }
+
+    const px = mapFaceBoxToPx(cameraVisionFaceBox);
+    animatedFaceBoxLeft.value = withTiming(px.left, animation);
+    animatedFaceBoxTop.value = withTiming(px.top, animation);
+    animatedFaceBoxWidth.value = withTiming(px.width, animation);
+    animatedFaceBoxHeight.value = withTiming(px.height, animation);
   }, [cameraVisionFaceBox, overlayWidth, overlayHeight, isFrontCamera, fallbackFaceBoxPx]);
 
   const animatedFaceBoxStyle = useAnimatedStyle(() => ({
@@ -310,8 +322,38 @@ export default function FaceScanView({
 
   const renderDetectionOverlay = () => {
     if (!showDetectionOverlay) return null;
+    const bystanderFaces = (cameraVisionAllFaces || []).filter(f => !f.isTarget);
     return (
       <View style={styles.fullScreenDetectionOverlay} pointerEvents="none">
+        {bystanderFaces.map((face) => {
+          const px = mapFaceBoxToPx({
+            left: face.left,
+            top: face.top,
+            width: face.width,
+            height: face.height,
+            frameWidth: face.frameWidth,
+            frameHeight: face.frameHeight,
+          });
+          return (
+            <View
+              key={face.id}
+              style={[
+                styles.detectionFaceBox,
+                {
+                  position: 'absolute',
+                  left: px.left,
+                  top: px.top,
+                  width: px.width,
+                  height: px.height,
+                  borderColor: 'rgba(255, 255, 255, 0.35)',
+                  borderStyle: 'dashed',
+                  borderWidth: 2,
+                  backgroundColor: 'rgba(255, 255, 255, 0.05)',
+                },
+              ]}
+            />
+          );
+        })}
         <AnimatedReanimated.View style={[styles.detectionFaceBox, cameraVisionFaceDetected && styles.detectionFaceBoxActive, animatedFaceBoxStyle]} />
         {showTelemetry && (
           <AnimatedReanimated.View style={[styles.detectionStatusCard, animatedStatusCardStyle]}>

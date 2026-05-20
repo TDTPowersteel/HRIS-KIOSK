@@ -388,6 +388,7 @@ export function useAttendance() {
   const [cameraVisionFaceDetected, setCameraVisionFaceDetected] = useState(false);
   const [cameraVisionReadiness, setCameraVisionReadiness] = useState(0);
   const [cameraVisionFaceBox, setCameraVisionFaceBox] = useState<UiFaceBox | null>(null);
+  const [cameraVisionAllFaces, setCameraVisionAllFaces] = useState<Array<{ id: string; left: number; top: number; width: number; height: number; isTarget: boolean; frameWidth?: number; frameHeight?: number }>>([]);
   const [cameraVisionFaceTelemetry, setCameraVisionFaceTelemetry] = useState<CameraVisionFaceTelemetry | null>(null);
   const [successAnimationTick, setSuccessAnimationTick] = useState(0);
 
@@ -487,6 +488,7 @@ export function useAttendance() {
         setCameraVisionFaceDetected(false);
         setCameraVisionReadiness(0);
         setCameraVisionFaceBox(null);
+        setCameraVisionAllFaces([]);
         setCameraVisionFaceTelemetry(null);
         setScanStage('idle');
         modalContextRef.current = 'other';
@@ -503,6 +505,7 @@ export function useAttendance() {
         setCameraVisionFaceDetected(false);
         setCameraVisionReadiness(0);
         setCameraVisionFaceBox(null);
+        setCameraVisionAllFaces([]);
         setCameraVisionFaceTelemetry(null);
         identityStatusRef.current = 'idle';
         livenessStatusRef.current = 'idle';
@@ -585,6 +588,7 @@ export function useAttendance() {
     setCameraVisionFaceDetected(false);
     setCameraVisionReadiness(0);
     setCameraVisionFaceBox(null);
+    setCameraVisionAllFaces([]);
     setCameraVisionFaceTelemetry(null);
     setScanStage('idle');
     qrProcessingRef.current = false;
@@ -1139,36 +1143,62 @@ export function useAttendance() {
     telemetry?: CameraVisionFaceTelemetry | null,
     frameWidth?: number,
     frameHeight?: number,
+    allFaces?: Array<{ x: number; y: number; width: number; height: number; isTarget: boolean }> | null,
   ) => {
     setCameraVisionFaceDetected(detected);
     setCameraVisionReadiness(readinessPercent);
     setCameraVisionFaceTelemetry(detected ? (telemetry ?? null) : null);
     if (!detected) {
-      // Keep last box briefly while detector stabilizes; clear only when readiness is fully reset.
       if (readinessPercent <= 0) {
         setCameraVisionFaceBox(null);
+        setCameraVisionAllFaces([]);
       }
-    } else if (!box) {
-      // Fallback for detectors that report face presence without usable bounds.
-      // Provide a normalized fallback (0..1) so the UI can map to full-screen pixels.
-      setCameraVisionFaceBox({
-        left: 0.42,
-        top: 0.08,
-        width: 0.36,
-        height: 0.5,
-        frameWidth,
-        frameHeight,
-      });
     } else {
-      // Store normalized coordinates (0..1). UI will map to screen pixels so overlay can be full-screen.
-      setCameraVisionFaceBox({
-        left: box.x,
-        top: box.y,
-        width: box.width,
-        height: box.height,
-        frameWidth,
-        frameHeight,
-      });
+      if (!box) {
+        setCameraVisionFaceBox({
+          left: 0.42,
+          top: 0.08,
+          width: 0.36,
+          height: 0.5,
+          frameWidth,
+          frameHeight,
+        });
+      } else {
+        setCameraVisionFaceBox({
+          left: box.x,
+          top: box.y,
+          width: box.width,
+          height: box.height,
+          frameWidth,
+          frameHeight,
+        });
+      }
+
+      if (allFaces && allFaces.length > 0) {
+        const mapped = allFaces.map((f, idx) => ({
+          id: `face_${idx}_${f.x.toFixed(3)}_${f.y.toFixed(3)}`,
+          left: f.x,
+          top: f.y,
+          width: f.width,
+          height: f.height,
+          isTarget: f.isTarget,
+          frameWidth,
+          frameHeight,
+        }));
+        setCameraVisionAllFaces(mapped);
+      } else {
+        const primaryBox = box ?? { x: 0.42, y: 0.08, width: 0.36, height: 0.5 };
+        setCameraVisionAllFaces([{
+          id: 'primary',
+          left: primaryBox.x,
+          top: primaryBox.y,
+          width: primaryBox.width,
+          height: primaryBox.height,
+          isTarget: true,
+          frameWidth,
+          frameHeight,
+        }]);
+      }
     }
     if (
       faceEngineRef.current === 'camera_vision' &&
@@ -1306,6 +1336,25 @@ export function useAttendance() {
                 Math.round((stableFaceFrames.value / CAMERA_VISION_STABLE_FACE_FRAMES) * 100),
               );
               const telemetry = extractFaceTelemetry(trackedFace?.sourceFace);
+
+              const allFacesList = [];
+              for (let i = 0; i < faces.length; i++) {
+                const f = faces[i];
+                const fBox = extractNormalizedFaceBox(f, frame.width, frame.height);
+                if (fBox && isFaceBoxDetected(fBox)) {
+                  const isTarget = trackedFace && 
+                    Math.abs(fBox.x - trackedFace.box.x) < 0.08 && 
+                    Math.abs(fBox.y - trackedFace.box.y) < 0.08;
+                  allFacesList.push({
+                    x: fBox.x,
+                    y: fBox.y,
+                    width: fBox.width,
+                    height: fBox.height,
+                    isTarget: !!isTarget,
+                  });
+                }
+              }
+
               if (
                 readinessPercent !== lastCameraVisionReadinessSent.value ||
                 lastCameraVisionDetectedSent.value !== true
@@ -1319,6 +1368,7 @@ export function useAttendance() {
                   telemetry,
                   frame.width,
                   frame.height,
+                  allFacesList,
                 );
               } else {
                 onCameraVisionDetectionProgress(
@@ -1328,6 +1378,7 @@ export function useAttendance() {
                   telemetry,
                   frame.width,
                   frame.height,
+                  allFacesList,
                 );
               }
             }
@@ -1348,7 +1399,7 @@ export function useAttendance() {
               );
               lastCameraVisionReadinessSent.value = readinessPercent;
               lastCameraVisionDetectedSent.value = false;
-              onCameraVisionDetectionProgress(false, readinessPercent, null, null, frame.width, frame.height);
+              onCameraVisionDetectionProgress(false, readinessPercent, null, null, frame.width, frame.height, []);
             }
             onTouchlessFaceLost();
           }
@@ -1689,6 +1740,7 @@ export function useAttendance() {
       setCameraVisionFaceDetected(false);
       setCameraVisionReadiness(0);
       setCameraVisionFaceBox(null);
+      setCameraVisionAllFaces([]);
       setCameraVisionFaceTelemetry(null);
       cameraVisionAutoTriggeredRef.current = false;
     }
@@ -1745,7 +1797,7 @@ export function useAttendance() {
     isLoading, isVerifying, isQrLoading, isClockingOut, isCapturingHardware: uiCapturingHardware,
     qrVerified, qrSuccessLocal, selectedUser, clockInTime: displayClockInTime, faceCountdown,
     touchlessEnabled, offlineModeEnabled, livenessEnabled, faceEngine, pendingSyncCount,
-    scanStage, cameraVisionFaceDetected, cameraVisionReadiness, cameraVisionFaceBox, cameraVisionFaceTelemetry, successAnimationTick,
+    scanStage, cameraVisionFaceDetected, cameraVisionReadiness, cameraVisionFaceBox, cameraVisionAllFaces, cameraVisionFaceTelemetry, successAnimationTick,
     showResultModal, modalType, modalTitle, modalMessage, modalHint, livenessMessage,
     closeModal, handleAttendance,
   };
