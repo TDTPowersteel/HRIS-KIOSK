@@ -46,6 +46,7 @@ export type CameraVisionEyeStatus = 'open' | 'closed' | 'mixed' | 'unknown';
 export type CameraVisionFaceTelemetry = {
   yaw: number | null;
   pitch: number | null;
+  roll: number | null;
   leftEyeOpenProbability: number | null;
   rightEyeOpenProbability: number | null;
   eyeStatus: CameraVisionEyeStatus;

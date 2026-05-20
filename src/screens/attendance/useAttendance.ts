@@ -68,10 +68,10 @@ function resizeFrameToTensor(buffer: ArrayBuffer, srcW: number, srcH: number, fa
         const vVal = src[uvIdx + 1] - 128;
 
         const di = (y * SIZE + x) * 3;
-        // BT.601 YUV→RGB normalized to [-1, 1] for MobileFaceNet
-        dst[di]     = (Math.max(0, Math.min(255, yVal + 1.402 * vVal)) - 127.5) / 128.0;
-        dst[di + 1] = (Math.max(0, Math.min(255, yVal - 0.344 * uVal - 0.714 * vVal)) - 127.5) / 128.0;
-        dst[di + 2] = (Math.max(0, Math.min(255, yVal + 1.772 * uVal)) - 127.5) / 128.0;
+        // BT.601 YUV→RGB normalized to [0, 1] as per MobileFaceNet README
+        dst[di]     = Math.max(0, Math.min(255, yVal + 1.402 * vVal)) / 255.0;
+        dst[di + 1] = Math.max(0, Math.min(255, yVal - 0.344 * uVal - 0.714 * vVal)) / 255.0;
+        dst[di + 2] = Math.max(0, Math.min(255, yVal + 1.772 * uVal)) / 255.0;
       }
     }
   } else {
@@ -85,9 +85,9 @@ function resizeFrameToTensor(buffer: ArrayBuffer, srcW: number, srcH: number, fa
         const si = (sy * srcW + sx) * bytesPerPx;
         const di = (y * SIZE + x) * 3;
 
-        dst[di]     = (src[si]     - 127.5) / 128.0;
-        dst[di + 1] = (src[si + 1] - 127.5) / 128.0;
-        dst[di + 2] = (src[si + 2] - 127.5) / 128.0;
+        dst[di]     = src[si]     / 255.0;
+        dst[di + 1] = src[si + 1] / 255.0;
+        dst[di + 2] = src[si + 2] / 255.0;
       }
     }
   }
@@ -115,9 +115,9 @@ function cropAndResizeRgbaToTensor(
       const sy = Math.min(cropY + Math.floor(y * yr), srcH - 1);
       const si = (sy * srcW + sx) * 4; // RGBA = 4 bytes per pixel
       const di = (y * SIZE + x) * 3;
-      dst[di]     = (rgba[si]     - 127.5) / 128.0;
-      dst[di + 1] = (rgba[si + 1] - 127.5) / 128.0;
-      dst[di + 2] = (rgba[si + 2] - 127.5) / 128.0;
+      dst[di]     = rgba[si]     / 255.0;
+      dst[di + 1] = rgba[si + 1] / 255.0;
+      dst[di + 2] = rgba[si + 2] / 255.0;
     }
   }
   return dst.buffer;
@@ -233,8 +233,8 @@ function selectBestDetectedFace(faces: any[], frameWidth: number, frameHeight: n
     const hasPlausiblePose =
       typeof yaw === 'number' &&
       typeof roll === 'number' &&
-      Math.abs(yaw) <= 45 &&
-      Math.abs(roll) <= 45;
+      Math.abs(yaw) <= 35 &&
+      Math.abs(roll) <= 35;
 
     if (confidence != null && confidence < 0.62) continue;
     if (confidence == null && landmarkCount < 3 && !hasEyeProbabilities && !hasPlausiblePose) continue;
@@ -249,17 +249,27 @@ function selectBestDetectedFace(faces: any[], frameWidth: number, frameHeight: n
   return { box: best.box, confidence: best.confidence, sourceFace: best.sourceFace };
 }
 
-function isFaceBoxUsableForRecognition(faceBox: NormalizedFaceBox): boolean {
+function isFaceBoxUsableForRecognition(faceBox: NormalizedFaceBox, face?: any): boolean {
   'worklet';
   const area = faceBox.width * faceBox.height;
   const centerX = faceBox.x + faceBox.width / 2;
   const centerY = faceBox.y + faceBox.height / 2;
 
+  // Basic size and position
   if (faceBox.width < 0.12 || faceBox.height < 0.16) return false;
   if (area < 0.022) return false;
   if (faceBox.x < 0.005 || faceBox.y < 0.005) return false;
   if (faceBox.x + faceBox.width > 0.995 || faceBox.y + faceBox.height > 0.995) return false;
   if (centerX < 0.14 || centerX > 0.86 || centerY < 0.14 || centerY > 0.86) return false;
+
+  // Frontal gate (Pose check)
+  if (face) {
+    const yaw = face?.yawAngle ?? 0;
+    const pitch = face?.pitchAngle ?? 0;
+    const roll = face?.rollAngle ?? 0;
+    if (Math.abs(yaw) > 18 || Math.abs(pitch) > 18 || Math.abs(roll) > 18) return false;
+  }
+
   return true;
 }
 
@@ -267,7 +277,7 @@ function selectBestRecognitionFace(faces: any[], frameWidth: number, frameHeight
   'worklet';
   const detectedFace = selectBestDetectedFace(faces, frameWidth, frameHeight);
   if (!detectedFace) return null;
-  if (isFaceBoxUsableForRecognition(detectedFace.box)) return detectedFace;
+  if (isFaceBoxUsableForRecognition(detectedFace.box, detectedFace.sourceFace)) return detectedFace;
 
   // Fallback to detected face if quality gate is too strict on specific devices.
   // Embedding validation + matching threshold still protect against false positives.
@@ -288,6 +298,7 @@ function extractFaceTelemetry(face: any): CameraVisionFaceTelemetry | null {
   };
   const yaw = toFiniteNumber(face?.yawAngle ?? face?.eulerY ?? face?.headEulerAngleY);
   const pitch = toFiniteNumber(face?.pitchAngle ?? face?.eulerX ?? face?.headEulerAngleX);
+  const roll = toFiniteNumber(face?.rollAngle ?? face?.eulerZ ?? face?.headEulerAngleZ);
   const leftEyeOpenProbability = toFiniteNumber(
     face?.leftEyeOpenProbability ?? face?.leftEyeOpenProb ?? face?.leftEyeProbability,
   );
@@ -307,6 +318,7 @@ function extractFaceTelemetry(face: any): CameraVisionFaceTelemetry | null {
   return {
     yaw,
     pitch,
+    roll,
     leftEyeOpenProbability,
     rightEyeOpenProbability,
     eyeStatus,
@@ -875,27 +887,31 @@ export function useAttendance() {
       const uprightW = Math.min(photo.width, photo.height);
       const uprightH = Math.max(photo.width, photo.height);
 
-      const padX = faceBox.width * 0.20;
-      const padY = faceBox.height * 0.20;
+      // FORCE SQUARE CROP: Face recognition models (MobileFaceNet/ArcFace) are highly sensitive to stretching.
+      // We calculate a square bounding box centered on the detected face.
+      const centerX = faceBox.left + faceBox.width / 2;
+      const centerY = faceBox.top + faceBox.height / 2;
+      const side = Math.max(faceBox.width, faceBox.height) * 1.65; // 1.65x multiplier is standard for these models
       
-      const x1 = Math.max(0, faceBox.left - padX);
-      const y1 = Math.max(0, faceBox.top - padY);
-      const x2 = Math.min(1, faceBox.left + faceBox.width + padX);
-      const y2 = Math.min(1, faceBox.top + faceBox.height + padY);
+      let cropX = centerX - side / 2;
+      let cropY = centerY - (side * 0.55); // Slightly offset up to center the eyes/nose better
+      
+      // Clamp to image bounds
+      cropX = Math.max(0, Math.min(1 - side, cropX));
+      cropY = Math.max(0, Math.min(1 - side, cropY));
 
-      const originX = Math.floor(x1 * uprightW);
-      const originY = Math.floor(y1 * uprightH);
-      const cropWidth = Math.floor((x2 - x1) * uprightW);
-      const cropHeight = Math.floor((y2 - y1) * uprightH);
+      const originX = Math.floor(cropX * uprightW);
+      const originY = Math.floor(cropY * uprightH);
+      const size = Math.floor(side * Math.min(uprightW, uprightH));
 
-      console.log(`[CameraVision] Native Crop: origin=${originX},${originY} size=${cropWidth}x${cropHeight} (photo upright: ${uprightW}x${uprightH})`);
+      console.log(`[CameraVision] Square Crop: origin=${originX},${originY} size=${size}x${size} (photo upright: ${uprightW}x${uprightH})`);
 
-      if (cropWidth > 0 && cropHeight > 0) {
+      if (size > 0) {
         try {
           const manipResult = await ImageManipulator.manipulateAsync(
             imageToProcess,
             [
-              { crop: { originX, originY, width: cropWidth, height: cropHeight } },
+              { crop: { originX, originY, width: size, height: size } },
               { resize: { width: 112, height: 112 } }
             ],
             { format: ImageManipulator.SaveFormat.JPEG, compress: 1.0 }
