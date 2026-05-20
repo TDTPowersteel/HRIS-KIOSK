@@ -12,7 +12,7 @@ import {
 import { useFaceDetector } from 'react-native-vision-camera-face-detector';
 import { Worklets, useSharedValue } from 'react-native-worklets-core';
 import { useCallback, useEffect, useRef, useState, useMemo } from 'react';
-import { Alert, Animated, Platform, ToastAndroid } from 'react-native';
+import { Alert, Animated, Platform, ToastAndroid, useWindowDimensions } from 'react-native';
 import { BACKEND_URL } from '../../config/backend';
 import { enqueueOfflineAttendance, getOfflineAttendanceQueue } from '../../utils/offlineAttendance';
 import { resolveOfflineUserFromQr, upsertOfflineUserCacheUser } from '../../utils/offlineUsers';
@@ -81,6 +81,8 @@ type UiFaceBox = {
   top: number;
   width: number;
   height: number;
+  frameWidth?: number;
+  frameHeight?: number;
 };
 
 type FaceSelection = {
@@ -126,8 +128,8 @@ function extractNormalizedFaceBox(face: any, frameWidth: number, frameHeight: nu
 
   const clampedX = Math.max(0, Math.min(1, nx));
   const clampedY = Math.max(0, Math.min(1, ny));
-  const clampedW = Math.max(0.04, Math.min(1, nw));
-  const clampedH = Math.max(0.04, Math.min(1, nh));
+  const clampedW = Math.max(0.04, Math.min(1 - clampedX, nw));
+  const clampedH = Math.max(0.04, Math.min(1 - clampedY, nh));
   if (clampedW <= 0 || clampedH <= 0) return null;
   return { x: clampedX, y: clampedY, width: clampedW, height: clampedH };
 }
@@ -418,6 +420,7 @@ export function useAttendance() {
   const [snapSound, setSnapSound] = useState<Audio.Sound | null>(null);
 
   // Liveness detection
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const { detectFaces, stopListeners } = useFaceDetector({
     cameraFacing: frontDevice ? 'front' : 'back',
     classificationMode: 'all',
@@ -1132,19 +1135,38 @@ export function useAttendance() {
     readinessPercent: number,
     box?: NormalizedFaceBox | null,
     telemetry?: CameraVisionFaceTelemetry | null,
+    frameWidth?: number,
+    frameHeight?: number,
   ) => {
     setCameraVisionFaceDetected(detected);
     setCameraVisionReadiness(readinessPercent);
     setCameraVisionFaceTelemetry(detected ? (telemetry ?? null) : null);
     if (!detected) {
-      setCameraVisionFaceBox(null);
+      // Keep last box briefly while detector stabilizes; clear only when readiness is fully reset.
+      if (readinessPercent <= 0) {
+        setCameraVisionFaceBox(null);
+      }
     } else if (!box) {
       // Fallback for detectors that report face presence without usable bounds.
       // Provide a normalized fallback (0..1) so the UI can map to full-screen pixels.
-      setCameraVisionFaceBox({ left: 0.42, top: 0.08, width: 0.36, height: 0.5 });
+      setCameraVisionFaceBox({
+        left: 0.42,
+        top: 0.08,
+        width: 0.36,
+        height: 0.5,
+        frameWidth,
+        frameHeight,
+      });
     } else {
       // Store normalized coordinates (0..1). UI will map to screen pixels so overlay can be full-screen.
-      setCameraVisionFaceBox({ left: box.x, top: box.y, width: box.width, height: box.height });
+      setCameraVisionFaceBox({
+        left: box.x,
+        top: box.y,
+        width: box.width,
+        height: box.height,
+        frameWidth,
+        frameHeight,
+      });
     }
     if (
       faceEngineRef.current === 'camera_vision' &&
@@ -1278,9 +1300,23 @@ export function useAttendance() {
               ) {
                 lastCameraVisionReadinessSent.value = readinessPercent;
                 lastCameraVisionDetectedSent.value = true;
-                onCameraVisionDetectionProgress(true, readinessPercent, trackedFace?.box ?? null, telemetry);
+                onCameraVisionDetectionProgress(
+                  true,
+                  readinessPercent,
+                  trackedFace?.box ?? null,
+                  telemetry,
+                  frame.width,
+                  frame.height,
+                );
               } else {
-                onCameraVisionDetectionProgress(true, readinessPercent, trackedFace?.box ?? null, telemetry);
+                onCameraVisionDetectionProgress(
+                  true,
+                  readinessPercent,
+                  trackedFace?.box ?? null,
+                  telemetry,
+                  frame.width,
+                  frame.height,
+                );
               }
             }
             if (stableFaceFrames.value >= CAMERA_VISION_STABLE_FACE_FRAMES) {
@@ -1300,7 +1336,7 @@ export function useAttendance() {
               );
               lastCameraVisionReadinessSent.value = readinessPercent;
               lastCameraVisionDetectedSent.value = false;
-              onCameraVisionDetectionProgress(false, readinessPercent, null, null);
+              onCameraVisionDetectionProgress(false, readinessPercent, null, null, frame.width, frame.height);
             }
             onTouchlessFaceLost();
           }

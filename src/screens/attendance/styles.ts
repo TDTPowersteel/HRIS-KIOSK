@@ -175,7 +175,8 @@ export const styles = StyleSheet.create({
   },
   fullScreenDetectionOverlay: {
     ...StyleSheet.absoluteFillObject,
-    zIndex: 30,
+    zIndex: 80,
+    elevation: 80,
     // pointerEvents is set on the component; styles control layout only
   },
   detectionFaceBox: {
@@ -184,10 +185,12 @@ export const styles = StyleSheet.create({
     top: 20,
     width: 165,
     height: 200,
-    borderRadius: 90,
+    borderRadius: 0,
     borderWidth: 3,
-    borderColor: 'rgba(255,255,255,0.45)',
-    backgroundColor: 'rgba(255,255,255,0.04)',
+    borderColor: 'rgba(255,255,255,0.25)',
+    backgroundColor: 'transparent',
+    zIndex: 2,
+    elevation: 2,
   },
   detectionFaceBoxActive: {
     borderColor: '#4ade80',
@@ -220,6 +223,8 @@ export const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.2)',
     minWidth: 128,
+    zIndex: 3,
+    elevation: 3,
   },
   detectionStatusText: {
     color: '#fff',

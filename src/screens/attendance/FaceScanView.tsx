@@ -1,8 +1,9 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Animated,
   Image,
+  LayoutChangeEvent,
   Text,
   TouchableOpacity,
   View,
@@ -37,7 +38,7 @@ type Props = {
   scanStage: FaceScanStage;
   cameraVisionFaceDetected: boolean;
   cameraVisionReadiness: number;
-  cameraVisionFaceBox: { left: number; top: number; width: number; height: number } | null;
+  cameraVisionFaceBox: { left: number; top: number; width: number; height: number; frameWidth?: number; frameHeight?: number } | null;
   cameraVisionFaceTelemetry: CameraVisionFaceTelemetry | null;
   successAnimationTick: number;
   pendingSyncCount: number;
@@ -82,9 +83,48 @@ export default function FaceScanView({
   onOpenOffline,
   onAttendance,
 }: Props) {
+  const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
+  const rotateNormalizedBox = (
+    box: { left: number; top: number; width: number; height: number },
+    rotation: 0 | 90 | -90 | 180,
+  ) => {
+    if (rotation === 90) {
+      return {
+        left: box.top,
+        top: 1 - (box.left + box.width),
+        width: box.height,
+        height: box.width,
+      };
+    }
+    if (rotation === -90) {
+      return {
+        left: 1 - (box.top + box.height),
+        top: box.left,
+        width: box.height,
+        height: box.width,
+      };
+    }
+    if (rotation === 180) {
+      return {
+        left: 1 - (box.left + box.width),
+        top: 1 - (box.top + box.height),
+        width: box.width,
+        height: box.height,
+      };
+    }
+    return box;
+  };
+  const mirrorNormalizedBoxX = (box: { left: number; top: number; width: number; height: number }) => ({
+    left: 1 - (box.left + box.width),
+    top: box.top,
+    width: box.width,
+    height: box.height,
+  });
+
   const { width, height } = useWindowDimensions();
   const isLandscape = width > height;
   const isTablet = Math.min(width, height) >= 600;
+  const [overlaySize, setOverlaySize] = useState({ width, height });
 
   // Track the actual device orientation via Expo to apply manual rotation fixes on Android
   const [orientation, setOrientation] = useState<ScreenOrientation.Orientation>(
@@ -135,15 +175,29 @@ export default function FaceScanView({
   }
 
   const isCameraVisionMode = faceEngine === 'camera_vision';
+  const isFrontCamera = device?.position === 'front';
   const detectionPercent = Math.max(0, Math.min(100, Math.round(cameraVisionReadiness)));
+  const overlayWidth = overlaySize.width > 0 ? overlaySize.width : (isLandscape ? Math.round(width * 0.6) : width);
+  const overlayHeight = overlaySize.height > 0 ? overlaySize.height : height;
 
   // Fallback normalized box (0..1) and pixel fallback derived from window size
   const fallbackFaceBoxNormalized = { left: 0.42, top: 0.08, width: 0.36, height: 0.5 };
   const fallbackFaceBoxPx = {
-    left: Math.round(width * fallbackFaceBoxNormalized.left),
-    top: Math.round(height * fallbackFaceBoxNormalized.top),
-    width: Math.round(width * fallbackFaceBoxNormalized.width),
-    height: Math.round(height * fallbackFaceBoxNormalized.height),
+    left: Math.round(overlayWidth * fallbackFaceBoxNormalized.left),
+    top: Math.round(overlayHeight * fallbackFaceBoxNormalized.top),
+    width: Math.round(overlayWidth * fallbackFaceBoxNormalized.width),
+    height: Math.round(overlayHeight * fallbackFaceBoxNormalized.height),
+  };
+  const handleOverlayLayout = (event: LayoutChangeEvent) => {
+    const nextWidth = Math.round(event.nativeEvent.layout.width);
+    const nextHeight = Math.round(event.nativeEvent.layout.height);
+    if (nextWidth > 0 && nextHeight > 0) {
+      setOverlaySize((prev) =>
+        prev.width === nextWidth && prev.height === nextHeight
+          ? prev
+          : { width: nextWidth, height: nextHeight },
+      );
+    }
   };
 
   const animatedFaceBoxLeft = useSharedValue(fallbackFaceBoxPx.left);
@@ -152,7 +206,7 @@ export default function FaceScanView({
   const animatedFaceBoxHeight = useSharedValue(fallbackFaceBoxPx.height);
 
   useEffect(() => {
-    const animation = { duration: 100 };
+    const animation = { duration: 80 };
     if (!cameraVisionFaceBox) {
       animatedFaceBoxLeft.value = withTiming(fallbackFaceBoxPx.left, animation);
       animatedFaceBoxTop.value = withTiming(fallbackFaceBoxPx.top, animation);
@@ -162,16 +216,60 @@ export default function FaceScanView({
     }
 
     let nextPx: { left: number; top: number; width: number; height: number };
-    // If cameraVisionFaceBox is normalized (values <= 1), map to screen pixels
+    
     if (cameraVisionFaceBox.width <= 1 && cameraVisionFaceBox.height <= 1) {
+      // The box is normalized 0..1 relative to the raw frame.
+      const sourceFrameWidth = cameraVisionFaceBox.frameWidth && cameraVisionFaceBox.frameWidth > 0
+        ? cameraVisionFaceBox.frameWidth
+        : overlayWidth;
+      const sourceFrameHeight = cameraVisionFaceBox.frameHeight && cameraVisionFaceBox.frameHeight > 0
+        ? cameraVisionFaceBox.frameHeight
+        : overlayHeight;
+
+      const frameIsLandscape = sourceFrameWidth > sourceFrameHeight;
+      const viewIsLandscape = overlayWidth > overlayHeight;
+
+      // Determine if sensor rotation mismatch exists
+      const isRotated = (frameIsLandscape && !viewIsLandscape) || (!frameIsLandscape && viewIsLandscape);
+
+      const orientedFrameWidth = isRotated ? sourceFrameHeight : sourceFrameWidth;
+      const orientedFrameHeight = isRotated ? sourceFrameWidth : sourceFrameHeight;
+
+      // Recover the original pixel values (useAttendance.ts divided by raw frame dimensions)
+      const originalX = cameraVisionFaceBox.left * sourceFrameWidth;
+      const originalY = cameraVisionFaceBox.top * sourceFrameHeight;
+      const originalW = cameraVisionFaceBox.width * sourceFrameWidth;
+      const originalH = cameraVisionFaceBox.height * sourceFrameHeight;
+
+      // MLKit returns upright coordinates, so re-normalize against the oriented dimensions
+      let mapped = {
+        left: originalX / orientedFrameWidth,
+        top: originalY / orientedFrameHeight,
+        width: originalW / orientedFrameWidth,
+        height: originalH / orientedFrameHeight,
+      };
+
+      // Native frame buffers on front cameras are mirrored in preview
+      if (isFrontCamera) {
+        mapped.left = 1 - (mapped.left + mapped.width);
+      }
+
+      // Correct for camera resizeMode="cover" crop
+      const srcW = orientedFrameWidth;
+      const srcH = orientedFrameHeight;
+      const coverScale = Math.max(overlayWidth / srcW, overlayHeight / srcH);
+      const renderedW = srcW * coverScale;
+      const renderedH = srcH * coverScale;
+      const cropOffsetX = (overlayWidth - renderedW) / 2;
+      const cropOffsetY = (overlayHeight - renderedH) / 2;
+
       nextPx = {
-        left: Math.round(cameraVisionFaceBox.left * width),
-        top: Math.round(cameraVisionFaceBox.top * height),
-        width: Math.round(cameraVisionFaceBox.width * width),
-        height: Math.round(cameraVisionFaceBox.height * height),
+        left: Math.round(mapped.left * srcW * coverScale + cropOffsetX),
+        top: Math.round(mapped.top * srcH * coverScale + cropOffsetY),
+        width: Math.round(mapped.width * srcW * coverScale),
+        height: Math.round(mapped.height * srcH * coverScale),
       };
     } else {
-      // Already in pixel coordinates
       nextPx = {
         left: cameraVisionFaceBox.left,
         top: cameraVisionFaceBox.top,
@@ -180,11 +278,34 @@ export default function FaceScanView({
       };
     }
 
-    animatedFaceBoxLeft.value = withTiming(nextPx.left, animation);
-    animatedFaceBoxTop.value = withTiming(nextPx.top, animation);
-    animatedFaceBoxWidth.value = withTiming(nextPx.width, animation);
-    animatedFaceBoxHeight.value = withTiming(nextPx.height, animation);
-  }, [cameraVisionFaceBox, animatedFaceBoxLeft, animatedFaceBoxTop, animatedFaceBoxWidth, animatedFaceBoxHeight, width, height]);
+    const minSize = 42;
+    const clampedWidth = Math.max(minSize, Math.min(overlayWidth, nextPx.width));
+    const clampedHeight = Math.max(minSize, Math.min(overlayHeight, nextPx.height));
+    const centerX = nextPx.left + nextPx.width / 2;
+    const centerY = nextPx.top + nextPx.height / 2;
+    const clampedLeft = clamp(centerX - clampedWidth / 2, 0, Math.max(0, overlayWidth - clampedWidth));
+    const clampedTop = clamp(centerY - clampedHeight / 2, 0, Math.max(0, overlayHeight - clampedHeight));
+
+    animatedFaceBoxLeft.value = withTiming(clampedLeft, animation);
+    animatedFaceBoxTop.value = withTiming(clampedTop, animation);
+    animatedFaceBoxWidth.value = withTiming(clampedWidth, animation);
+    animatedFaceBoxHeight.value = withTiming(clampedHeight, animation);
+  }, [
+    cameraVisionFaceBox,
+    animatedFaceBoxLeft,
+    animatedFaceBoxTop,
+    animatedFaceBoxWidth,
+    animatedFaceBoxHeight,
+    overlayWidth,
+    overlayHeight,
+    orientation,
+    requiresAndroidRotationFix,
+    isFrontCamera,
+    fallbackFaceBoxPx.left,
+    fallbackFaceBoxPx.top,
+    fallbackFaceBoxPx.width,
+    fallbackFaceBoxPx.height,
+  ]);
 
   const animatedFaceBoxStyle = useAnimatedStyle(() => ({
     left: animatedFaceBoxLeft.value,
@@ -192,24 +313,71 @@ export default function FaceScanView({
     width: animatedFaceBoxWidth.value,
     height: animatedFaceBoxHeight.value,
   }));
+  const animatedStatusCardStyle = useAnimatedStyle(() => {
+    const cardHeight = 74;
+    const margin = 6;
 
-  const eyeStatusLabel = (() => {
+    const left = animatedFaceBoxLeft.value + margin;
+    const top = animatedFaceBoxTop.value + animatedFaceBoxHeight.value - cardHeight - margin;
+
+    return {
+      left,
+      top,
+    };
+  });
+
+  const [eyeStatusLabel, setEyeStatusLabel] = useState('Unknown');
+  const eyesClosedSinceRef = useRef<number | null>(null);
+  useEffect(() => {
+    const left = cameraVisionFaceTelemetry?.leftEyeOpenProbability;
+    const right = cameraVisionFaceTelemetry?.rightEyeOpenProbability;
+
+    if (typeof left === 'number' && typeof right === 'number') {
+      const now = Date.now();
+      const eyesClosed = left < 0.35 && right < 0.35;
+      const eyesOpen = left > 0.55 && right > 0.55;
+      if (eyesClosed) {
+        if (!eyesClosedSinceRef.current) {
+          eyesClosedSinceRef.current = now;
+        }
+        const closedMs = now - eyesClosedSinceRef.current;
+        setEyeStatusLabel(closedMs >= 1000 ? 'Closed' : 'Blinking');
+        return;
+      }
+      if (eyesOpen) {
+        eyesClosedSinceRef.current = null;
+        setEyeStatusLabel('Open');
+        return;
+      }
+      eyesClosedSinceRef.current = null;
+      setEyeStatusLabel('Blinking');
+      return;
+    }
+
+    eyesClosedSinceRef.current = null;
     switch (cameraVisionFaceTelemetry?.eyeStatus) {
       case 'open':
-        return 'Open';
-      case 'closed':
-        return 'Closed';
+        setEyeStatusLabel('Open');
+        break;
       case 'mixed':
-        return 'Blinking';
+      case 'closed':
+        setEyeStatusLabel('Blinking');
+        break;
       default:
-        return 'Unknown';
+        setEyeStatusLabel('Unknown');
+        break;
     }
-  })();
+  }, [
+    cameraVisionFaceTelemetry?.leftEyeOpenProbability,
+    cameraVisionFaceTelemetry?.rightEyeOpenProbability,
+    cameraVisionFaceTelemetry?.eyeStatus,
+  ]);
   const formatAngle = (value: number | null | undefined) =>
-    typeof value === 'number' && Number.isFinite(value) ? `${value >= 0 ? '+' : ''}${Math.round(value)}°` : '--';
+    typeof value === 'number' && Number.isFinite(value)
+      ? `${value >= 0 ? '+' : ''}${Math.round(value)}°`
+      : '--';
   const yawLabel = formatAngle(cameraVisionFaceTelemetry?.yaw);
   const pitchLabel = formatAngle(cameraVisionFaceTelemetry?.pitch);
-
   const showProcessingSpinner =
     isCapturingHardware ||
     isVerifying ||
@@ -222,7 +390,6 @@ export default function FaceScanView({
     !!cameraVisionFaceBox &&
     !showProcessingSpinner &&
     scanStage !== 'success';
-  const detectionLabel = cameraVisionFaceDetected ? `TRACKING ${detectionPercent}%` : 'SEARCHING...';
 
   const instructionText = (() => {
     if (scanStage === 'success') return 'FACE VERIFIED';
@@ -238,7 +405,9 @@ export default function FaceScanView({
     if (scanStage === 'success') return 'Success';
     if (showProcessingSpinner) return 'Please wait...';
     if (isCameraVisionMode && scanStage === 'detecting') {
-      return cameraVisionFaceDetected ? 'Hold steady for automatic capture' : 'Center your face in the frame';
+      return cameraVisionFaceDetected
+        ? `Hold steady for automatic capture • Eyes: ${eyeStatusLabel}`
+        : 'Center your face in the frame';
     }
     if (faceCountdown > 0) return 'Position your face';
     return livenessMessage;
@@ -247,7 +416,7 @@ export default function FaceScanView({
   // Portrait mode (phones) — full-screen camera with compact profile bar
   if (!isLandscape) {
     return (
-      <View style={styles.portraitFaceContainer}>
+      <View style={styles.portraitFaceContainer} onLayout={handleOverlayLayout}>
         <Camera
           ref={cameraRef}
           style={[styles.fullScreenCamera, { transform: cameraTransform }]}
@@ -261,6 +430,22 @@ export default function FaceScanView({
         />
         <Animated.View style={[styles.snapFlash, { opacity: flashAnim }]} pointerEvents="none" />
         <View style={styles.cameraTintLight} pointerEvents="none" />
+        {showDetectionOverlay && (
+          <View style={styles.fullScreenDetectionOverlay} pointerEvents="none">      
+            <AnimatedReanimated.View
+              style={[
+                styles.detectionFaceBox,
+                cameraVisionFaceDetected && styles.detectionFaceBoxActive,
+                animatedFaceBoxStyle,
+              ]}
+            />
+            <AnimatedReanimated.View style={[styles.detectionStatusCard, animatedStatusCardStyle]}>
+              <Text style={styles.detectionStatusText}>Yaw: {yawLabel}</Text>
+              <Text style={styles.detectionStatusText}>Pitch: {pitchLabel}</Text>
+              <Text style={styles.detectionStatusText}>Eyes: {eyeStatusLabel}</Text>
+            </AnimatedReanimated.View>
+          </View>
+        )}
 
         <SafeAreaView style={styles.overlaySafeArea} edges={['top', 'left', 'right', 'bottom']}>
           <View>
@@ -347,25 +532,6 @@ export default function FaceScanView({
                   <MaterialCommunityIcons name="face-recognition" size={120} color="rgba(255,255,255,0.2)" style={styles.faceIconBackground} />
                 )}
               </View>
-              {showDetectionOverlay && (
-                <View style={styles.fullScreenDetectionOverlay} pointerEvents="none">
-                  <AnimatedReanimated.View
-                    style={[
-                      styles.detectionFaceBox,
-                      cameraVisionFaceDetected && styles.detectionFaceBoxActive,
-                      animatedFaceBoxStyle,
-                    ]}
-                  />
-                  <View style={[styles.detectionBadge, { position: 'absolute', top: 12, left: 12 }]}>
-                    <Text style={styles.detectionBadgeText}>{detectionLabel}</Text>
-                  </View>
-                  <View style={[styles.detectionStatusCard, { position: 'absolute', top: 12, right: 12 }]}>
-                    <Text style={styles.detectionStatusText}>Yaw: {yawLabel}</Text>
-                    <Text style={styles.detectionStatusText}>Pitch: {pitchLabel}</Text>
-                    <Text style={styles.detectionStatusText}>Eyes: {eyeStatusLabel}</Text>
-                  </View>
-                </View>
-              )}
               <Text style={styles.scanInstructionText}>
                 {instructionText}
               </Text>
@@ -470,7 +636,7 @@ export default function FaceScanView({
         </SafeAreaView>
       </View>
 
-      <View style={styles.rightPanel}>
+      <View style={styles.rightPanel} onLayout={handleOverlayLayout}>
         <Camera
           ref={cameraRef}
           style={[styles.fullScreenCamera, { transform: cameraTransform }]}
@@ -484,6 +650,22 @@ export default function FaceScanView({
         />
         <Animated.View style={[styles.snapFlash, { opacity: flashAnim }]} pointerEvents="none" />
         <View style={styles.cameraTintLight} pointerEvents="none" />
+        {showDetectionOverlay && (
+          <View style={styles.fullScreenDetectionOverlay} pointerEvents="none">      
+            <AnimatedReanimated.View
+              style={[
+                styles.detectionFaceBox,
+                cameraVisionFaceDetected && styles.detectionFaceBoxActive,
+                animatedFaceBoxStyle,
+              ]}
+            />
+            <AnimatedReanimated.View style={[styles.detectionStatusCard, animatedStatusCardStyle]}>
+              <Text style={styles.detectionStatusText}>Yaw: {yawLabel}</Text>
+              <Text style={styles.detectionStatusText}>Pitch: {pitchLabel}</Text>
+              <Text style={styles.detectionStatusText}>Eyes: {eyeStatusLabel}</Text>
+            </AnimatedReanimated.View>
+          </View>
+        )}
 
         <SafeAreaView style={styles.cameraSafeArea} edges={['top', 'right', 'bottom']}>
           <View style={styles.rightPanelHeader}>
@@ -532,25 +714,6 @@ export default function FaceScanView({
                 <MaterialCommunityIcons name="face-recognition" size={120} color="rgba(255,255,255,0.2)" style={styles.faceIconBackground} />
               )}
             </View>
-            {showDetectionOverlay && (
-              <View style={styles.fullScreenDetectionOverlay} pointerEvents="none">
-                <AnimatedReanimated.View
-                  style={[
-                    styles.detectionFaceBox,
-                    cameraVisionFaceDetected && styles.detectionFaceBoxActive,
-                    animatedFaceBoxStyle,
-                  ]}
-                />
-                <View style={[styles.detectionBadge, { position: 'absolute', top: 12, left: 12 }]}>
-                  <Text style={styles.detectionBadgeText}>{detectionLabel}</Text>
-                </View>
-                <View style={[styles.detectionStatusCard, { position: 'absolute', top: 12, right: 12 }]}>
-                  <Text style={styles.detectionStatusText}>Yaw: {yawLabel}</Text>
-                  <Text style={styles.detectionStatusText}>Pitch: {pitchLabel}</Text>
-                  <Text style={styles.detectionStatusText}>Eyes: {eyeStatusLabel}</Text>
-                </View>
-              </View>
-            )}
             <Text style={styles.scanInstructionTextRight}>
               {instructionText}
             </Text>

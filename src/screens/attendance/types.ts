@@ -40,3 +40,13 @@ export type FaceScanStage =
   | 'verifying'
   | 'recording'
   | 'success';
+
+export type CameraVisionEyeStatus = 'open' | 'closed' | 'mixed' | 'unknown';
+
+export type CameraVisionFaceTelemetry = {
+  yaw: number | null;
+  pitch: number | null;
+  leftEyeOpenProbability: number | null;
+  rightEyeOpenProbability: number | null;
+  eyeStatus: CameraVisionEyeStatus;
+};
