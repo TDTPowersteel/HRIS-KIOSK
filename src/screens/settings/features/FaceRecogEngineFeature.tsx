@@ -28,7 +28,7 @@ export function FaceRecogEngineFeature({ engine, onSelect }: Props) {
         Face Recognition Engine
       </Text>
       <Text style={[styles.description, { color: colors.textSecondary }, isTablet && styles.descriptionTablet]}>
-        Face++ sends photos to the cloud. Camera Vision runs on-device (offline-capable, faster).
+        Face++ sends photos to the cloud. Camera Vision uses buffalo_sc (ONNX) on-device for offline-capable, faster verification.
       </Text>
       <View style={styles.pillRow}>
         {options.map((opt, i) => {

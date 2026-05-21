@@ -1,12 +1,8 @@
-// KIOSK-only subset of face-embedding utilities.
-// Model loading/inference runs in useAttendance.ts via the frame processor.
-// This file only provides the pure math helpers needed for cosine comparison.
-
 export const MODEL_CONFIG = {
-  name: 'MobileFaceNet',
+  name: 'buffalo_sc',
   inputSize: 112,
   channels: 3,
-  matchThreshold: 0.72,
+  matchThreshold: 0.28,
 } as const;
 
 export function compareEmbeddings(a: number[], b: number[]): number {

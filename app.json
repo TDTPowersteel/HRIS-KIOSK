@@ -45,13 +45,8 @@
           "enableCodeScanner": true
         }
       ],
-      [
-        "react-native-fast-tflite",
-        {
-          "enableAndroidGpuLibraries": true
-        }
-      ],
-      "expo-asset"
+      "expo-asset",
+      "./withOnnxManualLink.js"
     ],
     "web": {
       "favicon": "./assets/favicon.png"

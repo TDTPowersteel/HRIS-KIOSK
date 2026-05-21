@@ -4,7 +4,17 @@
     <option name="autoReloadType" value="NONE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="c61fd802-3d0b-4601-a359-927ccc48dd2f" name="Changes" comment="" />
+    <list default="true" id="c61fd802-3d0b-4601-a359-927ccc48dd2f" name="Changes" comment="">
+      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app.json" beforeDir="false" afterPath="$PROJECT_DIR$/app.json" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend-php/FaceVerificationHelper.php" beforeDir="false" afterPath="$PROJECT_DIR$/backend-php/FaceVerificationHelper.php" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend-php/resolve_qr.php" beforeDir="false" afterPath="$PROJECT_DIR$/backend-php/resolve_qr.php" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend-php/verify.php" beforeDir="false" afterPath="$PROJECT_DIR$/backend-php/verify.php" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/metro.config.js" beforeDir="false" afterPath="$PROJECT_DIR$/metro.config.js" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/package-lock.json" beforeDir="false" afterPath="$PROJECT_DIR$/package-lock.json" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/package.json" beforeDir="false" afterPath="$PROJECT_DIR$/package.json" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/screens/attendance/useAttendance.ts" beforeDir="false" afterPath="$PROJECT_DIR$/src/screens/attendance/useAttendance.ts" afterDir="false" />
+    </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
     <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />

@@ -146,7 +146,35 @@ $department = null;
 $openSession = null;
 
 if ($resolvedLogId) {
-    // First get basic employee data
+    // Fetch profile picture, face (for Face++) and face_embedding (for Camera Vision)
+    // We fetch these from accounts table FIRST to ensure availability regardless of employees record state.
+    $selectCols = "profile_picture,face,face_embedding";
+
+    [$s4, $accountRows, $e4] = supabase_request(
+        'GET',
+        "rest/v1/accounts?log_id=eq." . urlencode($resolvedLogId) . "&select=" . $selectCols
+    );
+    if (!$e4 && is_array($accountRows) && count($accountRows) > 0) {
+        $account = $accountRows[0];
+        $profilePicture = normalize_value($account['profile_picture'] ?? null);
+        $face = normalize_value($account['face'] ?? null);
+        
+        $rawEmbedding = $account['face_embedding'] ?? null;
+        if ($rawEmbedding !== null) {
+            if (is_array($rawEmbedding) || is_object($rawEmbedding)) {
+                $faceEmbedding = json_encode($rawEmbedding);
+            } else if (is_string($rawEmbedding)) {
+                $trimmed = trim($rawEmbedding);
+                if (strpos($trimmed, '[') === 0) {
+                    $faceEmbedding = $trimmed;
+                } else {
+                    $faceEmbedding = $trimmed;
+                }
+            }
+        }
+    }
+
+    // Now get basic employee data
     $employeeQuery = "rest/v1/employees?log_id=eq." . urlencode($resolvedLogId) . "&select=emp_id,name,role,dept_id";
 
     [$s2, $empRows, $e2] = supabase_request(
@@ -162,9 +190,7 @@ if ($resolvedLogId) {
         $role = normalize_value($employee['role'] ?? null);
         $deptId = $employee['dept_id'] ?? null;
 
-        // Check for ANY open attendance session (timeout IS NULL)
-        // We remove the today filter so that if someone forgot to clock out yesterday,
-        // the kiosk will still show "Clock Out" to close that old session first.
+        // Check for ANY open attendance session
         if ($empId) {
             $attQuery = "rest/v1/attendance?emp_id=eq." . urlencode($empId) . "&timeout=is.null&order=att_id.desc&limit=1&select=att_id,timein,date";
             [$sAtt, $attRows, $eAtt] = supabase_request('GET', $attQuery);
@@ -178,52 +204,22 @@ if ($resolvedLogId) {
             }
         }
 
-        // Get department name if dept_id exists
+        // Get department name
         $department = null;
         if ($deptId) {
-
-            // Try the actual departments table schema you showed: dept_id key and name column.
             $deptQueries = [
                 "rest/v1/departments?dept_id=eq." . urlencode($deptId) . "&select=name",
                 "rest/v1/department?dept_id=eq." . urlencode($deptId) . "&select=name"
             ];
 
-            foreach ($deptQueries as $index => $query) {
+            foreach ($deptQueries as $query) {
                 [$s3, $deptRows, $e3] = supabase_request('GET', $query);
-
                 if (!$e3 && is_array($deptRows) && count($deptRows) > 0) {
                     $department = normalize_value($deptRows[0]['name'] ?? null);
-                    break; // Stop trying other queries once we find a match
+                    break;
                 }
             }
-
-        } else {
         }
-
-        // Get profile picture, face (for Face++) and face_embedding (for Camera Vision)
-        $engine = isset($_GET['engine']) ? trim((string)$_GET['engine']) : '';
-        $isFacePP = ($engine === 'facepp' || (empty($engine) && function_exists('facepp_api_configured') && facepp_api_configured()));
-        $selectCols = "profile_picture," . ($isFacePP ? "face" : "face_embedding");
-
-        [$s4, $accountRows, $e4] = supabase_request(
-            'GET',
-            "rest/v1/accounts?log_id=eq." . urlencode($resolvedLogId) . "&select=" . $selectCols
-        );
-        $profilePicture = null;
-        $face = null;
-        $faceEmbedding = null;
-        if (!$e4 && is_array($accountRows) && count($accountRows) > 0) {
-            $profilePicture = normalize_value($accountRows[0]['profile_picture'] ?? null);
-            $face = normalize_value($accountRows[0]['face'] ?? null);
-            $rawEmbedding = $accountRows[0]['face_embedding'] ?? null;
-            if (is_array($rawEmbedding) || is_object($rawEmbedding)) {
-                $faceEmbedding = json_encode($rawEmbedding);
-            } else {
-                $faceEmbedding = normalize_value($rawEmbedding);
-            }
-        }
-
-    } else {
     }
 }
 
@@ -240,6 +236,12 @@ $jsonResponse = json_encode([
         'department' => $department,
         'open_session' => $openSession,
     ],
+    'debug' => [
+        'resolved_log_id' => $resolvedLogId,
+        'has_account_row' => !empty($accountRows),
+        'fetch_error' => $e4,
+        'raw_embedding_type' => isset($account) ? gettype($account['face_embedding'] ?? null) : 'no_account'
+    ]
 ]);
 
 header('Content-Length: ' . strlen($jsonResponse));

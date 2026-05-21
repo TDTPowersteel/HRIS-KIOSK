@@ -102,6 +102,12 @@ if ($errorMsg) {
     exit;
 }
 
+if ($engine === 'camera_vision') {
+    http_response_code(400);
+    echo json_encode(['ok' => false, 'message' => 'Camera Vision verification must be executed locally on the client. backend-php/verify.php is only for Face++ api.']);
+    exit;
+}
+
 $storedFaceBase64 = $faceData['face'] ?? null;
 if (!$storedFaceBase64) {
     http_response_code(404);

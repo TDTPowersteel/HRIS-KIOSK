@@ -8,8 +8,8 @@ if (file_exists(__DIR__ . '/facepp_api.php')) {
 }
 
 function fetchUserFaceData(string $userId, string $engine = '') {
-    $isFacePP = ($engine === 'facepp' || (empty($engine) && function_exists('facepp_api_configured') && facepp_api_configured()));
-    $selectCols = "profile_picture,username,log_id," . ($isFacePP ? "face" : "face_embedding");
+    // Fetch both face (Face++) and face_embedding (Camera Vision) for robustness
+    $selectCols = "profile_picture,username,log_id,face,face_embedding";
     
     [$status, $data, $err] = supabase_request('GET', "rest/v1/accounts?log_id=eq." . urlencode($userId) . "&select=" . $selectCols);
     if ($err) return [null, 'Database connection error: ' . $err];

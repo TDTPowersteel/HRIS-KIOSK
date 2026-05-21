@@ -13,9 +13,8 @@ import { enqueueOfflineAttendance, getOfflineAttendanceQueue } from '../../utils
 import { resolveOfflineUserFromQr, upsertOfflineUserCacheUser } from '../../utils/offlineUsers';
 import { useTheme } from '../../config/theme';
 import { compareEmbeddings, isMatch, MODEL_CONFIG } from '../../utils/face-embedding';
-import type { TfliteModel, TfliteModule } from 'react-native-fast-tflite/lib/typescript/specs/Tflite.nitro';
-import { NitroModules } from 'react-native-nitro-modules';
-import { Asset } from 'expo-asset';
+import { loadFaceModel, getEmbedding, isModelLoaded } from '../../faceEngine/model';
+import { rgbaBufferToCHWTensor } from '../../faceEngine/preprocess';
 import type { FaceEngine } from '../settings/features/FaceRecogEngineFeature';
 import {
   ATTENDANCE_SESSIONS_KEY,
@@ -29,99 +28,9 @@ import {
 } from './types';
 
 
-// Worklet-safe nearest-neighbour resize: YUV420/RGB/RGBA frame → Float32 [1,112,112,3] tensor buffer
-// Auto-detects YUV420 vs RGB/RGBA from buffer size. Handles face crop via faceBox.
-function resizeFrameToTensor(buffer: ArrayBuffer, srcW: number, srcH: number, faceBox?: NormalizedFaceBox): ArrayBuffer {
-  'worklet';
-  const SIZE = 112;
-  const src = new Uint8Array(buffer);
-  const dst = new Float32Array(SIZE * SIZE * 3);
 
-  const totalPixels = srcW * srcH;
-  // YUV420 = 1.5 bytes/pixel, RGB = 3, RGBA = 4
-  const isYUV = src.length < totalPixels * 2;
-  
-  const cropX = faceBox ? Math.floor(faceBox.x * srcW) : 0;
-  const cropY = faceBox ? Math.floor(faceBox.y * srcH) : 0;
-  const cropW = faceBox ? Math.max(1, Math.floor(faceBox.width * srcW)) : srcW;
-  const cropH = faceBox ? Math.max(1, Math.floor(faceBox.height * srcH)) : srcH;
 
-  const xr = cropW / SIZE;
-  const yr = cropH / SIZE;
 
-  if (isYUV) {
-    // YUV420 (NV21/NV12): Y plane = W*H, then interleaved UV = W*H/2
-    const yPlaneSize = totalPixels;
-    for (let y = 0; y < SIZE; y++) {
-      for (let x = 0; x < SIZE; x++) {
-        const sx = Math.min(cropX + Math.floor(x * xr), srcW - 1);
-        const sy = Math.min(cropY + Math.floor(y * yr), srcH - 1);
-
-        const yIdx = sy * srcW + sx;
-        const uvRow = Math.floor(sy / 2);
-        const uvCol = Math.floor(sx / 2) * 2;
-        const uvIdx = yPlaneSize + uvRow * srcW + uvCol;
-
-        const yVal = src[yIdx];
-        // NV21: V then U; NV12: U then V. Both produce valid RGB for face matching.
-        const uVal = src[uvIdx] - 128;
-        const vVal = src[uvIdx + 1] - 128;
-
-        const di = (y * SIZE + x) * 3;
-        // BT.601 YUV→RGB normalized to [0, 1] as per MobileFaceNet README
-        dst[di]     = Math.max(0, Math.min(255, yVal + 1.402 * vVal)) / 255.0;
-        dst[di + 1] = Math.max(0, Math.min(255, yVal - 0.344 * uVal - 0.714 * vVal)) / 255.0;
-        dst[di + 2] = Math.max(0, Math.min(255, yVal + 1.772 * uVal)) / 255.0;
-      }
-    }
-  } else {
-    // RGB (3 bytes/px) or RGBA (4 bytes/px)
-    const bytesPerPx = Math.round(src.length / totalPixels);
-    for (let y = 0; y < SIZE; y++) {
-      for (let x = 0; x < SIZE; x++) {
-        const sx = Math.min(cropX + Math.floor(x * xr), srcW - 1);
-        const sy = Math.min(cropY + Math.floor(y * yr), srcH - 1);
-        
-        const si = (sy * srcW + sx) * bytesPerPx;
-        const di = (y * SIZE + x) * 3;
-
-        dst[di]     = src[si]     / 255.0;
-        dst[di + 1] = src[si + 1] / 255.0;
-        dst[di + 2] = src[si + 2] / 255.0;
-      }
-    }
-  }
-  return dst.buffer;
-}
-
-// JS-thread crop + resize: RGBA pixels → Float32 [1,112,112,3] tensor
-function cropAndResizeRgbaToTensor(
-  rgba: Uint8Array,
-  srcW: number,
-  srcH: number,
-  faceBox?: { x: number; y: number; width: number; height: number },
-): ArrayBuffer {
-  const SIZE = 112;
-  const dst = new Float32Array(SIZE * SIZE * 3);
-  const cropX = faceBox ? Math.max(0, Math.floor(faceBox.x * srcW)) : 0;
-  const cropY = faceBox ? Math.max(0, Math.floor(faceBox.y * srcH)) : 0;
-  const cropW = faceBox ? Math.max(1, Math.min(Math.floor(faceBox.width * srcW), srcW - cropX)) : srcW;
-  const cropH = faceBox ? Math.max(1, Math.min(Math.floor(faceBox.height * srcH), srcH - cropY)) : srcH;
-  const xr = cropW / SIZE;
-  const yr = cropH / SIZE;
-  for (let y = 0; y < SIZE; y++) {
-    for (let x = 0; x < SIZE; x++) {
-      const sx = Math.min(cropX + Math.floor(x * xr), srcW - 1);
-      const sy = Math.min(cropY + Math.floor(y * yr), srcH - 1);
-      const si = (sy * srcW + sx) * 4; // RGBA = 4 bytes per pixel
-      const di = (y * SIZE + x) * 3;
-      dst[di]     = rgba[si]     / 255.0;
-      dst[di + 1] = rgba[si + 1] / 255.0;
-      dst[di + 2] = rgba[si + 2] / 255.0;
-    }
-  }
-  return dst.buffer;
-}
 
 type NormalizedFaceBox = {
   x: number;
@@ -336,36 +245,7 @@ function isValidEmbeddingVector(embedding: number[]): boolean {
   return norm > 0.5;
 }
 
-// Module-level singleton — loads TFLite model once via fetch + NitroModules (no GPU delegate = no .outputs error)
-let _tfliteModelCache: TfliteModel | null = null;
-let _tfliteModelLoading: Promise<TfliteModel | null> | null = null;
 
-async function getOrLoadTfliteModel(): Promise<TfliteModel | null> {
-  if (_tfliteModelCache) return _tfliteModelCache;
-  if (_tfliteModelLoading) return _tfliteModelLoading;
-  _tfliteModelLoading = (async () => {
-    try {
-      const asset = await Asset.fromModule(
-        require('../../../assets/models/mobilefacenet.tflite')
-      ).downloadAsync();
-      if (!asset.localUri) return null;
-      // Read bytes via fetch (bypasses java.net.URL issues in assetLoader)
-      const response = await fetch(asset.localUri);
-      const buffer = await response.arrayBuffer();
-      // Create model directly with CPU — no GPU delegate means no .outputs NativeState error
-      const tfliteModule = NitroModules.createHybridObject<TfliteModule>('TfliteModule');
-      const model = tfliteModule.createModel(buffer, []);
-      _tfliteModelCache = model;
-      console.log('[TFLite] Model loaded (CPU)');
-      return model;
-    } catch (e) {
-      _tfliteModelLoading = null;
-      console.error('[TFLite] Failed to load model:', e);
-      return null;
-    }
-  })();
-  return _tfliteModelLoading;
-}
 
 
 const sanitizeForLog = (obj: any) => {
@@ -449,7 +329,12 @@ export function useAttendance() {
   const [isLoading, setIsLoading] = useState(true);
   const [qrVerified, setQrVerified] = useState(false);
   const [welcomeName, setWelcomeName] = useState<string | null>(null);
-  const [selectedUser, setSelectedUser] = useState<ResolvedUser | null>(null);
+  const [selectedUser, _setSelectedUser] = useState<ResolvedUser | null>(null);
+  const selectedUserRef = useRef<ResolvedUser | null>(null);
+  const setSelectedUser = useCallback((u: ResolvedUser | null) => {
+    selectedUserRef.current = u;
+    _setSelectedUser(u);
+  }, []);
   const [attendanceAction, setAttendanceAction] = useState<'clock_in' | 'clock_out'>('clock_in');
   const [touchlessEnabled, setTouchlessEnabled] = useState(false);
   const [offlineModeEnabled, setOfflineModeEnabled] = useState(false);
@@ -465,11 +350,13 @@ export function useAttendance() {
   const [successAnimationTick, setSuccessAnimationTick] = useState(0);
 
 
-  // Camera Vision TFLite model — singleton ensures it loads only once (StrictMode-safe)
-  const [tfliteModel, setTfliteModel] = useState<TfliteModel | null>(null);
+  // buffalo_sc ONNX model — loads once at startup
+  const [onnxModelReady, setOnnxModelReady] = useState(false);
   useEffect(() => {
     let active = true;
-    getOrLoadTfliteModel().then(m => { if (active && m) setTfliteModel(m); });
+    loadFaceModel()
+      .then(() => { if (active) setOnnxModelReady(true); })
+      .catch(e => console.error('[FaceEngine] Failed to load ONNX model:', e));
     return () => { active = false; };
   }, []);
   
@@ -728,43 +615,12 @@ export function useAttendance() {
         open_session: payload.user.open_session ?? null,
       };
 
-      // --- FORCE OVERRIDE: ALWAYS FETCH FACE DATA FROM ACCOUNTS TABLE ---
-      // We fetch strictly from 'accounts' table as per requirement.
-      // 'face' for Face++, 'face_embedding' for Camera Vision.
-      try {
-        const supabaseUrl = 'https://cgyqweheceduyrpxqvwd.supabase.co';
-        const supabaseKey = 'sb_publishable_MJmY9d0yFuPp6KtQ62stGw_lFHMnNAK';
-        
-        const isFacePP = currentEngine === 'facepp';
-        const selectCols = isFacePP ? 'face' : 'face_embedding';
-
-        const supaRes = await fetch(`${supabaseUrl}/rest/v1/accounts?log_id=eq.${user.userId}&select=${selectCols}&limit=1`, {
-          headers: {
-            'apikey': supabaseKey,
-            'Authorization': `Bearer ${supabaseKey}`
-          }
-        });
-        
-        if (supaRes.ok) {
-          const supaData = await supaRes.json();
-          if (supaData && supaData.length > 0) {
-            const freshData = supaData[0];
-            if (isFacePP) {
-              user.face = freshData.face ?? null;
-              user.face_embedding = null; // Clear other engine's data
-            } else {
-              user.face_embedding = freshData.face_embedding ?? null;
-              user.face = null; // Clear other engine's data
-            }
-            console.log(`[QR] Forced fetch of ${selectCols} from accounts table success for ${user.username}`);
-          } else {
-            console.log('[QR] No account data found in Supabase for this log_id');
-          }
-        }
-      } catch (e) {
-        console.warn('[QR] Supabase force-fetch error:', e);
-      }
-      // -----------------------------------------------------------
+      console.log(`[QR] Resolve details for ${user.username}:`, {
+        log_id: user.userId,
+        has_face: !!user.face,
+        embedding_type: typeof user.face_embedding,
+        embedding_val: user.face_embedding ? (typeof user.face_embedding === 'string' ? user.face_embedding.substring(0, 50) + '...' : 'object/array') : 'NULL'
+      });
 
       // FORCE SYNC LOCAL CACHE: If server says user is clocked out, we MUST clear local session
       if (!user.open_session) {
@@ -812,7 +668,7 @@ export function useAttendance() {
     console.log('[Verify] Sending face to backend', sanitizeForLog({
       userId,
       isSendingSecondPhoto: !!photoUri2,
-      face_reference: selectedUser?.face
+      face_reference: selectedUserRef.current?.face
     }));
     const form = new FormData();
     form.append('photo', { uri: photoUri1, name: 'selfie_1.jpg', type: 'image/jpeg' } as any);
@@ -867,13 +723,12 @@ export function useAttendance() {
   }, [offlineModeEnabled]);
 
 
-  // Photo-based embedding capture: takes a photo, decodes JPEG to pixels, runs TFLite on JS thread.
-  // Completely bypasses frame.toArrayBuffer() which crashes with HardwareBuffer lock errors on Android.
+  // Photo-based embedding capture: takes a photo, decodes JPEG, runs buffalo_sc ONNX inference.
   const captureEmbeddingFromPhoto = useCallback(async (): Promise<number[]> => {
     if (!cameraRef.current) throw new Error('Camera not ready');
-    if (!tfliteModel) throw new Error('Face model not loaded');
+    if (!isModelLoaded()) throw new Error('Face model not loaded');
 
-    console.log('[CameraVision] Taking photo for embedding...');
+    console.log('[CameraVision] Taking photo for embedding (buffalo_sc ONNX)...');
     const photo = await cameraRef.current.takePhoto({ flash: 'off' });
     if (!photo?.path) throw new Error('No image captured');
 
@@ -883,21 +738,17 @@ export function useAttendance() {
     let imageToProcess = `file://${photo.path}`;
 
     if (faceBox) {
-      // ImageManipulator auto-rotates the image based on EXIF to an upright portrait orientation.
-      // Therefore, the coordinate system for the crop must match this upright portrait orientation.
       const uprightW = Math.min(photo.width, photo.height);
       const uprightH = Math.max(photo.width, photo.height);
 
-      // FORCE SQUARE CROP: Face recognition models (MobileFaceNet/ArcFace) are highly sensitive to stretching.
-      // We calculate a square bounding box centered on the detected face.
+      // FORCE SQUARE CROP: ArcFace models are highly sensitive to stretching.
       const centerX = faceBox.left + faceBox.width / 2;
       const centerY = faceBox.top + faceBox.height / 2;
-      const side = Math.max(faceBox.width, faceBox.height) * 1.65; // 1.65x multiplier is standard for these models
+      const side = Math.max(faceBox.width, faceBox.height) * 1.4;
       
       let cropX = centerX - side / 2;
-      let cropY = centerY - (side * 0.55); // Slightly offset up to center the eyes/nose better
+      let cropY = centerY - (side * 0.45);
       
-      // Clamp to image bounds
       cropX = Math.max(0, Math.min(1 - side, cropX));
       cropY = Math.max(0, Math.min(1 - side, cropY));
 
@@ -913,9 +764,9 @@ export function useAttendance() {
             imageToProcess,
             [
               { crop: { originX, originY, width: size, height: size } },
-              { resize: { width: 112, height: 112 } }
+              { resize: { width: 224, height: 224 } }
             ],
-            { format: ImageManipulator.SaveFormat.JPEG, compress: 1.0 }
+            { format: ImageManipulator.SaveFormat.JPEG, compress: 0.95 }
           );
           imageToProcess = manipResult.uri;
         } catch (e) {
@@ -942,46 +793,40 @@ export function useAttendance() {
     const decoded = jpeg.decode(jpegData, { useTArray: true, formatAsRGBA: true });
     console.log(`[CameraVision] Decoded: ${decoded.width}x${decoded.height}, RGBA pixels: ${decoded.data.length} bytes`);
 
-    // We pass undefined as faceBox because we already cropped it natively!
-    const tensor = cropAndResizeRgbaToTensor(decoded.data, decoded.width, decoded.height, undefined);
-    console.log(`[CameraVision] Tensor created: ${tensor.byteLength} bytes (expected: ${112 * 112 * 3 * 4})`);
+    // Convert to CHW Float32 tensor for buffalo_sc ONNX model
+    const tensor = rgbaBufferToCHWTensor(decoded.data, decoded.width, decoded.height, undefined);
+    console.log(`[CameraVision] CHW Tensor created: ${tensor.byteLength} bytes (expected: ${112 * 112 * 3 * 4})`);
 
-    // Run MobileFaceNet inference on JS thread
-    const output = tfliteModel.runSync([tensor]);
-    const raw = new Float32Array(output[0]);
+    // Run buffalo_sc ONNX inference → 512-dim embedding
+    const raw = await getEmbedding(tensor);
     if (raw.length < 64) throw new Error('Embedding output is too small');
 
-    let norm = 0;
-    for (let i = 0; i < raw.length; i++) norm += raw[i] * raw[i];
-    norm = Math.sqrt(norm);
-    if (!Number.isFinite(norm) || norm <= 0) throw new Error('Embedding norm is invalid');
-
-    const normalized: number[] = [];
-    for (let i = 0; i < raw.length; i++) {
-      const value = raw[i] / norm;
-      if (!Number.isFinite(value)) throw new Error('Embedding contains invalid values');
-      normalized.push(value);
+    // L2 Normalize (must match HRIS-APP registration)
+    const normalized: number[] = Array.from(raw);
+    const norm = Math.sqrt(normalized.reduce((sum, val) => sum + val * val, 0));
+    if (norm > 0) {
+      for (let i = 0; i < normalized.length; i++) normalized[i] /= norm;
     }
 
     if (!isValidEmbeddingVector(normalized)) {
       throw new Error('Captured face data is invalid. Please center your face and try again.');
     }
 
-    console.log(`[CameraVision] Embedding captured: ${normalized.length} dimensions, norm=1.0`);
+    console.log(`[CameraVision] Embedding captured: ${normalized.length} dimensions (buffalo_sc)`);
     return normalized;
-  }, [tfliteModel, cameraVisionFaceBox]);
+  }, [cameraVisionFaceBox]);
 
   // Sync comparator — receives the already-captured live embedding from the frame processor
   const verifyFaceLocal = useCallback((liveEmbedding: number[]): { ok: boolean; verified: boolean; message?: string; hint?: string } => {
     console.log('[Face Verification] === LOCAL VERIFICATION START ===');
-    console.log(`[Face Verification] Target Employee: ${selectedUser?.name || 'Unknown'} (Username: ${selectedUser?.username || 'N/A'}, ID: ${selectedUser?.userId || 'N/A'})`);
+    console.log(`[Face Verification] Target Employee: ${selectedUserRef.current?.name || 'Unknown'} (Username: ${selectedUserRef.current?.username || 'N/A'}, ID: ${selectedUserRef.current?.userId || 'N/A'})`);
     if (!isValidEmbeddingVector(liveEmbedding)) {
       console.log('[Face Verification] ❌ Live embedding is invalid or empty.');
       console.log('[Face Verification] === LOCAL VERIFICATION END ===');
       return { ok: false, verified: false, message: 'Invalid live face capture.', hint: 'Center your face and try again in better lighting.' };
     }
     console.log(`[Face Verification] Live Embedding Length: ${liveEmbedding.length}`);
-    const storedEmbeddingVal = selectedUser?.face_embedding;
+    const storedEmbeddingVal = selectedUserRef.current?.face_embedding;
     if (!storedEmbeddingVal) {
       console.log('[Face Verification] ❌ No stored face embedding found for this employee.');
       console.log('[Face Verification] === LOCAL VERIFICATION END ===');
@@ -1034,7 +879,7 @@ export function useAttendance() {
 
     if (isMatched) return { ok: true, verified: true };
     return { ok: false, verified: false, message: `Face does not match. Similarity: ${(similarity * 100).toFixed(0)}%`, hint: 'Ensure good lighting and face the camera directly.' };
-  }, [selectedUser]);
+  }, []);
 
   const logCameraVisionGateSkip = useCallback((reason: string, details?: Record<string, unknown>) => {
     const now = Date.now();
@@ -1116,9 +961,9 @@ export function useAttendance() {
 
       if (capturedOffline) {
         await enqueueOfflineAttendance({ 
-            userId: selectedUser!.userId, 
-            username: selectedUser!.username, 
-            name: selectedUser!.name ?? null, 
+            userId: selectedUserRef.current!.userId, 
+            username: selectedUserRef.current!.username, 
+            name: selectedUserRef.current!.name ?? null, 
             action, 
             date: localDate, 
             time: localTime,
@@ -1135,9 +980,9 @@ export function useAttendance() {
           setOfflineModeEnabled(true);
           showOfflineToast();
           await enqueueOfflineAttendance({ 
-              userId: selectedUser!.userId, 
-              username: selectedUser!.username, 
-              name: selectedUser!.name ?? null, 
+              userId: selectedUserRef.current!.userId, 
+              username: selectedUserRef.current!.username, 
+              name: selectedUserRef.current!.name ?? null, 
               action, 
               date: localDate, 
               time: localTime,
@@ -1149,10 +994,10 @@ export function useAttendance() {
 
       if (action === 'clock_in') {
         await storeClockInNotification({ date: data?.date || localDate, timein: data?.timein || localTime });
-        await saveStoredSession({ userId: selectedUser!.userId, username: selectedUser!.username, name: selectedUser!.name ?? null, clockInTime: data?.timein || localTime, clockInDate: data?.date || localDate });
+        await saveStoredSession({ userId: selectedUserRef.current!.userId, username: selectedUserRef.current!.username, name: selectedUserRef.current!.name ?? null, clockInTime: data?.timein || localTime, clockInDate: data?.date || localDate });
         if (!capturedOffline && data?.emp_id != null) await AsyncStorage.setItem('emp_id', String(data.emp_id));
       } else {
-        await clearStoredSession(selectedUser!.userId);
+        await clearStoredSession(selectedUserRef.current!.userId);
       }
       
       setScanStage('success');
@@ -1173,11 +1018,11 @@ export function useAttendance() {
     } finally {
       setIsVerifying(false);
     }
-  }, [attendanceAction, clearStoredSession, enqueueOfflineAttendance, isLikelyConnectivityError, offlineModeEnabled, recordAttendance, refreshPendingSyncCount, resetAttendanceFlow, saveStoredSession, selectedUser, showModal, showOfflineToast, storeClockInNotification, workletPhase]);
+  }, [attendanceAction, clearStoredSession, enqueueOfflineAttendance, isLikelyConnectivityError, offlineModeEnabled, recordAttendance, refreshPendingSyncCount, resetAttendanceFlow, saveStoredSession, showModal, showOfflineToast, storeClockInNotification, workletPhase]);
 
   // Main attendance handler (Concurrent Phase 1 & 2)
   const executeFaceVerification = useCallback(async () => {
-    if (!qrVerified || !selectedUser) return;
+    if (!qrVerified || !selectedUserRef.current) return;
     setIsVerifying(true);
     setScanStage('capturing');
     identityStatusRef.current = 'pending';
@@ -1195,7 +1040,7 @@ export function useAttendance() {
     let result: any;
     try {
       if (faceEngine === 'camera_vision') {
-        // Camera Vision: take photo, decode JPEG, run TFLite on JS thread (no frame.toArrayBuffer)
+        // Camera Vision: take photo, decode JPEG, run buffalo_sc ONNX on JS thread
         const liveEmbedding = await captureEmbeddingFromPhoto();
         setIsCapturingHardware(false);
         result = verifyFaceLocal(liveEmbedding);
@@ -1247,12 +1092,12 @@ export function useAttendance() {
       const showOfflineError = offlineModeEnabled || isLikelyConnectivityError(e);
       showModal('error', showOfflineError ? 'Offline Mode Error' : 'Connection Error', e?.message || 'Please try again.', showOfflineError ? 'Connect once to refresh employee QR cache.' : 'Check your internet connection', 2000);
     }
-  }, [qrVerified, selectedUser, faceEngine, offlineModeEnabled, verifyFace, verifyFaceLocal, captureEmbeddingFromPhoto, executeAttendanceRecording, showModal, flashAnim, isLikelyConnectivityError, workletPhase]);
+  }, [qrVerified, faceEngine, offlineModeEnabled, verifyFace, verifyFaceLocal, captureEmbeddingFromPhoto, executeAttendanceRecording, showModal, flashAnim, isLikelyConnectivityError, workletPhase]);
 
   // Main attendance handler (Concurrent Phase 1 & 2)
   const handleAttendance = useCallback(async () => {
     if (faceProcessingRef.current || isVerifying) return;
-    if (!qrVerified || !selectedUser) {
+    if (!qrVerified || !selectedUserRef.current) {
       setScanStage('idle');
       showModal('warning', 'Scan QR Code First', 'Please scan your personal QR code before continuing.', 'The user must scan a QR code.');
       return;
@@ -1309,7 +1154,7 @@ export function useAttendance() {
       // Skip active liveness: start verifying face immediately
       await executeFaceVerification();
     }
-  }, [attendanceAction, touchlessEnabled, hasPermission, isLikelyConnectivityError, livenessEnabled, offlineModeEnabled, qrVerified, selectedUser, showModal, workletPhase, executeAttendanceRecording, faceEngine, cameraVisionFaceDetected, cameraVisionReadiness, logCameraVisionGateSkip, executeFaceVerification]);
+  }, [attendanceAction, touchlessEnabled, hasPermission, isLikelyConnectivityError, livenessEnabled, offlineModeEnabled, qrVerified, showModal, workletPhase, executeAttendanceRecording, faceEngine, cameraVisionFaceDetected, cameraVisionReadiness, logCameraVisionGateSkip, executeFaceVerification]);
 
   const onFaceDetectedForIdentity = Worklets.createRunOnJS(() => {
     if (!touchlessEnabledRef.current || modalVisibleRef.current || !qrVerified || attendanceAction !== 'clock_in' || countdownRef.current > 0 || countdownActive || faceProcessingRef.current || isVerifying) return;
@@ -1659,6 +1504,15 @@ export function useAttendance() {
         setQrSuccessLocal(true);
         setIsQrLoading(false);
 
+        // Check if we have the necessary offline data to do a fast-path face verify
+        const hasNeededFaceData = currentSettings.engine === 'camera_vision' 
+          ? !!cachedUser.face_embedding 
+          : true; // Face++ sends the live photo to backend, backend fetches stored face
+
+        // If we are missing the embedding locally, we CANNOT auto-trigger handleAttendance yet.
+        // We must wait for the background sync to finish fetching it!
+        const shouldWaitSync = currentSettings.touchless && currentSettings.engine === 'camera_vision' && !hasNeededFaceData;
+
         // Show the success checkmark for 600ms before transitioning
         setTimeout(async () => {
           setQrSuccessLocal(false);
@@ -1670,7 +1524,7 @@ export function useAttendance() {
           // Automatic clock-out if touchless is enabled
           if (isClockOut && currentSettings.touchless) {
              setAttendanceAction('clock_out');
-             await handleAttendance();
+             if (!shouldWaitSync) await handleAttendance();
           } else {
             setFaceCountdown(0);
             countdownRef.current = 0;
@@ -1680,7 +1534,12 @@ export function useAttendance() {
             stableFaceFrames.value = 0;
             setCountdownActive(false);
             if (currentSettings.touchless && currentSettings.engine === 'camera_vision') {
-              setScanStage('detecting');
+              if (!shouldWaitSync) {
+                setScanStage('detecting');
+              } else {
+                setScanStage('idle');
+                console.log('[QR] Waiting for background sync to fetch face_embedding...');
+              }
             } else {
               setScanStage('idle');
             }
@@ -1708,9 +1567,13 @@ export function useAttendance() {
 
            // If touchless is enabled and it's a clock-in, we trigger handleAttendance NOW 
            // because the 600ms timeout above might have already fired with stale data
-           if (currentSettings.touchless && !existingSession) {
-              console.log('[QR] Triggering touchless clock-in after background sync');
-              await handleAttendance();
+           // Also trigger if we were waiting for the sync to finish for clock_out
+           const isClockOutNow = existingSession ? true : false;
+           if (currentSettings.touchless) {
+              if ((!isClockOutNow) || (isClockOutNow && shouldWaitSync)) {
+                console.log('[QR] Triggering touchless handleAttendance after background sync');
+                await handleAttendance();
+              }
            }
         }).catch(e => console.log('[QR] Background sync failed (Safe to ignore if offline)', e));
 
