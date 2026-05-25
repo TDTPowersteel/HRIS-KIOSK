@@ -171,12 +171,12 @@ function isFaceBoxUsableForRecognition(faceBox: NormalizedFaceBox, face?: any): 
   if (faceBox.x + faceBox.width > 0.995 || faceBox.y + faceBox.height > 0.995) return false;
   if (centerX < 0.14 || centerX > 0.86 || centerY < 0.14 || centerY > 0.86) return false;
 
-  // Frontal gate (Pose check)
+  // Frontal gate (Pose check - tightened from 18 to 14 to avoid bad verification angles)
   if (face) {
     const yaw = face?.yawAngle ?? 0;
     const pitch = face?.pitchAngle ?? 0;
     const roll = face?.rollAngle ?? 0;
-    if (Math.abs(yaw) > 18 || Math.abs(pitch) > 18 || Math.abs(roll) > 18) return false;
+    if (Math.abs(yaw) > 14 || Math.abs(pitch) > 14 || Math.abs(roll) > 14) return false;
   }
 
   return true;
@@ -266,7 +266,7 @@ export function useAttendance() {
   const NETWORK_TOAST_COOLDOWN_MS = 15000;
   const FACEPP_TOUCHLESS_COUNTDOWN_SECONDS = 3;
   const CAMERA_VISION_STABLE_FACE_FRAMES = 5;
-  const CAMERA_VISION_TOUCHLESS_MIN_READINESS_TO_VERIFY = 60;
+  const CAMERA_VISION_TOUCHLESS_MIN_READINESS_TO_VERIFY = 90;
   const CAMERA_VISION_MANUAL_MIN_READINESS_TO_VERIFY = 30;
   const CAMERA_VISION_GATE_LOG_COOLDOWN_MS = 2000;
 
@@ -793,12 +793,12 @@ export function useAttendance() {
       let originY = Math.floor(pxCenterY - pxSide * 0.45);
       const size = Math.floor(pxSide);
 
-      // Clamp to bounds
-      let safeSize = Math.min(size, uprightW, uprightH);
-      originX = Math.max(0, Math.min(uprightW - safeSize, originX));
-      originY = Math.max(0, Math.min(uprightH - safeSize, originY));
+      // Clamp to bounds using actual photo dimensions (handles landscape raw frames robustly)
+      let safeSize = Math.min(size, photo.width, photo.height);
+      originX = Math.max(0, Math.min(photo.width - safeSize, originX));
+      originY = Math.max(0, Math.min(photo.height - safeSize, originY));
 
-      console.log(`[CameraVision] Square Crop: origin=${originX},${originY} size=${safeSize}x${safeSize} (photo upright: ${uprightW}x${uprightH})`);
+      console.log(`[CameraVision] Square Crop: origin=${originX},${originY} size=${safeSize}x${safeSize} (photo raw: ${photo.width}x${photo.height})`);
 
       if (safeSize > 0) {
         try {
@@ -1098,8 +1098,21 @@ export function useAttendance() {
     let result: any;
     try {
       if (faceEngine === 'camera_vision') {
-        // Camera Vision: take photo, decode JPEG, run buffalo_sc ONNX on JS thread
-        const liveEmbedding = await captureEmbeddingFromPhoto();
+        // Camera Vision: take photo with robust silent retry logic
+        let liveEmbedding: number[] | null = null;
+        let lastError: any = null;
+        for (let attempt = 1; attempt <= 2; attempt++) {
+          try {
+            liveEmbedding = await captureEmbeddingFromPhoto();
+            break;
+          } catch (err) {
+            console.log(`[CameraVision] Photo capture attempt ${attempt} failed:`, err);
+            lastError = err;
+            await new Promise(resolve => setTimeout(resolve, 100));
+          }
+        }
+        if (!liveEmbedding) throw lastError || new Error('Failed to capture face embedding');
+        
         setIsCapturingHardware(false);
         result = verifyFaceLocal(liveEmbedding);
       } else {
@@ -1724,7 +1737,6 @@ export function useAttendance() {
 
   useEffect(() => {
     if (!countdownActive || !touchlessEnabled || !qrVerified) return;
-    if (faceEngine !== 'facepp') return;
     if (showResultModal || modalVisibleRef.current) return;
     if (faceCountdown > 0 || isVerifying || faceProcessingRef.current) return;
     setCountdownActive(false);
@@ -1751,6 +1763,8 @@ export function useAttendance() {
     if (faceEngine !== 'camera_vision') return;
     if (isVerifying || faceProcessingRef.current || showResultModal || modalVisibleRef.current) return;
 
+    if (countdownActive) return;
+
     setScanStage('detecting');
     const autoReadinessThreshold = CAMERA_VISION_TOUCHLESS_MIN_READINESS_TO_VERIFY;
 
@@ -1759,9 +1773,12 @@ export function useAttendance() {
       cameraVisionReadiness >= autoReadinessThreshold &&
       !cameraVisionAutoTriggeredRef.current
     ) {
+      setFaceCountdown(2);
+      countdownRef.current = 2;
+      setCountdownActive(true);
+      setScanStage('countdown');
+      setLivenessMessage('Capturing in 2...');
       cameraVisionAutoTriggeredRef.current = true;
-      setScanStage('capturing');
-      handleAttendance();
       return;
     }
 
@@ -1770,8 +1787,15 @@ export function useAttendance() {
       cameraVisionReadiness < Math.max(12, autoReadinessThreshold - 15)
     ) {
       cameraVisionAutoTriggeredRef.current = false;
+      if (countdownActive) {
+        setCountdownActive(false);
+        setFaceCountdown(0);
+        countdownRef.current = 0;
+        setScanStage('detecting');
+      }
     }
   }, [
+    countdownActive,
     cameraVisionFaceDetected,
     cameraVisionReadiness,
     faceEngine,
@@ -1783,7 +1807,6 @@ export function useAttendance() {
   ]);
 
   useEffect(() => {
-    if (faceEngine === 'facepp') return;
     faceppCountdownStartedRef.current = false;
     if (countdownRef.current > 0 || countdownActive || faceCountdown > 0) {
       setFaceCountdown(0);

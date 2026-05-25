@@ -213,9 +213,25 @@ export default function FaceScanView({
           ny = 1 - (rawX + rawW);
           nw = rawH;
           nh = rawW;
+        } else if (orientation === ScreenOrientation.Orientation.PORTRAIT_DOWN) {
+          if (isFrontCamera) {
+            nx = rawY;
+            ny = 1 - rawX;
+          } else {
+            nx = 1 - (rawY + rawH);
+            ny = 1 - rawX;
+          }
+          nw = rawH;
+          nh = rawW;
         } else {
-          nx = rawY;
-          ny = rawX;
+          // PORTRAIT_UP / DEFAULT PORTRAIT
+          if (isFrontCamera) {
+            nx = 1 - (rawY + rawH);
+            ny = rawX;
+          } else {
+            nx = rawY;
+            ny = rawX;
+          }
           nw = rawH;
           nh = rawW;
         }
@@ -257,7 +273,7 @@ export default function FaceScanView({
 
     const minSize = 42;
     const faceSizePx = Math.max(nextPx.width, nextPx.height);
-    const uiSide = faceSizePx * 1.05;
+    const uiSide = faceSizePx * 0.85;
 
     const clampedWidth = Math.max(minSize, Math.min(overlayWidth, uiSide));
     const clampedHeight = Math.max(minSize, Math.min(overlayHeight, uiSide));
@@ -299,8 +315,8 @@ export default function FaceScanView({
       width: animatedFaceBoxWidth.value,
       height: animatedFaceBoxHeight.value,
       position: 'absolute',
-      borderWidth: 3,
-      borderRadius: 16,
+      borderWidth: 1.5,
+      borderRadius: 0,
       borderColor: isQualityPassed ? '#2ecc71' : '#F27121',
       borderStyle: 'solid',
       backgroundColor: isQualityPassed ? 'rgba(46, 204, 113, 0.15)' : 'transparent',
