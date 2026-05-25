@@ -57,6 +57,7 @@ export default function AttendanceScanner({ onBack, onOpenOffline }: AttendanceP
       ) : (
         <FaceScanView
           device={state.device}
+          cameraFormat={state.cameraFormat}
           cameraRef={state.cameraRef}
           frameProcessor={state.frameProcessor}
           flashAnim={state.flashAnim}

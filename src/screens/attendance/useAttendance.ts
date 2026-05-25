@@ -2,7 +2,7 @@ import * as Location from 'expo-location';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Audio } from 'expo-av';
 import * as jpeg from 'jpeg-js';
-import { Camera, useCameraDevice, useCameraPermission, useCodeScanner, useFrameProcessor } from 'react-native-vision-camera';
+import { Camera, useCameraDevice, useCameraPermission, useCodeScanner, useFrameProcessor, useCameraFormat } from 'react-native-vision-camera';
 import * as ImageManipulator from 'expo-image-manipulator';
 import { useFaceDetector } from 'react-native-vision-camera-face-detector';
 import { Worklets, useSharedValue } from 'react-native-worklets-core';
@@ -275,6 +275,10 @@ export function useAttendance() {
   const frontDevice = useCameraDevice('front');
   const backDevice = useCameraDevice('back');
   const device = frontDevice ?? backDevice;
+  const cameraFormat = useCameraFormat(device, [
+    { photoResolution: 'max' },
+    { videoResolution: 'max' }
+  ]);
   const cameraRef = useRef<Camera>(null);
 
   // Refs
@@ -741,29 +745,54 @@ export function useAttendance() {
       const uprightW = Math.min(photo.width, photo.height);
       const uprightH = Math.max(photo.width, photo.height);
 
-      // FORCE SQUARE CROP: ArcFace models are highly sensitive to stretching.
-      const centerX = faceBox.left + faceBox.width / 2;
-      const centerY = faceBox.top + faceBox.height / 2;
-      const side = Math.max(faceBox.width, faceBox.height) * 1.4;
+      // Determine if the frame is rotated relative to the upright photo
+      const sourceW = faceBox.frameWidth || uprightW;
+      const sourceH = faceBox.frameHeight || uprightH;
       
-      let cropX = centerX - side / 2;
-      let cropY = centerY - (side * 0.45);
+      const isRotated = (sourceW > sourceH && uprightW < uprightH) || (sourceW < sourceH && uprightW > uprightH);
+      const orientedFrameWidth = isRotated ? sourceH : sourceW;
+      const orientedFrameHeight = isRotated ? sourceW : sourceH;
+
+      // Recover the raw x, y coordinates from the face detector (which are in the oriented space)
+      const rawFaceX = faceBox.left * sourceW;
+      const rawFaceY = faceBox.top * sourceH;
+      const rawFaceW = faceBox.width * sourceW;
+      const rawFaceH = faceBox.height * sourceH;
       
-      cropX = Math.max(0, Math.min(1 - side, cropX));
-      cropY = Math.max(0, Math.min(1 - side, cropY));
+      const coverScale = Math.max(uprightW / orientedFrameWidth, uprightH / orientedFrameHeight);
+      const renderedW = orientedFrameWidth * coverScale;
+      const renderedH = orientedFrameHeight * coverScale;
+      const offsetX = (renderedW - uprightW) / 2;
+      const offsetY = (renderedH - uprightH) / 2;
 
-      const originX = Math.floor(cropX * uprightW);
-      const originY = Math.floor(cropY * uprightH);
-      const size = Math.floor(side * Math.min(uprightW, uprightH));
+      // Map from oriented frame space to photo space
+      const photoFaceX = (rawFaceX * coverScale) - offsetX;
+      const photoFaceY = (rawFaceY * coverScale) - offsetY;
+      const photoFaceW = rawFaceW * coverScale;
+      const photoFaceH = rawFaceH * coverScale;
 
-      console.log(`[CameraVision] Square Crop: origin=${originX},${originY} size=${size}x${size} (photo upright: ${uprightW}x${uprightH})`);
+      const pxCenterX = photoFaceX + photoFaceW / 2;
+      const pxCenterY = photoFaceY + photoFaceH / 2;
 
-      if (size > 0) {
+      const pxSide = Math.max(photoFaceW, photoFaceH) * 1.5; // 1.5x padding as requested
+      
+      let originX = Math.floor(pxCenterX - pxSide / 2);
+      let originY = Math.floor(pxCenterY - pxSide * 0.45);
+      const size = Math.floor(pxSide);
+
+      // Clamp to bounds
+      let safeSize = Math.min(size, uprightW, uprightH);
+      originX = Math.max(0, Math.min(uprightW - safeSize, originX));
+      originY = Math.max(0, Math.min(uprightH - safeSize, originY));
+
+      console.log(`[CameraVision] Square Crop: origin=${originX},${originY} size=${safeSize}x${safeSize} (photo upright: ${uprightW}x${uprightH})`);
+
+      if (safeSize > 0) {
         try {
           const manipResult = await ImageManipulator.manipulateAsync(
             imageToProcess,
             [
-              { crop: { originX, originY, width: size, height: size } },
+              { crop: { originX, originY, width: safeSize, height: safeSize } },
               { resize: { width: 224, height: 224 } }
             ],
             { format: ImageManipulator.SaveFormat.JPEG, compress: 0.95 }
@@ -850,29 +879,38 @@ export function useAttendance() {
       console.log('[Face Verification] === LOCAL VERIFICATION END ===');
       return { ok: false, verified: false, message: 'Face profile data is corrupted.', hint: 'Ask the employee to re-register their face in the HRIS mobile app.' };
     }
-    console.log(`[Face Verification] Stored Embedding Length: ${storedEmbedding.length}`);
-    if (!isValidEmbeddingVector(storedEmbedding)) {
-      console.log('[Face Verification] ❌ Stored embedding vector is invalid.');
-      console.log('[Face Verification] === LOCAL VERIFICATION END ===');
-      return { ok: false, verified: false, message: 'Stored face profile is invalid.', hint: 'Ask the employee to re-register their face in the HRIS mobile app.' };
-    }
-    if (liveEmbedding.length !== storedEmbedding.length) {
-      console.log(`[Face Verification] ❌ Dimension mismatch! Live: ${liveEmbedding.length}, Stored: ${storedEmbedding.length}`);
-      console.log('[Face Verification] === LOCAL VERIFICATION END ===');
-      return { ok: false, verified: false, message: 'Face profile format mismatch.', hint: 'Please re-register face profile to match current model.' };
+    let storedEmbeddingsList: number[][] = [];
+    if (storedEmbedding.length > 0 && Array.isArray(storedEmbedding[0])) {
+      storedEmbeddingsList = storedEmbedding as unknown as number[][];
+      console.log(`[Face Verification] Multi-angle profile detected (${storedEmbeddingsList.length} angles)`);
+    } else {
+      storedEmbeddingsList = [storedEmbedding];
     }
 
-    const similarity = compareEmbeddings(liveEmbedding, storedEmbedding);
-    if (!Number.isFinite(similarity)) {
-      console.log('[Face Verification] ❌ Calculated similarity is not a finite number.');
+    let maxSimilarity = -1;
+    for (let i = 0; i < storedEmbeddingsList.length; i++) {
+      const angleEmbedding = storedEmbeddingsList[i];
+      if (!isValidEmbeddingVector(angleEmbedding) || liveEmbedding.length !== angleEmbedding.length) {
+        console.log(`[Face Verification] ❌ Angle ${i} invalid or dimension mismatch.`);
+        continue;
+      }
+      const sim = compareEmbeddings(liveEmbedding, angleEmbedding);
+      if (Number.isFinite(sim) && sim > maxSimilarity) {
+        maxSimilarity = sim;
+      }
+    }
+
+    const similarity = maxSimilarity;
+    if (similarity === -1) {
+      console.log('[Face Verification] ❌ Failed to calculate valid similarity score against any stored profile.');
       console.log('[Face Verification] === LOCAL VERIFICATION END ===');
-      return { ok: false, verified: false, message: 'Face verification failed due to invalid similarity score.', hint: 'Please try again.' };
+      return { ok: false, verified: false, message: 'Face profile format mismatch.', hint: 'Please re-register face profile.' };
     }
     
     const threshold = MODEL_CONFIG.matchThreshold;
     const isMatched = isMatch(similarity, threshold);
     
-    console.log(`[Face Verification] Calculated Cosine Similarity: ${similarity.toFixed(4)} (${(similarity * 100).toFixed(2)}%)`);
+    console.log(`[Face Verification] Best Cosine Similarity: ${similarity.toFixed(4)} (${(similarity * 100).toFixed(2)}%)`);
     console.log(`[Face Verification] Match Threshold Required: ${threshold.toFixed(2)} (${(threshold * 100).toFixed(0)}%)`);
     console.log(`[Face Verification] Match Verdict: ${isMatched ? '✅ [PASS]' : '❌ [FAIL]'}`);
     console.log('[Face Verification] === LOCAL VERIFICATION END ===');
@@ -1524,7 +1562,7 @@ export function useAttendance() {
           // Automatic clock-out if touchless is enabled
           if (isClockOut && currentSettings.touchless) {
              setAttendanceAction('clock_out');
-             if (!shouldWaitSync) await handleAttendance();
+             // Removed explicit await handleAttendance() here to avoid stale state. The useEffect will catch it.
           } else {
             setFaceCountdown(0);
             countdownRef.current = 0;
@@ -1571,8 +1609,8 @@ export function useAttendance() {
            const isClockOutNow = existingSession ? true : false;
            if (currentSettings.touchless) {
               if ((!isClockOutNow) || (isClockOutNow && shouldWaitSync)) {
-                console.log('[QR] Triggering touchless handleAttendance after background sync');
-                await handleAttendance();
+                console.log('[QR] Background sync finished. Relying on useEffect for touchless transition.');
+                // Removed explicit await handleAttendance() to avoid stale state issues.
               }
            }
         }).catch(e => console.log('[QR] Background sync failed (Safe to ignore if offline)', e));
@@ -1810,8 +1848,8 @@ export function useAttendance() {
   const displayClockInTime = formatTo12Hour(clockInTime);
 
   return {
-    colors, device, cameraRef, hasPermission, requestPermission,
-    codeScanner, frameProcessor,
+    colors, device, hasPermission, requestPermission,
+    cameraFormat, cameraRef, codeScanner, frameProcessor,
     flashAnim, scanLineAnim, scaleAnim,
     formattedTime, formattedDate,
     isLoading, isVerifying, isQrLoading, isClockingOut, isCapturingHardware: uiCapturingHardware,

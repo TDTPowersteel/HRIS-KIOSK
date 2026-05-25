@@ -22,6 +22,7 @@ import type { CameraVisionFaceTelemetry, FaceScanStage } from './types';
 
 type Props = {
   device: CameraProps['device'];
+  cameraFormat?: CameraProps['format'];
   cameraRef: React.RefObject<Camera | null>;
   frameProcessor: any;
   flashAnim: Animated.Value;
@@ -56,6 +57,7 @@ type Props = {
 
 export default function FaceScanView({
   device,
+  cameraFormat,
   cameraRef,
   frameProcessor,
   flashAnim,
@@ -118,30 +120,40 @@ export default function FaceScanView({
     ]).start();
   }, [scanStage, successAnimationTick, successScale]);
 
-  const requiresAndroidRotationFix = Platform.OS === 'android' && (livenessEnabled || faceEngine === 'camera_vision');
-  const cameraContainerWidth = isLandscape ? width * 0.6 : width;
-  const cameraContainerHeight = height;
-  const scaleRatio = Math.max(
-    cameraContainerWidth / cameraContainerHeight,
-    cameraContainerHeight / cameraContainerWidth
-  );
-  
-  let cameraTransform: any[] = [];
-  if (requiresAndroidRotationFix) {
-    if (orientation === ScreenOrientation.Orientation.LANDSCAPE_LEFT) {
-      cameraTransform = [{ rotate: '90deg' }, { scale: scaleRatio }];
-    } else if (orientation === ScreenOrientation.Orientation.LANDSCAPE_RIGHT) {
-      cameraTransform = [{ rotate: '-90deg' }, { scale: scaleRatio }];
-    } else if (orientation === ScreenOrientation.Orientation.PORTRAIT_DOWN) {
-      cameraTransform = [{ rotate: '180deg' }];
-    }
-  }
-
   const isCameraVisionMode = faceEngine === 'camera_vision';
   const isFrontCamera = device?.position === 'front';
   const detectionPercent = Math.max(0, Math.min(100, Math.round(cameraVisionReadiness)));
   const overlayWidth = overlaySize.width > 0 ? overlaySize.width : (isLandscape ? Math.round(width * 0.6) : width);
   const overlayHeight = overlaySize.height > 0 ? overlaySize.height : height;
+
+  const requiresAndroidRotationFix = Platform.OS === 'android' && (livenessEnabled || faceEngine === 'camera_vision');
+
+  const getDynamicCameraStyle = () => {
+    if (!requiresAndroidRotationFix) return styles.fullScreenCamera;
+    
+    if (orientation === ScreenOrientation.Orientation.LANDSCAPE_LEFT) {
+      return {
+        position: 'absolute' as const,
+        width: overlayHeight,
+        height: overlayWidth,
+        top: (overlayHeight - overlayWidth) / 2,
+        left: (overlayWidth - overlayHeight) / 2,
+        transform: [{ rotate: '90deg' }]
+      };
+    } else if (orientation === ScreenOrientation.Orientation.LANDSCAPE_RIGHT) {
+      return {
+        position: 'absolute' as const,
+        width: overlayHeight,
+        height: overlayWidth,
+        top: (overlayHeight - overlayWidth) / 2,
+        left: (overlayWidth - overlayHeight) / 2,
+        transform: [{ rotate: '-90deg' }]
+      };
+    } else if (orientation === ScreenOrientation.Orientation.PORTRAIT_DOWN) {
+      return [styles.fullScreenCamera, { transform: [{ rotate: '180deg' }] }];
+    }
+    return styles.fullScreenCamera;
+  };
 
   const fallbackFaceBoxNormalized = { left: 0.42, top: 0.08, width: 0.36, height: 0.5 };
   const fallbackFaceBoxPx = {
@@ -173,22 +185,54 @@ export default function FaceScanView({
       const sourceFrameHeight = box.frameHeight || overlayHeight;
       const isRotated = (sourceFrameWidth > sourceFrameHeight && overlayWidth < overlayHeight) || 
                        (sourceFrameWidth < sourceFrameHeight && overlayWidth > overlayHeight);
+
+      // 1. Native front camera preview is horizontally mirrored BEFORE CSS rotation
+      let rawX = box.left;
+      let rawY = box.top;
+      let rawW = box.width;
+      let rawH = box.height;
+
+      if (isFrontCamera) {
+        rawX = 1 - (rawX + rawW);
+      }
+
+      // 2. Apply math rotation to perfectly match the CSS rotation
+      let nx = rawX;
+      let ny = rawY;
+      let nw = rawW;
+      let nh = rawH;
+
+      if (isRotated) {
+        if (orientation === ScreenOrientation.Orientation.LANDSCAPE_LEFT) {
+          nx = 1 - (rawY + rawH);
+          ny = rawX;
+          nw = rawH;
+          nh = rawW;
+        } else if (orientation === ScreenOrientation.Orientation.LANDSCAPE_RIGHT) {
+          nx = rawY;
+          ny = 1 - (rawX + rawW);
+          nw = rawH;
+          nh = rawW;
+        } else {
+          nx = rawY;
+          ny = rawX;
+          nw = rawH;
+          nh = rawW;
+        }
+      } else if (orientation === ScreenOrientation.Orientation.PORTRAIT_DOWN) {
+        nx = 1 - (rawX + rawW);
+        ny = 1 - (rawY + rawH);
+      }
+
       const orientedFrameWidth = isRotated ? sourceFrameHeight : sourceFrameWidth;
       const orientedFrameHeight = isRotated ? sourceFrameWidth : sourceFrameHeight;
 
-      const originalX = box.left * sourceFrameWidth;
-      const originalY = box.top * sourceFrameHeight;
-      const originalW = box.width * sourceFrameWidth;
-      const originalH = box.height * sourceFrameHeight;
-
       let mapped = {
-        left: originalX / orientedFrameWidth,
-        top: originalY / orientedFrameHeight,
-        width: originalW / orientedFrameWidth,
-        height: originalH / orientedFrameHeight,
+        left: nx,
+        top: ny,
+        width: nw,
+        height: nh,
       };
-
-      if (isFrontCamera) mapped.left = 1 - (mapped.left + mapped.width);
 
       const coverScale = Math.max(overlayWidth / orientedFrameWidth, overlayHeight / orientedFrameHeight);
       const renderedW = orientedFrameWidth * coverScale;
@@ -212,8 +256,11 @@ export default function FaceScanView({
     }
 
     const minSize = 42;
-    const clampedWidth = Math.max(minSize, Math.min(overlayWidth, nextPx.width));
-    const clampedHeight = Math.max(minSize, Math.min(overlayHeight, nextPx.height));
+    const faceSizePx = Math.max(nextPx.width, nextPx.height);
+    const uiSide = faceSizePx * 1.05;
+
+    const clampedWidth = Math.max(minSize, Math.min(overlayWidth, uiSide));
+    const clampedHeight = Math.max(minSize, Math.min(overlayHeight, uiSide));
     const centerX = nextPx.left + nextPx.width / 2;
     const centerY = nextPx.top + nextPx.height / 2;
     const clampedLeft = clamp(centerX - clampedWidth / 2, 0, Math.max(0, overlayWidth - clampedWidth));
@@ -244,13 +291,22 @@ export default function FaceScanView({
     animatedFaceBoxHeight.value = withTiming(px.height, animation);
   }, [cameraVisionFaceBox, overlayWidth, overlayHeight, isFrontCamera, fallbackFaceBoxPx]);
 
-  const animatedFaceBoxStyle = useAnimatedStyle(() => ({
-    left: animatedFaceBoxLeft.value,
-    top: animatedFaceBoxTop.value,
-    width: animatedFaceBoxWidth.value,
-    height: animatedFaceBoxHeight.value,
-  }));
-
+  const animatedFaceBoxStyle = useAnimatedStyle(() => {
+    const isQualityPassed = cameraVisionReadiness >= 100;
+    return {
+      left: animatedFaceBoxLeft.value,
+      top: animatedFaceBoxTop.value,
+      width: animatedFaceBoxWidth.value,
+      height: animatedFaceBoxHeight.value,
+      position: 'absolute',
+      borderWidth: 3,
+      borderRadius: 16,
+      borderColor: isQualityPassed ? '#2ecc71' : '#F27121',
+      borderStyle: 'solid',
+      backgroundColor: isQualityPassed ? 'rgba(46, 204, 113, 0.15)' : 'transparent',
+    };
+  });
+  
   const showProcessingSpinner = isCapturingHardware || isVerifying || scanStage === 'capturing' || scanStage === 'verifying' || scanStage === 'recording';
   const showDetectionOverlay = isCameraVisionMode && cameraVisionFaceDetected && !!cameraVisionFaceBox && !showProcessingSpinner && scanStage !== 'success';
 
@@ -438,7 +494,7 @@ export default function FaceScanView({
   if (!isLandscape) {
     return (
       <View style={styles.portraitFaceContainer} onLayout={handleOverlayLayout}>
-        <Camera ref={cameraRef} style={[styles.fullScreenCamera, { transform: cameraTransform }]} device={device} isActive={true} photo={true} pixelFormat="yuv" frameProcessor={frameProcessor} androidPreviewViewType="texture-view" outputOrientation="device" resizeMode="cover" />
+        <Camera ref={cameraRef} style={getDynamicCameraStyle()} device={device} format={cameraFormat} isActive={true} photo={true} pixelFormat="yuv" frameProcessor={frameProcessor} androidPreviewViewType="texture-view" outputOrientation="device" resizeMode="cover" />
         <Animated.View style={[styles.snapFlash, { opacity: flashAnim }]} pointerEvents="none" />
         <View style={styles.cameraTintLight} pointerEvents="none" />
         {renderDetectionOverlay()}
@@ -495,7 +551,7 @@ export default function FaceScanView({
         </SafeAreaView>
       </View>
       <View style={styles.rightPanel} onLayout={handleOverlayLayout}>
-        <Camera ref={cameraRef} style={[styles.fullScreenCamera, { transform: cameraTransform }]} device={device} isActive={true} photo={true} pixelFormat="yuv" frameProcessor={frameProcessor} androidPreviewViewType="texture-view" outputOrientation="device" resizeMode="cover" />
+        <Camera ref={cameraRef} style={getDynamicCameraStyle()} device={device} format={cameraFormat} isActive={true} photo={true} pixelFormat="yuv" frameProcessor={frameProcessor} androidPreviewViewType="texture-view" outputOrientation="device" resizeMode="cover" />
         <Animated.View style={[styles.snapFlash, { opacity: flashAnim }]} pointerEvents="none" />
         <View style={styles.cameraTintLight} pointerEvents="none" />
         {renderDetectionOverlay()}
