@@ -1005,7 +1005,7 @@ export function useAttendance() {
               latitude: loc.coords.latitude,
               longitude: loc.coords.longitude,
               radius: loc.coords.accuracy ?? 0,
-              address: addressRes ? `${addressRes.street || ''}, ${addressRes.city || ''}, ${addressRes.region || ''}`.replace(/^, |, $/g, '') : 'Unknown'
+              address: addressRes ? `${addressRes.streetNumber ? addressRes.streetNumber + ' ' : ''}${addressRes.street || ''}, ${addressRes.city || ''}, ${addressRes.region || ''}`.trim().replace(/^, |, $/g, '') : 'Unknown'
             };
             await AsyncStorage.setItem('kiosk_cached_location', JSON.stringify(locationData));
           }
@@ -1869,7 +1869,7 @@ export function useAttendance() {
               latitude: loc.coords.latitude,
               longitude: loc.coords.longitude,
               radius: loc.coords.accuracy ?? 0,
-              address: addressRes ? `${addressRes.street || ''}, ${addressRes.city || ''}, ${addressRes.region || ''}`.replace(/^, |, $/g, '') : 'Unknown'
+              address: addressRes ? `${addressRes.streetNumber ? addressRes.streetNumber + ' ' : ''}${addressRes.street || ''}, ${addressRes.city || ''}, ${addressRes.region || ''}`.trim().replace(/^, |, $/g, '') : 'Unknown'
             };
             await AsyncStorage.setItem('kiosk_cached_location', JSON.stringify(locationData));
             console.log('[Location] Background pre-fetch successful:', locationData.address);
@@ -1887,7 +1887,7 @@ export function useAttendance() {
               latitude: loc.coords.latitude,
               longitude: loc.coords.longitude,
               radius: loc.coords.accuracy ?? 0,
-              address: addressRes ? `${addressRes.street || ''}, ${addressRes.city || ''}, ${addressRes.region || ''}`.replace(/^, |, $/g, '') : 'Unknown'
+              address: addressRes ? `${addressRes.streetNumber ? addressRes.streetNumber + ' ' : ''}${addressRes.street || ''}, ${addressRes.city || ''}, ${addressRes.region || ''}`.trim().replace(/^, |, $/g, '') : 'Unknown'
             };
             await AsyncStorage.setItem('kiosk_cached_location', JSON.stringify(locationData));
             console.log('[Location] Background pre-fetch successful after request:', locationData.address);
