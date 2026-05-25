@@ -6,24 +6,56 @@
 
 ## Table of Contents
 
-1. [Overview](#1-overview)
+1. [Dual Face Engines Overview](#1-dual-face-engines-overview)
+   - [1.1. Hybrid Attendance Flow (Cloud Mode)](#11-hybrid-attendance-flow-cloud-mode)
 2. [Libraries & Services Used](#2-libraries--services-used)
-3. [Complete Flow – Step by Step](#3-complete-flow--step-by-step)
+3. [Complete Flow – Step by Step (Face++ Cloud Mode)](#3-complete-flow--step-by-step)
 4. [Mobile App Layer (React Native)](#4-mobile-app-layer-react-native)
 5. [Backend Layer (PHP)](#5-backend-layer-php)
 6. [Database Layer (Supabase)](#6-database-layer-supabase)
-7. [Liveness Detection – How It Works](#7-liveness-detection--how-it-works)
-8. [Face Matching – How It Works](#8-face-matching--how-it-works)
-9. [API Request & Response Reference](#9-api-request--response-reference)
-10. [Error Handling & Fallbacks](#10-error-handling--fallbacks)
-11. [Offline Mode](#11-offline-mode)
-12. [Environment Variables](#12-environment-variables)
+7. [Face++ API Usage & Request Counts](#7-face-api-usage--request-counts)
+8. [Why Face Scanning / Verification Takes Time (Latency Factors)](#8-why-face-scanning--verification-takes-time-latency-factors)
+9. [Liveness Detection – Complete Anti-Spoofing Workflow](#9-liveness-detection--complete-anti-spoofing-workflow)
+10. [Face Matching & Identity Verification](#10-face-matching--identity-verification)
+11. [API Request & Response Reference](#11-api-request--response-reference)
+12. [Error Handling & Fallbacks](#12-error-handling--fallbacks)
+13. [Offline Mode](#13-offline-mode)
+14. [Environment Variables](#14-environment-variables)
 
 ---
 
-## 1. Overview
+## 1. Dual Face Engines Overview
 
-The attendance system uses a **2-step identity flow** before recording a clock-in:
+The HRIS Kiosk attendance system supports **two interchangeable facial recognition engines**, configurable in settings under **Face Recognition Engine**:
+
+### A. Face++ Cloud Engine (Cloud-Based / Hybrid)
+An online engine performing 3D liveness burst capture and sending photos to the PHP server, which orchestrates anti-spoofing and identity verification using Face++ global APIs.
+* **Accuracy:** 99.8%
+* **Liveness:** Temporal burst shot (300ms gap, compared via Face++ `/compare`).
+* **Latency:** 2 to 5 seconds depending on network speeds.
+
+### B. Camera Vision Local Engine (On-Device / Local)
+An offline-first engine running local neural network inference directly on the tablet's processor. It decodes the camera payload, extracts a face embedding in real-time, and calculates Cosine Similarity locally.
+* **Accuracy:** 99.7%
+* **Liveness:** Pre-capture active pose alignment & open-eye checks.
+* **Latency:** <50ms local verification.
+* *For complete internal mechanics, coordinate cropping math, and stability details, see:* **[Camera Vision Face Verification Documentation](file:///C:/Users/Keith/HRIS/HRIS-KIOSK/docs/face-verification.md)**.
+
+---
+
+### Camera Viewfinder Overlay
+
+Both engines run with a premium, high-fidelity viewfinder overlay that conforms to modern design systems:
+* **Style:** Sharp **0-radius corners** (`borderRadius: 0`) and a thin **1.5px solid border** (`borderWidth: 1.5`).
+* **Active Status Logic:**
+  * **Orange/Amber (#F27121):** The subject is aligning or does not pass stability filters (transparent backdrop).
+  * **Green (#2ecc71):** The subject is locked in, aligned, and ready to trigger (15% green backdrop `rgba(46, 204, 113, 0.15)`).
+
+---
+
+## 1.1. Hybrid Attendance Flow (Cloud Mode)
+
+The hybrid attendance system uses a **2-step identity flow** before recording a clock-in:
 
 ```
 [Employee scans QR code]
