@@ -12,7 +12,7 @@ import { BACKEND_URL } from '../../config/backend';
 import { enqueueOfflineAttendance, getOfflineAttendanceQueue } from '../../utils/offlineAttendance';
 import { resolveOfflineUserFromQr, upsertOfflineUserCacheUser } from '../../utils/offlineUsers';
 import { useTheme } from '../../config/theme';
-import { compareEmbeddings, isMatch, MODEL_CONFIG } from '../../utils/face-embedding';
+import { compareEmbeddings, compareMultiAngleEmbeddings, isMatch, MODEL_CONFIG } from '../../utils/face-embedding';
 import { loadFaceModel, getEmbedding, isModelLoaded } from '../../faceEngine/model';
 import { rgbaBufferToCHWTensor } from '../../faceEngine/preprocess';
 import type { FaceEngine } from '../settings/features/FaceRecogEngineFeature';
@@ -787,7 +787,22 @@ export function useAttendance() {
       const pxCenterX = photoFaceX + photoFaceW / 2;
       const pxCenterY = photoFaceY + photoFaceH / 2;
 
-      const pxSide = Math.max(photoFaceW, photoFaceH) * 1.5; // 1.5x padding as requested
+      // Calculate face scale relative to the frame. Far faces are small, close faces are large.
+      const faceRatio = Math.max(photoFaceW / sourceW, photoFaceH / sourceH);
+      
+      // Far faces (ratio ≤ 0.15): 2.0x padding to compensate for stale tracking box
+      // Close faces (ratio ≥ 0.35): 1.6x standard padding
+      let paddingMult: number;
+      if (faceRatio >= 0.35) {
+        paddingMult = 1.6;
+      } else if (faceRatio <= 0.15) {
+        paddingMult = 2.0;
+      } else {
+        const t = (faceRatio - 0.15) / (0.35 - 0.15);
+        paddingMult = 2.0 - t * (2.0 - 1.6);
+      }
+
+      const pxSide = Math.max(photoFaceW, photoFaceH) * paddingMult;
       
       let originX = Math.floor(pxCenterX - pxSide / 2);
       let originY = Math.floor(pxCenterY - pxSide * 0.45);
@@ -798,7 +813,7 @@ export function useAttendance() {
       originX = Math.max(0, Math.min(photo.width - safeSize, originX));
       originY = Math.max(0, Math.min(photo.height - safeSize, originY));
 
-      console.log(`[CameraVision] Square Crop: origin=${originX},${originY} size=${safeSize}x${safeSize} (photo raw: ${photo.width}x${photo.height})`);
+      console.log(`[CameraVision] Square Crop (Far Compensation): origin=${originX},${originY} size=${safeSize}x${safeSize}, paddingMult=${paddingMult.toFixed(2)}x (photo raw: ${photo.width}x${photo.height})`);
 
       if (safeSize > 0) {
         try {
@@ -806,7 +821,7 @@ export function useAttendance() {
             imageToProcess,
             [
               { crop: { originX, originY, width: safeSize, height: safeSize } },
-              { resize: { width: 224, height: 224 } }
+              { resize: { width: 112, height: 112 } }
             ],
             { format: ImageManipulator.SaveFormat.JPEG, compress: 0.95 }
           );
@@ -819,7 +834,7 @@ export function useAttendance() {
       try {
         const manipResult = await ImageManipulator.manipulateAsync(
           imageToProcess,
-          [{ resize: { width: 400 } }],
+          [{ resize: { width: 112 } }],
           { format: ImageManipulator.SaveFormat.JPEG, compress: 0.9 }
         );
         imageToProcess = manipResult.uri;
@@ -859,7 +874,43 @@ export function useAttendance() {
   }, [cameraVisionFaceBox]);
 
   // Sync comparator — receives the already-captured live embedding from the frame processor
-  const verifyFaceLocal = useCallback((liveEmbedding: number[]): { ok: boolean; verified: boolean; message?: string; hint?: string } => {
+  const verifyFaceViaAPI = useCallback(async (liveEmbedding: number[]): Promise<{ ok: boolean; verified: boolean; message?: string; hint?: string; similarity?: number } | null> => {
+    try {
+      const userId = selectedUserRef.current?.userId;
+      if (!userId) return null;
+
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 5000);
+
+      const response = await fetch(`${BACKEND_URL}/verify_face_api.php`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'ngrok-skip-browser-warning': 'true' },
+        body: JSON.stringify({ log_id: userId, live_embedding: liveEmbedding }),
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+
+      const json = await response.json();
+      console.log(`[Face Verification API] Response:`, { verified: json.verified, similarity: json.similarity, threshold: json.threshold, angle_count: json.angle_count, best_angle: json.best_angle_index });
+
+      if (json.ok === false && json.message) {
+        return { ok: false, verified: false, message: json.message, hint: json.hint };
+      }
+
+      return {
+        ok: json.verified === true,
+        verified: json.verified === true,
+        message: json.verified ? undefined : `Face does not match. Similarity: ${((json.similarity || 0) * 100).toFixed(0)}%`,
+        hint: json.verified ? undefined : 'Ensure good lighting and face the camera directly.',
+        similarity: json.similarity,
+      };
+    } catch (err: any) {
+      console.log('[Face Verification API] Unavailable, falling back to local:', err?.message);
+      return null;
+    }
+  }, []);
+
+  const verifyFaceLocal = useCallback((liveEmbedding: number[]): { ok: boolean; verified: boolean; message?: string; hint?: string; similarity?: number } => {
     console.log('[Face Verification] === LOCAL VERIFICATION START ===');
     console.log(`[Face Verification] Target Employee: ${selectedUserRef.current?.name || 'Unknown'} (Username: ${selectedUserRef.current?.username || 'N/A'}, ID: ${selectedUserRef.current?.userId || 'N/A'})`);
     if (!isValidEmbeddingVector(liveEmbedding)) {
@@ -874,7 +925,7 @@ export function useAttendance() {
       console.log('[Face Verification] === LOCAL VERIFICATION END ===');
       return { ok: false, verified: false, message: 'No face profile registered for this employee.', hint: 'Ask the employee to register their face in the HRIS mobile app first.' };
     }
-    let storedEmbedding: number[];
+    let storedEmbedding: number[] | number[][];
     if (Array.isArray(storedEmbeddingVal)) {
       storedEmbedding = storedEmbeddingVal;
       console.log('[Face Verification] Stored Embedding Source: Array');
@@ -892,44 +943,34 @@ export function useAttendance() {
       console.log('[Face Verification] === LOCAL VERIFICATION END ===');
       return { ok: false, verified: false, message: 'Face profile data is corrupted.', hint: 'Ask the employee to re-register their face in the HRIS mobile app.' };
     }
-    let storedEmbeddingsList: number[][] = [];
-    if (storedEmbedding.length > 0 && Array.isArray(storedEmbedding[0])) {
-      storedEmbeddingsList = storedEmbedding as unknown as number[][];
-      console.log(`[Face Verification] Multi-angle profile detected (${storedEmbeddingsList.length} angles)`);
-    } else {
-      storedEmbeddingsList = [storedEmbedding];
-    }
 
-    let maxSimilarity = -1;
-    for (let i = 0; i < storedEmbeddingsList.length; i++) {
-      const angleEmbedding = storedEmbeddingsList[i];
-      if (!isValidEmbeddingVector(angleEmbedding) || liveEmbedding.length !== angleEmbedding.length) {
-        console.log(`[Face Verification] ❌ Angle ${i} invalid or dimension mismatch.`);
-        continue;
-      }
-      const sim = compareEmbeddings(liveEmbedding, angleEmbedding);
-      if (Number.isFinite(sim) && sim > maxSimilarity) {
-        maxSimilarity = sim;
-      }
-    }
+    const result = compareMultiAngleEmbeddings(liveEmbedding, storedEmbedding);
 
-    const similarity = maxSimilarity;
-    if (similarity === -1) {
+    if (result.maxSimilarity === -1) {
       console.log('[Face Verification] ❌ Failed to calculate valid similarity score against any stored profile.');
       console.log('[Face Verification] === LOCAL VERIFICATION END ===');
       return { ok: false, verified: false, message: 'Face profile format mismatch.', hint: 'Please re-register face profile.' };
     }
     
     const threshold = MODEL_CONFIG.matchThreshold;
-    const isMatched = isMatch(similarity, threshold);
+    const subThreshold = MODEL_CONFIG.subThreshold;
+
+    // top2_agree: for multi-angle registrations, require at least 2 angles above sub-threshold
+    const agreeingAngles = result.perAngleScores.filter(s => s >= subThreshold).length;
+    const top2Required = result.angleCount >= 3;
+    const top2Agrees = !top2Required || agreeingAngles >= 2;
+
+    const isMatched = isMatch(result.maxSimilarity, threshold) && top2Agrees;
     
-    console.log(`[Face Verification] Best Cosine Similarity: ${similarity.toFixed(4)} (${(similarity * 100).toFixed(2)}%)`);
+    console.log(`[Face Verification] Angles: ${result.angleCount}, Per-angle scores: [${result.perAngleScores.map(s => s.toFixed(4)).join(', ')}]`);
+    console.log(`[Face Verification] Best Cosine Similarity: ${result.maxSimilarity.toFixed(4)} (${(result.maxSimilarity * 100).toFixed(2)}%) from angle ${result.bestAngleIndex}`);
+    console.log(`[Face Verification] Agreeing angles (≥${subThreshold}): ${agreeingAngles} / ${result.angleCount}${top2Required ? ' (top2 required)' : ''}`);
     console.log(`[Face Verification] Match Threshold Required: ${threshold.toFixed(2)} (${(threshold * 100).toFixed(0)}%)`);
     console.log(`[Face Verification] Match Verdict: ${isMatched ? '✅ [PASS]' : '❌ [FAIL]'}`);
     console.log('[Face Verification] === LOCAL VERIFICATION END ===');
 
-    if (isMatched) return { ok: true, verified: true };
-    return { ok: false, verified: false, message: `Face does not match. Similarity: ${(similarity * 100).toFixed(0)}%`, hint: 'Ensure good lighting and face the camera directly.' };
+    if (isMatched) return { ok: true, verified: true, similarity: result.maxSimilarity };
+    return { ok: false, verified: false, similarity: result.maxSimilarity, message: `Face does not match. Similarity: ${(result.maxSimilarity * 100).toFixed(0)}%`, hint: 'Ensure good lighting and face the camera directly.' };
   }, []);
 
   const logCameraVisionGateSkip = useCallback((reason: string, details?: Record<string, unknown>) => {
@@ -1095,36 +1136,91 @@ export function useAttendance() {
     setLivenessMessage('Capturing...');
     await new Promise(resolve => setTimeout(resolve, 50));
 
+    const verificationStart = Date.now();
+    let captureDuration = 0;
+    let compareDuration = 0;
+    let methodUsed = 'Unknown';
     let result: any;
+
     try {
       if (faceEngine === 'camera_vision') {
-        // Camera Vision: take photo with robust silent retry logic
+        const captureStart = Date.now();
         let liveEmbedding: number[] | null = null;
+        let bestScore = -1;
         let lastError: any = null;
+
+        // Pre-parse stored embedding for quick scoring between shots
+        const storedRaw = selectedUserRef.current?.face_embedding;
+        let parsedStored: number[] | number[][] | null = null;
+        if (storedRaw) {
+          try { parsedStored = Array.isArray(storedRaw) ? storedRaw : JSON.parse(storedRaw as string); } catch {}
+        }
+
         for (let attempt = 1; attempt <= 2; attempt++) {
           try {
-            liveEmbedding = await captureEmbeddingFromPhoto();
-            break;
+            const embedding = await captureEmbeddingFromPhoto();
+            if (parsedStored) {
+              const r = compareMultiAngleEmbeddings(embedding, parsedStored);
+              if (r.maxSimilarity > bestScore) {
+                bestScore = r.maxSimilarity;
+                liveEmbedding = embedding;
+              }
+              // First shot already clear pass — skip second
+              if (bestScore >= MODEL_CONFIG.matchThreshold && attempt === 1) {
+                console.log(`[CameraVision] Shot 1 scored well (${(bestScore * 100).toFixed(1)}%), skipping shot 2.`);
+                break;
+              }
+            } else {
+              if (!liveEmbedding) liveEmbedding = embedding;
+              break;
+            }
+            if (attempt < 2) await new Promise(r => setTimeout(r, 200));
           } catch (err) {
             console.log(`[CameraVision] Photo capture attempt ${attempt} failed:`, err);
             lastError = err;
-            await new Promise(resolve => setTimeout(resolve, 100));
+            if (attempt < 2) await new Promise(r => setTimeout(r, 100));
           }
         }
         if (!liveEmbedding) throw lastError || new Error('Failed to capture face embedding');
         
+        captureDuration = Date.now() - captureStart;
         setIsCapturingHardware(false);
-        result = verifyFaceLocal(liveEmbedding);
+
+        const compareStart = Date.now();
+        // Try API verification first (authoritative server-side check), fall back to local
+        if (!offlineModeEnabled) {
+          const apiResult = await verifyFaceViaAPI(liveEmbedding);
+          if (apiResult !== null) {
+            result = apiResult;
+            methodUsed = 'API (Camera Vision)';
+          } else {
+            result = verifyFaceLocal(liveEmbedding);
+            methodUsed = 'Local Fallback (Camera Vision)';
+          }
+        } else {
+          result = verifyFaceLocal(liveEmbedding);
+          methodUsed = 'Local Offline (Camera Vision)';
+        }
+        compareDuration = Date.now() - compareStart;
       } else {
+        const captureStart = Date.now();
         // Face++ or offline photo capture
         if (!cameraRef.current) throw new Error('Camera not ready');
         const photo1 = await cameraRef.current.takePhoto({ flash: 'off', enableAutoRedEyeReduction: true });
+        captureDuration = Date.now() - captureStart;
         setIsCapturingHardware(false);
         if (!photo1?.path) throw new Error('No image captured');
         const photoUri = `file://${photo1.path}`;
-        result = offlineModeEnabled
-          ? { ok: true, verified: true, offlineCaptured: true, message: 'Face photos captured offline.', photoUri }
-          : await verifyFace(photoUri);
+
+        const compareStart = Date.now();
+        if (offlineModeEnabled) {
+          result = { ok: true, verified: true, offlineCaptured: true, message: 'Face photos captured offline.', photoUri };
+          methodUsed = 'Offline Photo Capture (Face++)';
+        } else {
+          result = await verifyFace(photoUri);
+          methodUsed = 'API (Face++)';
+        }
+        compareDuration = Date.now() - compareStart;
       }
     } catch (e: any) {
       setIsCapturingHardware(false);
@@ -1137,9 +1233,29 @@ export function useAttendance() {
     }
 
     try {
-      if (result?.match_score != null) {
-        console.log(`[Verify] Identity Match Accuracy: ${(result.match_score * 100).toFixed(2)}%`);
+      const totalTime = Date.now() - verificationStart;
+      const userName = selectedUserRef.current?.name || 'Unknown';
+      const userId = selectedUserRef.current?.userId || 'N/A';
+      const scoreVal = result?.similarity != null ? result.similarity : (result?.match_score != null ? result.match_score : null);
+      const isSuccess = result?.ok === true || result?.verified === true;
+
+      console.log('\n==================================================');
+      console.log('       [Face Verification TEST METRICS]           ');
+      console.log('==================================================');
+      console.log(`👤 Employee:    ${userName} (ID: ${userId})`);
+      console.log(`⚡ Method:      ${methodUsed}`);
+      console.log(`🏆 Result:      ${isSuccess ? '✅ [PASSED]' : '❌ [FAILED]'}`);
+      if (scoreVal !== null) {
+        console.log(`📈 Score:       ${(scoreVal * 100).toFixed(2)}% (Threshold: ${(MODEL_CONFIG.matchThreshold * 100).toFixed(0)}%)`);
+      } else {
+        console.log(`📈 Score:       N/A`);
       }
+      console.log('--------------------------------------------------');
+      console.log('Performance Details:');
+      console.log(`📸 Image Capture/ONNX:  ${captureDuration} ms`);
+      console.log(`⚖️ Comparison Math:     ${compareDuration} ms`);
+      console.log(`⏱️ Total Cycle Time:    ${totalTime} ms`);
+      console.log('==================================================\n');
 
       if (result?.ok === true || result?.verified === true) {
         identityStatusRef.current = 'passed';

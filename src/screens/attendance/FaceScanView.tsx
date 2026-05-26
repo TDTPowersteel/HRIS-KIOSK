@@ -7,6 +7,7 @@ import {
   Text,
   TouchableOpacity,
   View,
+  ScrollView,
   useWindowDimensions,
   Platform,
 } from 'react-native';
@@ -545,25 +546,29 @@ export default function FaceScanView({
     <View style={styles.splitScreenContainer}>
       <View style={[styles.leftPanel, { backgroundColor: accentColor }]}>
         <SafeAreaView style={styles.panelSafeArea} edges={['top', 'left', 'bottom']}>
-          <View style={styles.leftPanelHeader}>
-            <TouchableOpacity onPress={onBack} style={styles.headerIconButtonLight}><MaterialCommunityIcons name="chevron-left" size={28} color={accentColor} /></TouchableOpacity>
-            <TouchableOpacity onPress={onOpenOffline} style={[styles.headerIconButtonLight, styles.marginLeft10]}><MaterialCommunityIcons name="history" size={22} color={accentColor} />{pendingSyncCount > 0 && <View style={styles.headerSyncBadge} />}</TouchableOpacity>
-          </View>
-          <View style={styles.profileInfoContainer}>
-            <View style={styles.profileImageContainer}>
-              {selectedUser?.profile_picture ? <Image source={{ uri: selectedUser.profile_picture }} style={styles.profileImage} /> : <View style={styles.profileImagePlaceholder}><MaterialCommunityIcons name="account" size={100} color={accentColor} /></View>}
-              {!isVerifying && !isCapturingHardware && <View style={styles.verifiedBadge}><MaterialCommunityIcons name="check-circle" size={32} color="#4ade80" /></View>}
+          <ScrollView contentContainerStyle={{ flexGrow: 1, justifyContent: 'space-between' }} showsVerticalScrollIndicator={false}>
+            <View>
+              <View style={styles.leftPanelHeader}>
+                <TouchableOpacity onPress={onBack} style={styles.headerIconButtonLight}><MaterialCommunityIcons name="chevron-left" size={28} color={accentColor} /></TouchableOpacity>
+                <TouchableOpacity onPress={onOpenOffline} style={[styles.headerIconButtonLight, styles.marginLeft10]}><MaterialCommunityIcons name="history" size={22} color={accentColor} />{pendingSyncCount > 0 && <View style={styles.headerSyncBadge} />}</TouchableOpacity>
+              </View>
+              <View style={styles.profileInfoContainer}>
+                <View style={styles.profileImageContainer}>
+                  {selectedUser?.profile_picture ? <Image source={{ uri: selectedUser.profile_picture }} style={styles.profileImage} /> : <View style={styles.profileImagePlaceholder}><MaterialCommunityIcons name="account" size={100} color={accentColor} /></View>}
+                  {!isVerifying && !isCapturingHardware && <View style={styles.verifiedBadge}><MaterialCommunityIcons name="check-circle" size={32} color="#4ade80" /></View>}
+                </View>
+                <Text style={styles.profileName}>{selectedUser?.name || selectedUser?.username || 'Employee'}</Text>
+                <Text style={styles.profileRole}>{selectedUser?.role || 'Staff Member'}</Text>
+                <Text style={styles.profileDept}>{selectedUser?.department || 'Department'}</Text>
+                {isClockingOut && clockInTime ? <View style={styles.clockInTimeContainer}><MaterialCommunityIcons name="clock-outline" size={18} color="rgba(255,255,255,0.8)" /><Text style={styles.clockInTimeText}>Clocked In at: {clockInTime}</Text></View> : null}
+              </View>
             </View>
-            <Text style={styles.profileName}>{selectedUser?.name || selectedUser?.username || 'Employee'}</Text>
-            <Text style={styles.profileRole}>{selectedUser?.role || 'Staff Member'}</Text>
-            <Text style={styles.profileDept}>{selectedUser?.department || 'Department'}</Text>
-            {isClockingOut && clockInTime ? <View style={styles.clockInTimeContainer}><MaterialCommunityIcons name="clock-outline" size={18} color="rgba(255,255,255,0.8)" /><Text style={styles.clockInTimeText}>Clocked In at: {clockInTime}</Text></View> : null}
-          </View>
-          <View style={styles.leftPanelFooter}>
-            {showProcessingSpinner ? (
-              <View style={styles.verifyingPillLeft}><ActivityIndicator size="small" color={accentColor} /><Text style={[styles.verifyingPillTextLeft, { color: accentColor }]}>{scanStage === 'capturing' ? 'Capturing...' : isClockingOut ? 'Processing Logout...' : 'Verifying Identity...'}</Text></View>
-            ) : (!touchlessEnabled && <TouchableOpacity style={[styles.mainActionButtonLeft, isClockingOut ? styles.mainActionButtonLeftClockOut : styles.mainActionButtonLeftClockIn]} onPress={onAttendance} disabled={isVerifying || isCapturingHardware}><Text style={[styles.mainActionButtonTextLeft, isClockingOut ? styles.mainActionButtonTextLeftClockOut : { color: accentColor }]}>{isClockingOut ? 'CONFIRM CLOCK OUT' : 'CONFIRM CLOCK IN'}</Text></TouchableOpacity>)}
-          </View>
+            <View style={styles.leftPanelFooter}>
+              {showProcessingSpinner ? (
+                <View style={styles.verifyingPillLeft}><ActivityIndicator size="small" color={accentColor} /><Text style={[styles.verifyingPillTextLeft, { color: accentColor }]}>{scanStage === 'capturing' ? 'Capturing...' : isClockingOut ? 'Processing Logout...' : 'Verifying Identity...'}</Text></View>
+              ) : (!touchlessEnabled && <TouchableOpacity style={[styles.mainActionButtonLeft, isClockingOut ? styles.mainActionButtonLeftClockOut : styles.mainActionButtonLeftClockIn]} onPress={onAttendance} disabled={isVerifying || isCapturingHardware}><Text style={[styles.mainActionButtonTextLeft, isClockingOut ? styles.mainActionButtonTextLeftClockOut : { color: accentColor }]}>{isClockingOut ? 'CONFIRM CLOCK OUT' : 'CONFIRM CLOCK IN'}</Text></TouchableOpacity>)}
+            </View>
+          </ScrollView>
         </SafeAreaView>
       </View>
       <View style={styles.rightPanel} onLayout={handleOverlayLayout}>

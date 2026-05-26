@@ -338,6 +338,7 @@ export const styles = StyleSheet.create({
     shadowRadius: 20,
     elevation: 20,
     zIndex: 10,
+    overflow: 'hidden',
   },
   rightPanel: {
     flex: 6,
@@ -428,11 +429,13 @@ export const styles = StyleSheet.create({
   },
   leftPanelFooter: {
     alignItems: 'center',
+    paddingHorizontal: 20,
     paddingBottom: 20,
+    width: '100%',
   },
   mainActionButtonLeft: {
     width: '100%',
-    height: 65,
+    paddingVertical: 20,
     borderRadius: 15,
     alignItems: 'center',
     justifyContent: 'center',

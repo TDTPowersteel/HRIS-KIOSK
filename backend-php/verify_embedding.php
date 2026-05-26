@@ -1,5 +1,5 @@
 <?php
-// PHP-based Face Embedding verification endpoint to run cosine similarity checks for comparison and math verification.
+// Face Embedding verification endpoint with multi-angle support.
 
 ini_set('display_errors', '0');
 ini_set('display_startup_errors', '0');
@@ -58,39 +58,64 @@ if (!$storedEmbeddingStr) {
 }
 
 $storedEmbedding = json_decode($storedEmbeddingStr, true);
-if (!is_array($storedEmbedding) || count($storedEmbedding) !== count($liveEmbedding)) {
+if (!is_array($storedEmbedding)) {
     http_response_code(500);
-    echo json_encode([
-        'ok' => false,
-        'message' => 'Stored embedding dimension mismatch or corrupted.',
-        'stored_len' => is_array($storedEmbedding) ? count($storedEmbedding) : 0,
-        'live_len' => count($liveEmbedding)
-    ]);
+    echo json_encode(['ok' => false, 'message' => 'Stored embedding corrupted.']);
     exit;
 }
 
-// Cosine similarity
-$dot = 0;
-$normA = 0;
-$normB = 0;
-for ($i = 0; $i < count($liveEmbedding); $i++) {
-    $dot += $liveEmbedding[$i] * $storedEmbedding[$i];
-    $normA += $liveEmbedding[$i] * $liveEmbedding[$i];
-    $normB += $storedEmbedding[$i] * $storedEmbedding[$i];
+// Detect format: flat [512] or multi-angle [[512], [512], ...]
+$isMultiAngle = count($storedEmbedding) > 0 && is_array($storedEmbedding[0]);
+$angleEmbeddings = $isMultiAngle ? $storedEmbedding : [$storedEmbedding];
+
+$maxSimilarity = -1;
+$bestAngleIndex = -1;
+$perAngleScores = [];
+
+foreach ($angleEmbeddings as $idx => $angleEmb) {
+    if (!is_array($angleEmb) || count($angleEmb) !== count($liveEmbedding)) {
+        $perAngleScores[] = -1;
+        continue;
+    }
+
+    $dot = 0;
+    $normA = 0;
+    $normB = 0;
+    for ($i = 0; $i < count($liveEmbedding); $i++) {
+        $dot += $liveEmbedding[$i] * $angleEmb[$i];
+        $normA += $liveEmbedding[$i] * $liveEmbedding[$i];
+        $normB += $angleEmb[$i] * $angleEmb[$i];
+    }
+
+    $denom = sqrt($normA) * sqrt($normB);
+    $sim = $denom === 0.0 ? 0 : $dot / $denom;
+    $perAngleScores[] = $sim;
+
+    if ($sim > $maxSimilarity) {
+        $maxSimilarity = $sim;
+        $bestAngleIndex = $idx;
+    }
 }
 
-$denom = sqrt($normA) * sqrt($normB);
-$similarity = $denom === 0 ? 0 : $dot / $denom;
+$matchThreshold = 0.35;
+$subThreshold = 0.28;
 
-$matchThreshold = 0.65;
-$isMatch = $similarity >= $matchThreshold;
+// top2_agree: for multi-angle embeddings, require at least 2 angles to agree above sub-threshold
+$agreeingAngles = count(array_filter($perAngleScores, fn($s) => $s >= $subThreshold));
+$top2Agrees = count($angleEmbeddings) < 3 || $agreeingAngles >= 2;
+
+$isMatch = $maxSimilarity >= $matchThreshold && $top2Agrees;
 
 echo json_encode([
     'ok' => true,
     'log_id' => $userId,
     'username' => $faceData['username'],
-    'similarity' => $similarity,
+    'similarity' => $maxSimilarity,
     'threshold' => $matchThreshold,
     'is_match' => $isMatch,
-    'decision' => $isMatch ? 'PASS' : 'FAIL'
+    'decision' => $isMatch ? 'PASS' : 'FAIL',
+    'angle_count' => count($angleEmbeddings),
+    'best_angle_index' => $bestAngleIndex,
+    'per_angle_scores' => $perAngleScores,
+    'agreeing_angles' => $agreeingAngles,
 ]);
