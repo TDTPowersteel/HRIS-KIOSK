@@ -17,6 +17,7 @@ import { Camera, CameraProps } from 'react-native-vision-camera';
 import * as ScreenOrientation from 'expo-screen-orientation';
 import AnimatedReanimated, { useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
 import { styles } from './style/FaceScanViewStyle';
+import { useTheme } from '../../config/theme';
 import type { ResolvedUser } from './types';
 import type { FaceEngine } from '../settings/features/FaceRecogEngineFeature';
 import type { CameraVisionFaceTelemetry, FaceScanStage } from './types';
@@ -90,6 +91,16 @@ export default function FaceScanView({
   onOpenOffline,
   onAttendance,
 }: Props) {
+  const { theme, colors } = useTheme();
+
+  const isThemeLight = theme === 'light';
+  const profileBgColor = isThemeLight ? '#F4EFE6' : colors.surface;
+  const nameTextColor = isThemeLight ? colors.text : '#fff';
+  const roleTextColor = isThemeLight ? colors.textSecondary : 'rgba(255,255,255,0.7)';
+  const iconColor = isThemeLight ? colors.text : '#fff';
+  const placeholderBg = isThemeLight ? 'rgba(0,0,0,0.05)' : 'rgba(255,255,255,0.2)';
+  const portraitBorderColor = isThemeLight ? colors.border : '#fff';
+
   const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
 
   const { width, height } = useWindowDimensions();
@@ -460,22 +471,22 @@ export default function FaceScanView({
   );
 
   const renderProfileBar = () => (
-    <View style={[styles.portraitProfileBar, { backgroundColor: accentColor }]}>
+    <View style={[styles.portraitProfileBar, { backgroundColor: profileBgColor }]}>
       {selectedUser?.profile_picture ? (
-        <Image source={{ uri: selectedUser.profile_picture }} style={styles.portraitProfileImage} />
+        <Image source={{ uri: selectedUser.profile_picture }} style={[styles.portraitProfileImage, { borderColor: portraitBorderColor }]} />
       ) : (
-        <View style={styles.portraitProfilePlaceholder}>
-          <MaterialCommunityIcons name="account" size={28} color="#fff" />
+        <View style={[styles.portraitProfilePlaceholder, { backgroundColor: placeholderBg, borderColor: portraitBorderColor }]}>
+          <MaterialCommunityIcons name="account" size={28} color={iconColor} />
         </View>
       )}
       <View style={styles.portraitProfileInfo}>
-        <Text style={styles.portraitProfileName} numberOfLines={1}>{selectedUser?.name || selectedUser?.username || 'Employee'}</Text>
-        <Text style={styles.portraitProfileRole} numberOfLines={1}>{selectedUser?.role || 'Staff'} • {selectedUser?.department || 'Dept'}</Text>
+        <Text style={[styles.portraitProfileName, { color: nameTextColor }]} numberOfLines={1}>{selectedUser?.name || selectedUser?.username || 'Employee'}</Text>
+        <Text style={[styles.portraitProfileRole, { color: roleTextColor }]} numberOfLines={1}>{selectedUser?.role || 'Staff'} • {selectedUser?.department || 'Dept'}</Text>
       </View>
       {isClockingOut && clockInTime ? (
-        <View style={styles.clockInTimeContainer}>
-          <MaterialCommunityIcons name="clock-outline" size={14} color="rgba(255,255,255,0.8)" />
-          <Text style={styles.clockInTimeTextMini}>{clockInTime}</Text>
+        <View style={[styles.clockInTimeContainer, { backgroundColor: isThemeLight ? 'rgba(0,0,0,0.05)' : 'rgba(0,0,0,0.2)', marginTop: 0 }]}>
+          <MaterialCommunityIcons name="clock-outline" size={14} color={roleTextColor} />
+          <Text style={[styles.clockInTimeTextMini, { color: roleTextColor }]}>{clockInTime}</Text>
         </View>
       ) : null}
     </View>
@@ -544,29 +555,29 @@ export default function FaceScanView({
 
   return (
     <View style={styles.splitScreenContainer}>
-      <View style={[styles.leftPanel, { backgroundColor: accentColor }]}>
+      <View style={[styles.leftPanel, { backgroundColor: profileBgColor }]}>
         <SafeAreaView style={styles.panelSafeArea} edges={['top', 'left', 'bottom']}>
           <ScrollView contentContainerStyle={{ flexGrow: 1, justifyContent: 'space-between' }} showsVerticalScrollIndicator={false}>
             <View>
               <View style={styles.leftPanelHeader}>
-                <TouchableOpacity onPress={onBack} style={styles.headerIconButtonLight}><MaterialCommunityIcons name="chevron-left" size={28} color={accentColor} /></TouchableOpacity>
-                <TouchableOpacity onPress={onOpenOffline} style={[styles.headerIconButtonLight, styles.marginLeft10]}><MaterialCommunityIcons name="history" size={22} color={accentColor} />{pendingSyncCount > 0 && <View style={styles.headerSyncBadge} />}</TouchableOpacity>
+                <TouchableOpacity onPress={onBack} style={styles.headerIconButtonLight}><MaterialCommunityIcons name="chevron-left" size={28} color={iconColor} /></TouchableOpacity>
+                <TouchableOpacity onPress={onOpenOffline} style={[styles.headerIconButtonLight, styles.marginLeft10]}><MaterialCommunityIcons name="history" size={22} color={iconColor} />{pendingSyncCount > 0 && <View style={styles.headerSyncBadge} />}</TouchableOpacity>
               </View>
               <View style={styles.profileInfoContainer}>
                 <View style={styles.profileImageContainer}>
-                  {selectedUser?.profile_picture ? <Image source={{ uri: selectedUser.profile_picture }} style={styles.profileImage} /> : <View style={styles.profileImagePlaceholder}><MaterialCommunityIcons name="account" size={100} color={accentColor} /></View>}
+                  {selectedUser?.profile_picture ? <Image source={{ uri: selectedUser.profile_picture }} style={[styles.profileImage, { borderColor: portraitBorderColor }]} /> : <View style={[styles.profileImagePlaceholder, { backgroundColor: placeholderBg, borderColor: portraitBorderColor }]}><MaterialCommunityIcons name="account" size={100} color={iconColor} /></View>}
                   {!isVerifying && !isCapturingHardware && <View style={styles.verifiedBadge}><MaterialCommunityIcons name="check-circle" size={32} color="#4ade80" /></View>}
                 </View>
-                <Text style={styles.profileName}>{selectedUser?.name || selectedUser?.username || 'Employee'}</Text>
-                <Text style={styles.profileRole}>{selectedUser?.role || 'Staff Member'}</Text>
-                <Text style={styles.profileDept}>{selectedUser?.department || 'Department'}</Text>
-                {isClockingOut && clockInTime ? <View style={styles.clockInTimeContainer}><MaterialCommunityIcons name="clock-outline" size={18} color="rgba(255,255,255,0.8)" /><Text style={styles.clockInTimeText}>Clocked In at: {clockInTime}</Text></View> : null}
+                <Text style={[styles.profileName, { color: nameTextColor }]}>{selectedUser?.name || selectedUser?.username || 'Employee'}</Text>
+                <Text style={[styles.profileRole, { color: roleTextColor }]}>{selectedUser?.role || 'Staff Member'}</Text>
+                <Text style={[styles.profileDept, { color: roleTextColor }]}>{selectedUser?.department || 'Department'}</Text>
+                {isClockingOut && clockInTime ? <View style={[styles.clockInTimeContainer, { backgroundColor: isThemeLight ? 'rgba(0,0,0,0.05)' : 'rgba(0,0,0,0.2)' }]}><MaterialCommunityIcons name="clock-outline" size={18} color={roleTextColor} /><Text style={[styles.clockInTimeText, { color: roleTextColor }]}>Clocked In at: {clockInTime}</Text></View> : null}
               </View>
             </View>
             <View style={styles.leftPanelFooter}>
               {showProcessingSpinner ? (
                 <View style={styles.verifyingPillLeft}><ActivityIndicator size="small" color={accentColor} /><Text style={[styles.verifyingPillTextLeft, { color: accentColor }]}>{scanStage === 'capturing' ? 'Capturing...' : isClockingOut ? 'Processing Logout...' : 'Verifying Identity...'}</Text></View>
-              ) : (!touchlessEnabled && <TouchableOpacity style={[styles.mainActionButtonLeft, isClockingOut ? styles.mainActionButtonLeftClockOut : styles.mainActionButtonLeftClockIn]} onPress={onAttendance} disabled={isVerifying || isCapturingHardware}><Text style={[styles.mainActionButtonTextLeft, isClockingOut ? styles.mainActionButtonTextLeftClockOut : { color: accentColor }]}>{isClockingOut ? 'CONFIRM CLOCK OUT' : 'CONFIRM CLOCK IN'}</Text></TouchableOpacity>)}
+              ) : (!touchlessEnabled && <TouchableOpacity style={[styles.mainActionButtonLeft, isClockingOut ? styles.mainActionButtonLeftClockOut : [styles.mainActionButtonLeftClockIn, { backgroundColor: isThemeLight ? colors.accent : '#fff' }]]} onPress={onAttendance} disabled={isVerifying || isCapturingHardware}><Text style={[styles.mainActionButtonTextLeft, isClockingOut ? styles.mainActionButtonTextLeftClockOut : { color: isThemeLight ? '#fff' : accentColor }]}>{isClockingOut ? 'CONFIRM CLOCK OUT' : 'CONFIRM CLOCK IN'}</Text></TouchableOpacity>)}
             </View>
           </ScrollView>
         </SafeAreaView>

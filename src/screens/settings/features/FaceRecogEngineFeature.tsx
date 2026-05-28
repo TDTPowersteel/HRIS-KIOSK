@@ -9,60 +9,61 @@ type Props = {
 };
 
 export function FaceRecogEngineFeature({ engine, onSelect }: Props) {
-  const { colors } = useTheme();
-  const { width } = useWindowDimensions();
-  const isTablet = width >= 600;
-
-  const options: { value: FaceEngine; label: string }[] = [
-    { value: 'facepp', label: 'Face++' },
-    { value: 'camera_vision', label: 'Camera Vision' },
-  ];
+  const { colors, theme } = useTheme();
 
   return (
-    <View style={[
-      styles.card,
-      { backgroundColor: colors.surface, borderColor: colors.border },
-      isTablet && styles.cardTablet,
-    ]}>
-      <Text style={[styles.title, isTablet && styles.titleTablet]}>
-        Face Recognition Engine
-      </Text>
-      <Text style={[styles.description, { color: colors.textSecondary }, isTablet && styles.descriptionTablet]}>
-        Face++ sends photos to the cloud. Camera Vision uses buffalo_sc (ONNX) on-device for offline-capable, faster verification.
-      </Text>
-      <View style={styles.pillRow}>
-        {options.map((opt, i) => {
-          const isActive = engine === opt.value;
-          return (
-            <Pressable
-              key={opt.value}
-              onPress={() => onSelect(opt.value)}
-              style={[
-                styles.pill,
-                i === 0 ? styles.pillLeft : styles.pillRight,
-                isTablet && styles.pillTablet,
-                isActive
-                  ? { backgroundColor: Colors.powerOrange, borderColor: Colors.powerOrange }
-                  : { backgroundColor: 'transparent', borderColor: colors.border },
-              ]}
-            >
-              <Text style={[
-                styles.pillText,
-                { color: isActive ? '#fff' : colors.textSecondary },
-                isTablet && styles.pillTextTablet,
-              ]}>
-                {opt.label}
-              </Text>
-            </Pressable>
-          );
-        })}
+    <View style={[styles.row, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+      <View style={styles.rowTextBlock}>
+        <Text style={[styles.rowTitle, { color: Colors.powerOrange }]}>
+          Recognition Engine
+        </Text>
+        
+        <Text style={[styles.rowDescription, { color: colors.textSecondary }]}>
+          <Text style={{ fontWeight: '800', color: theme === 'light' ? '#555555' : colors.textSecondary }}>Local:</Text> Uses built-in AI model for instant verification. {'\n'}
+          <Text style={{ fontWeight: '800', color: theme === 'light' ? '#555555' : colors.textSecondary }}>Cloud:</Text> Uses internet to verify photos on the server.
+        </Text>
+      </View>
+
+      <View style={[styles.toggleWrapper, { borderColor: colors.border, backgroundColor: colors.background }]}>
+        <Pressable 
+          onPress={() => onSelect('camera_vision')}
+          style={[
+            styles.toggleBtn, 
+            engine === 'camera_vision' && { backgroundColor: Colors.powerOrange }
+          ]}
+        >
+          <Text style={[
+            styles.toggleBtnText, 
+            { color: engine === 'camera_vision' ? '#fff' : colors.textSecondary }
+          ]}>
+            LOCAL
+          </Text>
+        </Pressable>
+        <Pressable 
+          onPress={() => onSelect('facepp')}
+          style={[
+            styles.toggleBtn, 
+            engine === 'facepp' && { backgroundColor: Colors.powerOrange }
+          ]}
+        >
+          <Text style={[
+            styles.toggleBtnText, 
+            { color: engine === 'facepp' ? '#fff' : colors.textSecondary }
+          ]}>
+            CLOUD
+          </Text>
+        </Pressable>
       </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  card: {
+  row: {
+    minHeight: 115,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     paddingHorizontal: 28,
     paddingVertical: 20,
     borderRadius: 24,
@@ -73,58 +74,38 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 4 },
     elevation: 2,
   },
-  cardTablet: {
-    paddingHorizontal: 36,
-    paddingVertical: 26,
+  rowTextBlock: {
+    flex: 1,
+    paddingRight: 20,
   },
-  title: {
+  rowTitle: {
     fontSize: 22,
     fontWeight: '800',
-    marginBottom: 6,
     letterSpacing: -0.2,
-    color: Colors.powerOrange,
+    marginBottom: 6,
   },
-  titleTablet: {
-    fontSize: 26,
-  },
-  description: {
-    fontSize: 15,
-    fontWeight: '500',
-    lineHeight: 20,
-    marginBottom: 16,
-  },
-  descriptionTablet: {
-    fontSize: 17,
-    lineHeight: 24,
-    marginBottom: 20,
-  },
-  pillRow: {
-    flexDirection: 'row',
-  },
-  pill: {
-    flex: 1,
-    paddingVertical: 10,
-    alignItems: 'center',
-    borderWidth: 1.5,
-  },
-  pillTablet: {
-    paddingVertical: 14,
-  },
-  pillLeft: {
-    borderTopLeftRadius: 10,
-    borderBottomLeftRadius: 10,
-    borderRightWidth: 0.75,
-  },
-  pillRight: {
-    borderTopRightRadius: 10,
-    borderBottomRightRadius: 10,
-    borderLeftWidth: 0.75,
-  },
-  pillText: {
+  rowDescription: {
     fontSize: 14,
-    fontWeight: '700',
+    fontWeight: '500',
+    lineHeight: 18,
   },
-  pillTextTablet: {
-    fontSize: 17,
+  toggleWrapper: {
+    flexDirection: 'row',
+    borderWidth: 1.5,
+    borderRadius: 12,
+    padding: 3,
+    width: 150,
+    height: 48,
+  },
+  toggleBtn: {
+    flex: 1,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  toggleBtnText: {
+    fontSize: 12,
+    fontWeight: '900',
+    letterSpacing: 0.5,
   },
 });

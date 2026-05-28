@@ -7,8 +7,7 @@ export function ThemeSelectorFeature() {
   const { theme, setTheme, colors } = useTheme();
 
   return (
-    <View style={[styles.themeSection, { borderColor: colors.border }]}>
-      <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>APPLICATION THEME</Text>
+    <View style={styles.container}>
       <View style={styles.themeGrid}>
         {(['light', 'dark', 'industrial', 'midnight'] as ThemeType[]).map((t) => (
           <Pressable 
@@ -38,17 +37,8 @@ export function ThemeSelectorFeature() {
 }
 
 const styles = StyleSheet.create({
-  themeSection: {
-    marginTop: 10,
-    padding: 24,
-    borderRadius: 24,
-    borderWidth: 1.5,
-  },
-  sectionTitle: {
-    fontSize: 14,
-    fontWeight: '900',
-    letterSpacing: 1.5,
-    marginBottom: 20,
+  container: {
+    marginTop: 8,
   },
   themeGrid: {
     flexDirection: 'row',
@@ -56,34 +46,35 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   themeOption: {
-    width: (WINDOW_WIDTH - 120) / 4,
-    minWidth: 80,
-    height: 100,
-    borderRadius: 16,
+    flex: 1,
+    minWidth: '22%',
+    height: 110,
+    borderRadius: 18,
     borderWidth: 2,
-    padding: 8,
+    padding: 10,
     alignItems: 'center',
     justifyContent: 'center',
     position: 'relative',
   },
   themePreview: {
     width: '100%',
-    height: 40,
-    borderRadius: 8,
-    marginBottom: 8,
+    height: 44,
+    borderRadius: 10,
+    marginBottom: 10,
   },
   themeLabel: {
-    fontSize: 10,
-    fontWeight: '800',
+    fontSize: 11,
+    fontWeight: '900',
     textAlign: 'center',
+    letterSpacing: 0.5,
   },
   themeActiveDot: {
     position: 'absolute',
-    top: 6,
-    right: 6,
-    width: 8,
-    height: 8,
-    borderRadius: 4,
+    top: 8,
+    right: 8,
+    width: 10,
+    height: 10,
+    borderRadius: 5,
     backgroundColor: Colors.powerOrange,
   },
 });

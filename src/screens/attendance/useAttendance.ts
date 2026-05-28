@@ -1734,7 +1734,7 @@ export function useAttendance() {
               setScanStage('idle');
             }
           }
-        }, 600);
+        }, 300);
 
         // Background server sync to correct session state and fetch face data
         resolveUserFromQr(data).then(async (resolved) => {
@@ -2043,7 +2043,7 @@ export function useAttendance() {
   };
 
   const formattedTime = currentTime.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
-  const formattedDate = currentTime.toDateString();
+  const formattedDate = currentTime.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
   const isClockingOut = attendanceAction === 'clock_out';
   const displayClockInTime = formatTo12Hour(clockInTime);
 
@@ -2058,6 +2058,6 @@ export function useAttendance() {
     touchlessEnabled, offlineModeEnabled, livenessEnabled, faceEngine, pendingSyncCount,
     scanStage, cameraVisionFaceDetected, cameraVisionReadiness, cameraVisionFaceBox, cameraVisionAllFaces, cameraVisionFaceTelemetry, successAnimationTick,
     showResultModal, modalType, modalTitle, modalMessage, modalHint, livenessMessage,
-    closeModal, handleAttendance,
+    closeModal, handleAttendance, resetAttendanceFlow,
   };
 }

@@ -330,8 +330,6 @@ export const styles = StyleSheet.create({
   },
   leftPanel: {
     flex: 4,
-    borderTopLeftRadius: 30,
-    borderBottomLeftRadius: 30,
     shadowColor: '#000',
     shadowOffset: { width: -5, height: 0 },
     shadowOpacity: 0.3,

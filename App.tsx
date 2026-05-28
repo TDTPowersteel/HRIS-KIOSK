@@ -54,74 +54,87 @@ export default function App() {
     return (
       <View style={[styles.fullScreenContainer, { backgroundColor: currentTheme.background }]}>
         <View style={[styles.backgroundGlowTop, { 
-          backgroundColor: theme === 'light' ? 'rgba(230, 112, 38, 0.08)' : 'rgba(230, 112, 38, 0.12)',
+          backgroundColor: theme === 'light' ? 'rgba(230, 112, 38, 0.05)' : 'rgba(230, 112, 38, 0.08)',
           shadowColor: Colors.powerOrange,
-          shadowRadius: isTablet ? 180 : 120,
-          width: isTablet ? 600 : 400,
-          height: isTablet ? 450 : 300,
+          shadowRadius: isTablet ? 200 : 150,
+          width: isTablet ? 700 : 500,
+          height: isTablet ? 500 : 350,
         } as any]} />
         <View style={[styles.backgroundGlowBottom, { 
-          backgroundColor: theme === 'light' ? 'rgba(113, 112, 116, 0.08)' : 'rgba(113, 112, 116, 0.12)',
+          backgroundColor: theme === 'light' ? 'rgba(113, 112, 116, 0.05)' : 'rgba(113, 112, 116, 0.08)',
           shadowColor: Colors.steelGray,
-          shadowRadius: isTablet ? 160 : 100,
-          width: isTablet ? 500 : 350,
-          height: isTablet ? 400 : 280,
+          shadowRadius: isTablet ? 180 : 120,
+          width: isTablet ? 600 : 400,
+          height: isTablet ? 450 : 320,
         } as any]} />
 
-        <SafeAreaView style={[styles.container, { paddingHorizontal: isTablet ? 40 : 20 }]}>
+        <SafeAreaView style={[styles.container, { paddingHorizontal: isTablet ? 48 : 24 }]}>
           <View style={[styles.homeCard, { 
-            backgroundColor: theme === 'light' ? 'rgba(255, 255, 255, 1)' : 'rgba(36, 36, 35, 1)', 
-            paddingHorizontal: isTablet ? 40 : 24,
-            paddingVertical: isTablet ? 60 : 40,
+            backgroundColor: theme === 'light' ? '#FFFFFF' : '#242423', 
+            paddingHorizontal: isTablet ? 56 : 32,
+            paddingVertical: isTablet ? 72 : 48,
             shadowColor: '#000',
-            shadowOpacity: 0.1,
-            shadowRadius: 10,
-            shadowOffset: { width: 0, height: 10 },
-            elevation: 10,
+            shadowOpacity: 0.12,
+            shadowRadius: 16,
+            shadowOffset: { width: 0, height: 8 },
+            elevation: 12,
           }]}>
 
-            <View style={[styles.brandBlock, { marginBottom: isTablet ? 50 : 30 }]}>
+            <View style={[styles.brandBlock, { marginBottom: isTablet ? 56 : 32 }]}>
               <Image 
                 source={require('./assets/tdt-logo.png')} 
-                style={{ width: isTablet ? 380 : 240, height: isTablet ? 120 : 80, marginBottom: 20 }} 
+                style={{ width: isTablet ? 420 : 280, height: isTablet ? 130 : 85, marginBottom: 8 }} 
                 resizeMode="contain" 
               />
-              <Text style={[styles.brandSubcopy, { color: currentTheme.textSecondary, fontSize: isTablet ? 18 : 14 }]}>Attendance Monitoring System</Text>
+              <Text style={[styles.brandSubcopy, { color: currentTheme.textSecondary, fontSize: isTablet ? 15 : 12, marginTop: 0 }]}>
+                Attendance Monitoring System
+              </Text>
             </View>
 
-            <View style={[styles.buttonStack, { gap: isTablet ? 24 : 16 }]}>
+            <View style={[styles.buttonStack, { gap: isTablet ? 20 : 16 }]}>
               <Pressable 
                 style={({ pressed }) => [
                   styles.largeButton, 
-                  { backgroundColor: Colors.powerOrange, height: isTablet ? 90 : 70 },
-                  pressed && { backgroundColor: Colors.deepOrange, transform: [{ scale: 0.98 }] }
+                  { 
+                    backgroundColor: Colors.powerOrange, 
+                    height: isTablet ? 96 : 72 
+                  },
+                  pressed && { backgroundColor: Colors.deepOrange, transform: [{ scale: 0.985 }] }
                 ]} 
                 onPress={() => setScreen('qr')}
               >
-                <Text style={[styles.largeButtonText, { fontSize: isTablet ? 18 : 15 }]}>ATTENDANCE SCANNER</Text>
+                <Text style={[styles.largeButtonText, { fontSize: isTablet ? 20 : 16 }]}>ATTENDANCE SCANNER</Text>
               </Pressable>
 
               <Pressable 
                 style={({ pressed }) => [
                   styles.secondaryButton, 
-                  { backgroundColor: currentTheme.surface, borderColor: Colors.steelGray, height: isTablet ? 80 : 65 },
-                  pressed && { backgroundColor: theme === 'light' ? '#f0f0f0' : '#2a2a29', transform: [{ scale: 0.98 }] }
+                  { 
+                    backgroundColor: theme === 'light' ? '#F5F5F5' : '#2D2D2C', 
+                    borderColor: theme === 'light' ? '#E0E0E0' : 'rgba(255,255,255,0.1)',
+                    height: isTablet ? 80 : 64 
+                  },
+                  pressed && { backgroundColor: theme === 'light' ? '#EEEEEE' : '#353534', transform: [{ scale: 0.985 }] }
                 ]} 
                 onPress={() => setScreen('profile')}
               >
-                <Text style={[styles.secondaryButtonText, { color: currentTheme.text, fontSize: isTablet ? 16 : 14 }]}>EMPLOYEE DIRECTORY</Text>
+                <Text style={[styles.secondaryButtonText, { color: currentTheme.text, fontSize: isTablet ? 17 : 14 }]}>EMPLOYEE DIRECTORY</Text>
               </Pressable>
 
               <Pressable 
                 style={({ pressed }) => [
                   styles.minimalButton, 
-                  pressed && { opacity: 0.7 }
+                  { 
+                    marginTop: 8,
+                    backgroundColor: pressed ? (theme === 'light' ? 'rgba(0,0,0,0.03)' : 'rgba(255,255,255,0.03)') : 'transparent',
+                    borderRadius: 12,
+                  }
                 ]} 
                 onPress={() => setScreen('settings')}
               >
                 <View style={styles.settingsRow}>
                   <Text style={[styles.settingsIcon, { color: Colors.steelGray, fontSize: isTablet ? 20 : 16 }]}>{'\u2699'}</Text>
-                  <Text style={[styles.minimalButtonText, { color: Colors.steelGray, fontSize: isTablet ? 15 : 13 }]}>SETTINGS</Text>
+                  <Text style={[styles.minimalButtonText, { color: Colors.steelGray, fontSize: isTablet ? 14 : 12 }]}>SETTINGS</Text>
                 </View>
               </Pressable>
             </View>

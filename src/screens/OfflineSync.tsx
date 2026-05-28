@@ -1,6 +1,17 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import {
+  ActivityIndicator,
+  Pressable,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+  Image,
+  useWindowDimensions,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { BACKEND_URL } from '../config/backend';
 import { Colors, useTheme } from '../config/theme';
 import {
@@ -9,7 +20,17 @@ import {
   type OfflineAttendanceItem,
 } from '../utils/offlineAttendance';
 
-const APP_VERSION = 'v1.0.39';
+const APP_VERSION = 'v1.0.41';
+
+interface HistoryItem {
+  id: string;
+  name: string;
+  username: string;
+  profilePicture?: string;
+  action: 'clock_in' | 'clock_out';
+  time: string;
+  date: string;
+}
 
 type Props = {
   onBack: () => void;
@@ -56,17 +77,6 @@ function formatTimeDisplay(rawTime?: string | null) {
   const value = rawTime?.trim();
   if (!value) return '-';
 
-  const twelveHourMatch = value.match(/^(\d{1,2})(?::(\d{2}))?\s*([ap])\.?m\.?$/i);
-  if (twelveHourMatch) {
-    const hour = Number(twelveHourMatch[1]);
-    const minutes = Number(twelveHourMatch[2] ?? '0');
-    if (!Number.isNaN(hour) && !Number.isNaN(minutes) && hour >= 1 && hour <= 12 && minutes >= 0 && minutes <= 59) {
-      return minutes === 0
-        ? `${hour}${twelveHourMatch[3].toLowerCase()}m`
-        : `${hour}:${String(minutes).padStart(2, '0')}${twelveHourMatch[3].toLowerCase()}m`;
-    }
-  }
-
   const militaryMatch = value.match(/^(\d{1,2}):(\d{2})(?::\d{2})?$/);
   if (militaryMatch) {
     const hours24 = Number(militaryMatch[1]);
@@ -85,25 +95,44 @@ function formatTimeDisplay(rawTime?: string | null) {
 }
 
 export default function OfflineSync({ onBack, onOpenScanner }: Props) {
-  const { colors } = useTheme();
+  const { theme, colors } = useTheme();
   const { width: windowWidth } = useWindowDimensions();
   const [items, setItems] = useState<OfflineAttendanceItem[]>([]);
+  const [history, setHistory] = useState<HistoryItem[]>([]);
   const [activeTab, setActiveTab] = useState<TabKey>('pending');
   const [isLoading, setIsLoading] = useState(true);
+  const [isHistoryLoading, setIsHistoryLoading] = useState(true);
   const [isSyncing, setIsSyncing] = useState(false);
   const isTablet = windowWidth >= 768;
-  const horizontalPadding = windowWidth >= 1024 ? 36 : windowWidth >= 768 ? 26 : 16;
 
   const reloadQueue = useCallback(async () => {
     const queue = await getOfflineAttendanceQueue();
     setItems(queue);
   }, []);
 
+  const loadHistory = useCallback(async () => {
+    setIsHistoryLoading(true);
+    try {
+      const res = await fetch(`${BACKEND_URL}/attendance_today.php`, {
+        headers: { Accept: 'application/json', 'ngrok-skip-browser-warning': 'true' },
+      });
+      const json = await res.json();
+      if (json.ok) {
+        setHistory(json.history || []);
+      }
+    } catch (e) {
+      console.error('Failed to fetch history', e);
+    } finally {
+      setIsHistoryLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
-    reloadQueue()
-      .catch(() => undefined)
-      .finally(() => setIsLoading(false));
-  }, [reloadQueue]);
+    Promise.all([
+      reloadQueue().catch(() => undefined),
+      loadHistory().catch(() => undefined),
+    ]).finally(() => setIsLoading(false));
+  }, [reloadQueue, loadHistory]);
 
   const pendingItems = useMemo(() => items.filter((item) => item.status === 'pending'), [items]);
   const failedItems = useMemo(() => items.filter((item) => item.status === 'failed'), [items]);
@@ -123,69 +152,73 @@ export default function OfflineSync({ onBack, onOpenScanner }: Props) {
 
   return (
     <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]} edges={['top', 'left', 'right']}>
-      <View style={[styles.topBar, { backgroundColor: colors.accent }]} />
-      <View style={[styles.container, { paddingHorizontal: horizontalPadding }]}>
-        <View style={[styles.contentWrap, isTablet && styles.contentWrapTablet]}>
-          <View
-            style={[
-              styles.headerCard,
-              {
-                backgroundColor: colors.surface,
-                borderColor: colors.border,
-                shadowColor: colors.shadow,
-              },
-            ]}
-          >
-            <View style={styles.headerRow}>
-              <Pressable
-                onPress={onBack}
-                style={({ pressed }) => [
-                  styles.backButton,
-                  {
-                    backgroundColor: withAlpha(colors.accent, pressed ? 0.16 : 0.11),
-                    borderColor: withAlpha(colors.accent, 0.35),
-                  },
-                ]}
-              >
-                <Text style={[styles.backArrow, { color: colors.text }]}>{'<'}</Text>
-              </Pressable>
-              <View style={styles.titleWrap}>
-                <Text style={[styles.headerTitle, { color: colors.text }]}>Offline Sync Queue</Text>
-                <Text style={[styles.headerSubtitle, { color: colors.textSecondary }]}>
-                  Review and sync saved attendance records.
-                </Text>
-              </View>
-            </View>
+      <View style={styles.mainHeader}>
+        <Pressable
+          onPress={onBack}
+          style={({ pressed }) => [
+            styles.backButton,
+            {
+              backgroundColor: pressed ? withAlpha(colors.border, 0.2) : 'transparent',
+              borderColor: colors.border,
+            },
+          ]}
+        >
+          <MaterialCommunityIcons name="chevron-left" size={32} color={colors.text} />
+        </Pressable>
+        <View style={styles.titleWrap}>
+          <Text style={[styles.headerTitle, { color: colors.text }]}>Management Dashboard</Text>
+          <Text style={[styles.headerSubtitle, { color: colors.textSecondary }]}>
+            Real-time monitor and sync terminal.
+          </Text>
+        </View>
+      </View>
 
-            <View style={styles.summaryRow}>
-              <View style={[styles.summaryChip, { backgroundColor: withAlpha(colors.accent, 0.1) }]}>
-                <Text style={[styles.summaryValue, { color: colors.text }]}>{pendingItems.length}</Text>
-                <Text style={[styles.summaryLabel, { color: colors.textSecondary }]}>Pending</Text>
-              </View>
-              <View style={[styles.summaryChip, { backgroundColor: withAlpha('#ef4444', 0.12) }]}>
-                <Text style={[styles.summaryValue, { color: colors.text }]}>{failedItems.length}</Text>
-                <Text style={[styles.summaryLabel, { color: colors.textSecondary }]}>Failed</Text>
-              </View>
-              <View style={[styles.summaryChip, { backgroundColor: withAlpha(colors.accentSecondary, 0.14) }]}>
-                <Text style={[styles.summaryValue, { color: colors.text }]}>{items.length}</Text>
-                <Text style={[styles.summaryLabel, { color: colors.textSecondary }]}>Total</Text>
-              </View>
+      <View style={[styles.dashboardContainer, isTablet && styles.tabletRow]}>
+        {/* LEFT PANEL: OFFLINE SYNC (The "Front" panel) */}
+        <View style={[
+          styles.syncPanel, 
+          isTablet && { 
+            flex: 0.6, 
+            backgroundColor: theme === 'light' ? '#FFFFFF' : colors.surface, 
+            borderRightWidth: 1, 
+            borderRightColor: colors.border,
+            zIndex: 10,
+            // Subtle Shadow for "Pop"
+            shadowColor: '#000',
+            shadowOffset: { width: 4, height: 0 },
+            shadowOpacity: 0.08,
+            shadowRadius: 10,
+            elevation: 8, 
+          }
+        ]}>
+          <View style={styles.panelHeaderRow}>
+            <View style={styles.panelTitleContainer}>
+              <MaterialCommunityIcons name="cloud-off-outline" size={24} color="#f97316" />
+              <Text style={[styles.panelTitle, { color: colors.text }]}>Offline Queue</Text>
             </View>
           </View>
 
-          <View style={[styles.tabRow, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+          <View style={[styles.noobInfoBox, { backgroundColor: withAlpha('#f97316', 0.08) }]}>
+            <Text style={[styles.noobTitle, { color: '#ea580c' }]}>WAITING TO SYNC</Text>
+            <Text style={[styles.noobText, { color: colors.textSecondary }]}>
+              These logs were saved offline. Click <Text style={{fontWeight: '800'}}>SYNC NOW</Text> to send to server.
+            </Text>
+          </View>
+
+          <View style={[styles.tabRow, { backgroundColor: colors.background, borderColor: colors.border }]}>
             <Pressable
               onPress={() => setActiveTab('pending')}
               style={[
                 styles.tabButton,
                 activeTab === 'pending' && {
-                  backgroundColor: withAlpha(colors.accent, 0.14),
-                  borderColor: withAlpha(colors.accent, 0.45),
+                  backgroundColor: theme === 'light' ? '#FFFFFF' : colors.surface,
+                  borderColor: withAlpha('#f97316', 0.45),
+                  elevation: 2,
                 },
               ]}
             >
-              <Text style={[styles.tabText, { color: activeTab === 'pending' ? colors.text : colors.textSecondary }]}>
-                Wait to Sync ({pendingItems.length})
+              <Text style={[styles.tabText, { color: activeTab === 'pending' ? '#ea580c' : colors.textSecondary }]}>
+                Pending ({pendingItems.length})
               </Text>
             </Pressable>
 
@@ -194,145 +227,162 @@ export default function OfflineSync({ onBack, onOpenScanner }: Props) {
               style={[
                 styles.tabButton,
                 activeTab === 'failed' && {
-                  backgroundColor: withAlpha('#ef4444', 0.14),
+                  backgroundColor: theme === 'light' ? '#FFFFFF' : colors.surface,
                   borderColor: withAlpha('#ef4444', 0.45),
+                  elevation: 2,
                 },
               ]}
             >
-              <Text style={[styles.tabText, { color: activeTab === 'failed' ? colors.text : colors.textSecondary }]}>
-                Sync Failed ({failedItems.length})
+              <Text style={[styles.tabText, { color: activeTab === 'failed' ? '#ef4444' : colors.textSecondary }]}>
+                Errors ({failedItems.length})
               </Text>
             </Pressable>
           </View>
 
           <ScrollView contentContainerStyle={styles.listContent} showsVerticalScrollIndicator={false}>
             {isLoading ? (
-              <View style={styles.emptyState}>
-                <ActivityIndicator size="large" color={colors.accent} />
-              </View>
+              <ActivityIndicator size="large" color={colors.accent} style={{marginTop: 40}} />
             ) : displayedItems.length ? (
               displayedItems.map((item) => {
                 const displayName = getDisplayName(item);
-                const actionLabel = item.action === 'clock_in' ? 'Clock In' : 'Clock Out';
                 const isFailedItem = item.status === 'failed';
-                const message = isFailedItem
-                  ? item.errorMessage || 'Connection error. Please check your network settings.'
-                  : 'Saved locally. Waiting to sync.';
 
                 return (
                   <View
                     key={item.id}
                     style={[
-                      styles.card,
+                      styles.standardCard,
                       {
-                        backgroundColor: colors.surface,
-                        borderColor: colors.border,
-                        shadowColor: colors.shadow,
+                        backgroundColor: isFailedItem ? 'rgba(239, 68, 68, 0.04)' : colors.background,
+                        borderColor: isFailedItem ? '#ef4444' : colors.border,
                       },
                     ]}
                   >
-                    <View
-                      style={[
-                        styles.avatar,
-                        { backgroundColor: isFailedItem ? '#ef4444' : colors.accent },
-                        isTablet && styles.avatarTablet,
-                      ]}
-                    >
-                      <Text style={[styles.avatarText, isTablet && styles.avatarTextTablet]}>{getInitials(displayName)}</Text>
+                    <View style={[styles.standardAvatar, { backgroundColor: isFailedItem ? '#ef4444' : '#f97316' }]}>
+                      <Text style={styles.avatarText}>{getInitials(displayName)}</Text>
                     </View>
-
-                    <View style={styles.cardContent}>
-                      <View style={styles.cardTopRow}>
-                        <View style={styles.nameBlock}>
-                          <Text style={[styles.secondaryText, { color: colors.text }]}>{displayName}</Text>
-                          <Text style={[styles.primaryText, { color: colors.textSecondary }]}>{item.userId}</Text>
-                        </View>
-                        <View
-                          style={[
-                            styles.statusBadge,
-                            {
-                              backgroundColor: isFailedItem ? withAlpha('#ef4444', 0.14) : withAlpha(colors.accent, 0.14),
-                            },
-                          ]}
-                        >
-                          <Text
-                            style={[
-                              styles.statusBadgeText,
-                              { color: isFailedItem ? '#ef4444' : colors.accent },
-                            ]}
-                          >
-                            {isFailedItem ? 'Failed' : 'Pending'}
+                    <View style={styles.standardContent}>
+                      <View style={styles.standardTopRow}>
+                        <Text style={[styles.standardName, { color: colors.text }]} numberOfLines={1}>{displayName}</Text>
+                        <View style={[styles.standardBadge, { backgroundColor: isFailedItem ? withAlpha('#ef4444', 0.15) : withAlpha('#f97316', 0.15) }]}>
+                          <Text style={[styles.standardBadgeText, { color: isFailedItem ? '#ef4444' : '#ea580c' }]}>
+                            {item.action === 'clock_in' ? 'IN' : 'OUT'}
                           </Text>
                         </View>
                       </View>
-
-                      <View style={[styles.metaGrid, isTablet && styles.metaGridTablet]}>
-                        <View style={styles.metaItem}>
-                          <Text style={[styles.metaLabel, { color: colors.textSecondary }]}>Date</Text>
-                          <Text style={[styles.metaValue, { color: colors.text }]}>{item.date}</Text>
-                        </View>
-                        <View style={styles.metaItem}>
-                          <Text style={[styles.metaLabel, { color: colors.textSecondary }]}>Time</Text>
-                          <Text style={[styles.metaValue, { color: colors.text }]}>{formatTimeDisplay(item.time)}</Text>
-                        </View>
-                        <View style={styles.metaItem}>
-                          <Text style={[styles.metaLabel, { color: colors.textSecondary }]}>Action</Text>
-                          <Text style={[styles.metaValue, { color: colors.text }]}>{actionLabel}</Text>
-                        </View>
-                      </View>
-
-                      <View
-                        style={[
-                          styles.messageWrap,
-                          { backgroundColor: isFailedItem ? withAlpha('#ef4444', 0.08) : withAlpha(colors.accentSecondary, 0.1) },
-                        ]}
-                      >
-                        <Text style={[styles.messageLabel, { color: colors.textSecondary }]}>Message</Text>
-                        <Text style={[styles.messageText, { color: colors.text }]}>{message}</Text>
-                      </View>
+                      <Text style={[styles.standardTime, { color: colors.textSecondary }]}>{formatTimeDisplay(item.time)}</Text>
                     </View>
                   </View>
                 );
               })
             ) : (
               <View style={styles.emptyState}>
-                <Text style={[styles.emptyText, { color: colors.textSecondary }]}>No Data</Text>
+                <MaterialCommunityIcons name="check-circle-outline" size={48} color={colors.border} />
+                <Text style={[styles.emptyText, { color: colors.textSecondary }]}>Queue is Clear</Text>
               </View>
             )}
           </ScrollView>
 
-          <View style={[styles.buttonRow, isTablet && styles.buttonRowTablet]}>
-            <Pressable
-              style={({ pressed }) => [
-                styles.secondaryButton,
-                {
-                  borderColor: withAlpha(colors.accent, 0.35),
-                  backgroundColor: withAlpha(colors.accent, pressed ? 0.2 : 0.1),
-                },
-                isTablet && styles.tabletButton,
-              ]}
-              onPress={onOpenScanner}
-            >
-              <Text style={[styles.secondaryButtonText, { color: colors.text }]}>Show QR Scan</Text>
-            </Pressable>
-
+          <View style={styles.buttonRow}>
             <Pressable
               style={({ pressed }) => [
                 styles.syncButton,
-                {
-                  backgroundColor: pressed ? withAlpha(colors.accent, 0.78) : colors.accent,
-                },
-                isTablet && styles.tabletButton,
+                { backgroundColor: pressed ? withAlpha(Colors.powerOrange, 0.85) : Colors.powerOrange },
                 isSyncing && styles.syncButtonDisabled,
               ]}
               onPress={handleSyncNow}
               disabled={isSyncing}
             >
-              {isSyncing ? <ActivityIndicator color="#fff" /> : <Text style={styles.syncButtonText}>Sync Now</Text>}
+              {isSyncing ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <View style={styles.btnInner}>
+                  <MaterialCommunityIcons name="cloud-upload" size={24} color="#fff" />
+                  <Text style={styles.syncButtonText}>SYNC NOW</Text>
+                </View>
+              )}
+            </Pressable>
+          </View>
+        </View>
+
+        {/* RIGHT PANEL: TODAY'S HISTORY (The "Back" panel) */}
+        <View style={[
+          styles.historyPanel, 
+          isTablet && { 
+            flex: 0.4, 
+            backgroundColor: theme === 'light' ? '#F4F4F5' : colors.background, 
+          }
+        ]}>
+          <View style={styles.panelHeaderRow}>
+            <View style={styles.panelTitleContainer}>
+              <MaterialCommunityIcons name="history" size={24} color={colors.accent} />
+              <Text style={[styles.panelTitle, { color: colors.text }]}>Today's History</Text>
+            </View>
+            <Pressable onPress={loadHistory} disabled={isHistoryLoading}>
+              <Text style={[styles.refreshText, { color: colors.accent }]}>
+                {isHistoryLoading ? '...' : 'REFRESH'}
+              </Text>
             </Pressable>
           </View>
 
-          <Text style={[styles.versionText, { color: colors.textSecondary }]}>{APP_VERSION}</Text>
+          <View style={styles.historySubHeader}>
+            <Text style={[styles.historyCount, { color: colors.textSecondary }]}>{history.length} RECORDS ON SERVER</Text>
+          </View>
+
+          <ScrollView
+            contentContainerStyle={styles.listContent}
+            showsVerticalScrollIndicator={false}
+            refreshControl={
+              <RefreshControl
+                refreshing={isHistoryLoading}
+                onRefresh={loadHistory}
+                colors={[colors.accent]}
+                tintColor={colors.accent}
+              />
+            }
+          >
+            {history.length > 0 ? (
+              history.map((item) => {
+                const isClockIn = item.action === 'clock_in';
+                const badgeColor = isClockIn ? '#22c55e' : colors.accent;
+                const displayName = item.name?.trim() || item.username;
+
+                return (
+                  <View
+                    key={item.id}
+                    style={[
+                      styles.standardCard,
+                      { backgroundColor: theme === 'light' ? 'rgba(255,255,255,0.7)' : colors.surface, borderColor: colors.border },
+                    ]}
+                  >
+                    <View style={[styles.standardAvatar, { backgroundColor: withAlpha(colors.accent, 0.1) }]}>
+                      {item.profilePicture ? (
+                        <Image source={{ uri: item.profilePicture }} style={styles.avatarImage} />
+                      ) : (
+                        <Text style={[styles.historyAvatarText, { color: colors.accent }]}>{getInitials(displayName)}</Text>
+                      )}
+                    </View>
+                    <View style={styles.standardContent}>
+                      <View style={styles.standardTopRow}>
+                        <Text style={[styles.standardName, { color: colors.text, fontSize: 15 }]} numberOfLines={1}>{displayName}</Text>
+                        <View style={[styles.standardBadge, { backgroundColor: withAlpha(badgeColor, 0.15) }]}>
+                          <Text style={[styles.standardBadgeText, { color: badgeColor, fontSize: 10 }]}>
+                            {isClockIn ? 'IN' : 'OUT'}
+                          </Text>
+                        </View>
+                      </View>
+                      <Text style={[styles.standardTime, { color: colors.textSecondary, fontSize: 11 }]}>{formatTimeDisplay(item.time)}</Text>
+                    </View>
+                  </View>
+                );
+              })
+            ) : (
+              <View style={styles.emptyState}>
+                <MaterialCommunityIcons name="history" size={48} color={colors.border} />
+                <Text style={[styles.emptyText, { color: colors.textSecondary }]}>No History Yet</Text>
+              </View>
+            )}
+          </ScrollView>
         </View>
       </View>
     </SafeAreaView>
@@ -343,281 +393,233 @@ const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
   },
-  topBar: {
-    height: 6,
-  },
-  container: {
-    flex: 1,
-  },
-  contentWrap: {
-    flex: 1,
-    width: '100%',
-    alignSelf: 'center',
-  },
-  contentWrapTablet: {
-    maxWidth: 920,
-  },
-  backButton: {
-    width: 46,
-    height: 46,
-    borderRadius: 23,
-    borderWidth: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 14,
-  },
-  backArrow: {
-    fontSize: 28,
-    lineHeight: 30,
-    fontWeight: '500',
-  },
-  headerCard: {
-    borderRadius: 22,
-    borderWidth: 1.2,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    marginTop: 14,
-    marginBottom: 12,
-    shadowOpacity: 0.12,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 3,
-  },
-  headerRow: {
+  mainHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 14,
+    paddingHorizontal: 24,
+    paddingVertical: 20,
+  },
+  dashboardContainer: {
+    flex: 1,
+  },
+  tabletRow: {
+    flexDirection: 'row',
+  },
+  syncPanel: {
+    flex: 1,
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+  },
+  historyPanel: {
+    flex: 1,
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+  },
+  panelHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 20,
+    minHeight: 45,
+  },
+  panelTitleContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  panelTitle: {
+    fontSize: 20,
+    fontWeight: '900',
+    letterSpacing: -0.5,
+    textTransform: 'uppercase',
+  },
+  panelContent: {
+    flex: 1,
+  },
+  noobInfoBox: {
+    borderRadius: 14,
+    padding: 16,
+    marginBottom: 20,
+    borderWidth: 1.5,
+    borderColor: 'rgba(249, 115, 22, 0.25)',
+  },
+  noobTitle: {
+    fontSize: 13,
+    fontWeight: '900',
+    marginBottom: 4,
+    letterSpacing: 0.8,
+  },
+  noobText: {
+    fontSize: 12,
+    lineHeight: 18,
+    fontWeight: '600',
+  },
+  backButton: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    borderWidth: 1.5,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 16,
   },
   titleWrap: {
     flex: 1,
   },
   headerTitle: {
     fontSize: 24,
-    fontWeight: '800',
-    letterSpacing: -0.3,
+    fontWeight: '900',
+    letterSpacing: -0.5,
   },
   headerSubtitle: {
-    marginTop: 2,
-    fontSize: 14,
-    lineHeight: 20,
-    fontWeight: '500',
-  },
-  summaryRow: {
-    flexDirection: 'row',
-    gap: 10,
-  },
-  summaryChip: {
-    flex: 1,
-    borderRadius: 14,
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  summaryValue: {
-    fontSize: 20,
-    fontWeight: '800',
-  },
-  summaryLabel: {
     marginTop: 1,
-    fontSize: 12,
-    fontWeight: '600',
-    letterSpacing: 0.3,
+    fontSize: 14,
+    fontWeight: '500',
   },
   tabRow: {
     flexDirection: 'row',
-    borderWidth: 1.2,
+    borderWidth: 1.5,
     borderRadius: 14,
     padding: 5,
-    gap: 6,
-    marginBottom: 12,
+    gap: 5,
+    marginBottom: 16,
   },
   tabButton: {
     flex: 1,
-    minHeight: 44,
+    minHeight: 46,
     borderRadius: 10,
     borderWidth: 1,
     borderColor: 'transparent',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 8,
   },
   tabText: {
-    fontSize: 14,
-    fontWeight: '700',
-    textAlign: 'center',
+    fontSize: 12,
+    fontWeight: '900',
+    textTransform: 'uppercase',
   },
   listContent: {
     flexGrow: 1,
-    gap: 10,
-    paddingBottom: 22,
+    gap: 12,
+    paddingBottom: 20,
   },
-  card: {
+  standardCard: {
     flexDirection: 'row',
-    borderWidth: 1.2,
-    borderRadius: 18,
+    alignItems: 'center',
+    borderWidth: 1.5,
+    borderRadius: 16,
     padding: 14,
-    shadowOpacity: 0.08,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 2,
+    height: 80,
   },
-  avatar: {
-    width: 50,
-    height: 50,
-    borderRadius: 25,
+  standardAvatar: {
+    width: 48,
+    height: 48,
+    borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
-    marginRight: 12,
-    marginTop: 2,
-  },
-  avatarTablet: {
-    width: 58,
-    height: 58,
-    borderRadius: 29,
     marginRight: 14,
+    overflow: 'hidden',
+  },
+  avatarImage: {
+    width: '100%',
+    height: '100%',
+  },
+  standardContent: {
+    flex: 1,
+    justifyContent: 'center',
+  },
+  standardTopRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  standardName: {
+    fontSize: 16,
+    fontWeight: '900',
+    letterSpacing: -0.2,
+    flex: 1,
+  },
+  standardTime: {
+    fontSize: 12,
+    fontWeight: '700',
+    marginTop: 1,
+  },
+  standardBadge: {
+    borderRadius: 8,
+    paddingVertical: 4,
+    paddingHorizontal: 10,
+    marginLeft: 10,
+  },
+  standardBadgeText: {
+    fontSize: 11,
+    fontWeight: '900',
+    letterSpacing: 0.5,
   },
   avatarText: {
     color: '#fff',
     fontSize: 16,
-    fontWeight: '700',
+    fontWeight: '900',
   },
-  avatarTextTablet: {
-    fontSize: 18,
-  },
-  cardContent: {
-    flex: 1,
-  },
-  cardTopRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: 10,
-    gap: 8,
-  },
-  nameBlock: {
-    flex: 1,
-    minWidth: 0,
-  },
-  primaryText: {
-    fontSize: 14,
-    fontWeight: '500',
-    marginTop: 2,
-  },
-  secondaryText: {
-    fontSize: 17,
-    fontWeight: '700',
-  },
-  statusBadge: {
-    borderRadius: 999,
-    paddingVertical: 4,
-    paddingHorizontal: 10,
-    alignSelf: 'flex-start',
-  },
-  statusBadgeText: {
-    fontSize: 12,
-    fontWeight: '800',
-    letterSpacing: 0.4,
-    textTransform: 'uppercase',
-  },
-  metaGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 10,
-    marginBottom: 10,
-  },
-  metaGridTablet: {
-    gap: 14,
-  },
-  metaItem: {
-    minWidth: 84,
-    flexGrow: 1,
-  },
-  metaLabel: {
-    fontSize: 12,
-    fontWeight: '600',
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-    marginBottom: 2,
-  },
-  metaValue: {
-    fontSize: 15,
-    fontWeight: '700',
-  },
-  messageWrap: {
-    borderRadius: 12,
-    paddingHorizontal: 10,
-    paddingVertical: 9,
-  },
-  messageLabel: {
-    fontSize: 12,
-    fontWeight: '700',
-    textTransform: 'uppercase',
-    letterSpacing: 0.4,
-    marginBottom: 2,
-  },
-  messageText: {
-    fontSize: 14,
-    lineHeight: 19,
-    fontWeight: '500',
-  },
-  emptyState: {
-    flex: 1,
-    minHeight: 260,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  emptyText: {
-    fontSize: 19,
-    fontWeight: '600',
-  },
-  buttonRow: {
-    gap: 10,
-    marginTop: 2,
-    marginBottom: 8,
-  },
-  buttonRowTablet: {
-    flexDirection: 'row',
-  },
-  tabletButton: {
-    flex: 1,
-  },
-  secondaryButton: {
-    borderWidth: 1,
-    borderColor: Colors.powerOrange,
-    borderRadius: 999,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 14,
-    paddingHorizontal: 18,
-  },
-  secondaryButtonText: {
-    fontSize: 15,
-    fontWeight: '700',
-    letterSpacing: 0.2,
-    textTransform: 'uppercase',
+  historyAvatarText: {
+    fontSize: 16,
+    fontWeight: '900',
   },
   syncButton: {
-    borderRadius: 999,
+    height: 68,
+    borderRadius: 18,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 16,
-    paddingHorizontal: 18,
+    width: '100%',
+    shadowColor: Colors.powerOrange,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 4,
   },
-  syncButtonDisabled: {
-    opacity: 0.75,
+  btnInner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
   },
   syncButtonText: {
     color: '#fff',
-    fontSize: 16,
+    fontSize: 18,
+    fontWeight: '900',
+    letterSpacing: 1,
+  },
+  syncButtonDisabled: {
+    opacity: 0.6,
+  },
+  historySubHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 15,
+  },
+  historyCount: {
+    fontSize: 11,
     fontWeight: '800',
-    letterSpacing: 0.3,
+    letterSpacing: 0.5,
+  },
+  refreshText: {
+    fontSize: 12,
+    fontWeight: '900',
     textTransform: 'uppercase',
   },
-  versionText: {
-    textAlign: 'center',
+  emptyState: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    minHeight: 160,
+    gap: 12,
+  },
+  emptyText: {
     fontSize: 13,
-    fontWeight: '500',
-    marginBottom: 10,
+    fontWeight: '900',
+    letterSpacing: 1,
+    textTransform: 'uppercase',
+  },
+  buttonRow: {
+    marginTop: 16,
   },
 });

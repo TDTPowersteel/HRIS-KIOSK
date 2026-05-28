@@ -68,7 +68,7 @@ export const styles = StyleSheet.create({
   },
   topTime: {
     color: '#fff',
-    fontSize: 30,
+    fontSize: 42,
     fontWeight: '900',
     textShadowColor: 'rgba(0,0,0,0.5)',
     textShadowOffset: { width: 0, height: 1 },
@@ -76,9 +76,10 @@ export const styles = StyleSheet.create({
   },
   topDate: {
     color: 'rgba(255,255,255,0.8)',
-    fontSize: 15,
-    fontWeight: '600',
-    marginTop: -2,
+    fontSize: 14,
+    fontWeight: '700',
+    marginTop: -4,
+    letterSpacing: 0.5,
   },
   headerRight: { width: 85, alignItems: 'flex-end' },
   miniOfflineBadge: {

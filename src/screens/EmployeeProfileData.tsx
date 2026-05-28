@@ -1,6 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Animated, Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
 import EmployeeDetailsModal from './settings/components/EmployeeDetailsModal';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { BACKEND_URL } from '../config/backend';
@@ -9,6 +10,21 @@ import { useTheme, Colors } from '../config/theme';
 
 const DIRECTORY_POLL_INTERVAL_MS = 30000; // Increased to 30s to reduce background load
 const LAST_SYNC_KEY = 'employee_directory_last_sync';
+
+function withAlpha(hexColor: string, alpha: number) {
+  const normalized = hexColor.replace('#', '');
+  const normalizedSixDigit =
+    normalized.length === 3 ? normalized.split('').map((char) => `${char}${char}`).join('') : normalized;
+  const intColor = Number.parseInt(normalizedSixDigit, 16);
+  if (Number.isNaN(intColor)) {
+    return `rgba(0, 0, 0, ${alpha})`;
+  }
+
+  const red = (intColor >> 16) & 255;
+  const green = (intColor >> 8) & 255;
+  const blue = intColor & 255;
+  return `rgba(${red}, ${green}, ${blue}, ${alpha})`;
+}
 
 type SortOption = 'name_asc' | 'name_desc';
 
@@ -354,6 +370,20 @@ export default function EmployeeProfileData({ onBack }: Props) {
     return Math.max(availableWidth - (gap * (cols - 1)), 0) / cols;
   }, [windowWidth]);
 
+  const getShimmerStyle = (width: number = 200) => ({
+    position: 'absolute' as const,
+    top: 0,
+    bottom: 0,
+    width: width,
+    backgroundColor: theme === 'light' ? 'rgba(255, 255, 255, 0.45)' : 'rgba(255, 255, 255, 0.08)',
+    transform: [{
+      translateX: shimmerTranslate.interpolate({
+        inputRange: [-1, 1],
+        outputRange: [-width, width]
+      })
+    }]
+  });
+
   const SkeletonCard = () => (
     <View style={[styles.employeeCard, { width: cardWidth, backgroundColor: colors.surface, borderColor: colors.border, overflow: 'hidden' }]}>
       <Animated.View 
@@ -369,32 +399,52 @@ export default function EmployeeProfileData({ onBack }: Props) {
           }
         ]} 
       />
-      <View style={[styles.accentStrip, { backgroundColor: colors.border, opacity: 0.3 }]} />
+      <View style={[styles.accentStrip, { backgroundColor: colors.border, opacity: 0.2 }]} />
       <View style={styles.cardContent}>
         <View style={styles.cardHeader}>
           <View style={[styles.avatarRing, { borderColor: colors.border, opacity: 0.3 }]}>
-            <View style={[styles.profileImage, { backgroundColor: theme === 'light' ? '#e5e7eb' : '#5c5c5c' }]} />
+            <View style={[styles.profileImage, { backgroundColor: theme === 'light' ? '#e5e7eb' : '#5c5c5c', overflow: 'hidden', position: 'relative' }]}>
+              <Animated.View style={getShimmerStyle(50)} />
+            </View>
           </View>
           <View style={styles.infoBlock}>
-            <View style={[styles.skeletonLine, { width: '80%', height: 20, marginBottom: 8, backgroundColor: theme === 'light' ? '#e5e7eb' : '#424242' }]} />
-            <View style={[styles.skeletonLine, { width: '50%', height: 14, backgroundColor: theme === 'light' ? '#f3f4f6' : '#404040' }]} />
+            <View style={[styles.skeletonLine, { width: '80%', height: 20, marginBottom: 8, backgroundColor: theme === 'light' ? '#e5e7eb' : '#424242', overflow: 'hidden', position: 'relative' }]}>
+              <Animated.View style={getShimmerStyle(200)} />
+            </View>
+            <View style={[styles.skeletonLine, { width: '50%', height: 14, backgroundColor: theme === 'light' ? '#f3f4f6' : '#404040', overflow: 'hidden', position: 'relative' }]}>
+              <Animated.View style={getShimmerStyle(120)} />
+            </View>
           </View>
         </View>
         <View style={styles.cardFooter}>
-          <View style={[styles.deptBadge, { width: 80, height: 24, backgroundColor: theme === 'light' ? '#f3f4f6' : '#2f2f2f' }]} />
+          <View style={[styles.deptBadge, { width: 80, height: 24, backgroundColor: theme === 'light' ? '#f3f4f6' : '#2f2f2f', overflow: 'hidden', position: 'relative' }]}>
+            <Animated.View style={getShimmerStyle(80)} />
+          </View>
         </View>
       </View>
     </View>
   );
 
   return (
-    <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
+    <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]} edges={['top', 'left', 'right']}>
       <View style={styles.header}>
-        <Pressable onPress={onBack} style={styles.backButton}>
-          <Text style={[styles.backText, { color: Colors.powerOrange }]}>{'<'} BACK</Text>
+        <Pressable
+          onPress={onBack}
+          style={({ pressed }) => [
+            styles.backButton,
+            {
+              backgroundColor: pressed ? withAlpha(colors.border, 0.2) : 'transparent',
+              borderColor: colors.border,
+            },
+          ]}
+        >
+          <MaterialCommunityIcons name="chevron-left" size={32} color={colors.text} />
         </Pressable>
         <View style={styles.headerTitleWrap}>
           <Text style={[styles.title, { color: colors.text }]}>Employee Directory</Text>
+          <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
+            Employee information and records.
+          </Text>
         </View>
         <Pressable
           onPress={handleManualRefresh}
@@ -480,7 +530,7 @@ export default function EmployeeProfileData({ onBack }: Props) {
       {(isRefreshing || (isLoading && employees.length === 0)) ? (
         <ScrollView contentContainerStyle={styles.list} scrollEnabled={false}>
           <View style={styles.gridContainer}>
-            {[1, 2, 3, 4, 5, 6].map((i) => <SkeletonCard key={i} />)}
+            {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map((i) => <SkeletonCard key={i} />)}
           </View>
         </ScrollView>
       ) : (
@@ -559,26 +609,32 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   header: {
-    paddingHorizontal: 32,
+    paddingHorizontal: 24,
     paddingVertical: 20,
     flexDirection: 'row',
     alignItems: 'center',
   },
   backButton: {
-    marginRight: 20,
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    borderWidth: 1.5,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 16,
   },
   headerTitleWrap: {
     flex: 1,
   },
-  backText: {
-    fontSize: 18,
-    fontWeight: '900',
-    letterSpacing: 1,
-  },
   title: {
-    fontSize: 30,
+    fontSize: 24,
     fontWeight: '900',
     letterSpacing: -0.5,
+  },
+  subtitle: {
+    fontSize: 14,
+    fontWeight: '500',
+    marginTop: 1,
   },
   refreshButton: {
     minWidth: 108,
@@ -596,7 +652,7 @@ const styles = StyleSheet.create({
     letterSpacing: 0.8,
   },
   stickyContainer: {
-    paddingHorizontal: 32,
+    paddingHorizontal: 24,
     paddingBottom: 20,
     zIndex: 100,
   },
@@ -700,7 +756,7 @@ const styles = StyleSheet.create({
     transform: [{ skewX: '-25deg' }],
   },
   list: {
-    paddingHorizontal: 32,
+    paddingHorizontal: 24,
     paddingBottom: 40,
   },
   gridContainer: {
