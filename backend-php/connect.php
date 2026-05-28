@@ -2,56 +2,61 @@
 // Supabase "database connection" helper file.
 ini_set('display_errors', '0');
 ini_set('display_startup_errors', '0');
+ini_set('memory_limit', '512M');
 error_reporting(E_ALL);
-// This file only contains the configuration and helper functions to talk to Supabase.
 
-// Load backend-php/.env so Face++ keys work even when PHP is started without start-system.ps1
-$envCandidates = [
-    __DIR__ . '/../.env',
-    __DIR__ . '/.env',
-];
-foreach ($envCandidates as $envFile) {
+/**
+ * Load .env file manually
+ */
+function loadEnv($dir)
+{
+    $envFile = $dir . '/.env';
     if (is_file($envFile) && is_readable($envFile)) {
-        $lines = @file($envFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
-        if ($lines) {
-            foreach ($lines as $line) {
-                $line = trim($line);
-                if ($line === '' || $line[0] === '#') continue;
-                $eq = strpos($line, '=');
-                if ($eq > 0) {
-                    $k = trim(substr($line, 0, $eq));
-                    $v = trim(substr($line, $eq + 1));
-                    if (($v !== '' && ($v[0] === '"' || $v[0] === "'")) && substr($v, -1) === $v[0]) {
-                        $v = substr($v, 1, -1);
-                    }
-                    if ($k !== '') putenv("$k=$v");
+        $lines = file($envFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+        foreach ($lines as $line) {
+            $line = trim($line);
+            if ($line === '' || strpos($line, '#') === 0)
+                continue;
+
+            $parts = explode('=', $line, 2);
+            if (count($parts) === 2) {
+                $key = trim($parts[0]);
+                $value = trim($parts[1]);
+
+                // Remove quotes if present
+                if (preg_match('/^["\'](.*)["\']$/', $value, $matches)) {
+                    $value = $matches[1];
+                }
+
+                if (!empty($key)) {
+                    putenv("$key=$value");
+                    $_ENV[$key] = $value;
                 }
             }
         }
     }
 }
 
-// --- Supabase config (from your project) ---
-define('SUPABASE_URL', 'https://cgyqweheceduyrpxqvwd.supabase.co');
+// Load .env from possible locations
+loadEnv(__DIR__ . '/..');
+loadEnv(__DIR__);
 
-// Fallback anon key (publishable; safe to commit). This lets local dev work
-// even when your PHP runtime doesn't have environment variables configured.
-define('SUPABASE_PUBLIC_ANON_KEY', 'sb_publishable_MJmY9d0yFuPp6KtQ62stGw_lFHMnNAK');
+// --- Supabase config ---
+// Prioritize environment variables. Never hardcode sensitive keys in production.
+$supabaseUrl = getenv('SUPABASE_URL') ?: 'YOUR_SUPABASE_URL_HERE';
+$supabaseAnonKey = getenv('SUPABASE_ANON_KEY') ?: 'YOUR_SUPABASE_ANON_KEY_HERE';
+$supabaseServiceKey = getenv('SUPABASE_SERVICE_ROLE_KEY');
 
-// Prefer service role key (server-side) when available, otherwise anon key.
-// IMPORTANT: never commit service role keys.
-define(
-    'SUPABASE_API_KEY',
-    getenv('SUPABASE_SERVICE_ROLE_KEY')
-        ?: (getenv('SUPABASE_ANON_KEY') ?: SUPABASE_PUBLIC_ANON_KEY)
-);
+define('SUPABASE_URL', $supabaseUrl);
+define('SUPABASE_API_KEY', $supabaseServiceKey ?: $supabaseAnonKey);
 
-// --- Supabase helper functions (inline) ---
+/**
+ * Supabase helper function for making REST API requests
+ */
 function supabase_request(string $method, string $path, ?array $body = null, array $extraHeaders = []): array
 {
     $url = rtrim(SUPABASE_URL, '/') . '/' . ltrim($path, '/');
 
-    // Use curl if available, otherwise fallback to file_get_contents
     if (function_exists('curl_init')) {
         $ch = curl_init($url);
 
@@ -63,10 +68,10 @@ function supabase_request(string $method, string $path, ?array $body = null, arr
 
         curl_setopt_array($ch, [
             CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_CUSTOMREQUEST  => strtoupper($method),
-            CURLOPT_HTTPHEADER     => $headers,
-            CURLOPT_TIMEOUT        => 20, // 20 second timeout (increased for slow connections)
-            CURLOPT_CONNECTTIMEOUT => 10,  // 10 second connection timeout (increased)
+            CURLOPT_CUSTOMREQUEST => strtoupper($method),
+            CURLOPT_HTTPHEADER => $headers,
+            CURLOPT_TIMEOUT => 20,
+            CURLOPT_CONNECTTIMEOUT => 10,
             CURLOPT_SSL_VERIFYPEER => true,
             CURLOPT_SSL_VERIFYHOST => 2,
         ]);
@@ -76,21 +81,13 @@ function supabase_request(string $method, string $path, ?array $body = null, arr
         }
 
         $responseBody = curl_exec($ch);
-        $statusCode   = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        $curlErr      = curl_error($ch);
-        $curlErrNo    = curl_errno($ch);
+        $statusCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $curlErr = curl_error($ch);
+        $curlErrNo = curl_errno($ch);
 
         if ($curlErr) {
-            // Provide more detailed error messages
-            $errorMsg = $curlErr;
-            if ($curlErrNo === CURLE_OPERATION_TIMEOUTED || $curlErrNo === CURLE_OPERATION_TIMEDOUT) {
-                $errorMsg = "Connection to Supabase timed out. Check your internet connection.";
-            } elseif ($curlErrNo === CURLE_COULDNT_CONNECT) {
-                $errorMsg = "Could not connect to Supabase. Check your internet connection and Supabase URL.";
-            } elseif ($curlErrNo === CURLE_SSL_CONNECT_ERROR) {
-                $errorMsg = "SSL connection error. Check Supabase URL and SSL configuration.";
-            }
-            error_log("Supabase curl error (code $curlErrNo): $errorMsg");
+            $errorMsg = "Supabase curl error ($curlErrNo): $curlErr";
+            error_log($errorMsg);
             return [$statusCode ?: 0, null, $errorMsg];
         }
     } else {
@@ -113,7 +110,7 @@ function supabase_request(string $method, string $path, ?array $body = null, arr
                 'method' => strtoupper($method),
                 'header' => implode("\r\n", $headers),
                 'ignore_errors' => true,
-                'timeout' => 20, // 20 second timeout (increased for slow connections)
+                'timeout' => 20,
             ],
             'ssl' => [
                 'verify_peer' => true,
@@ -127,22 +124,16 @@ function supabase_request(string $method, string $path, ?array $body = null, arr
 
         $context = stream_context_create($options);
         $responseBody = @file_get_contents($url, false, $context);
-        
+
         if ($responseBody === false) {
-            $lastError = error_get_last();
-            $errorMsg = 'Failed to connect to Supabase';
-            if ($lastError) {
-                $errorMsg .= ': ' . $lastError['message'];
-            }
-            return [0, null, $errorMsg];
+            return [0, null, 'Failed to connect to Supabase'];
         }
 
-        // Extract status code from response headers
         $statusCode = 200;
         if (isset($http_response_header)) {
             foreach ($http_response_header as $header) {
                 if (preg_match('/^HTTP\/\d\.\d\s+(\d+)/', $header, $matches)) {
-                    $statusCode = (int)$matches[1];
+                    $statusCode = (int) $matches[1];
                     break;
                 }
             }
@@ -157,6 +148,52 @@ function supabase_request(string $method, string $path, ?array $body = null, arr
     return [$statusCode, $decoded, null];
 }
 
+/**
+ * Compresses a base64 image string to a smaller thumbnail
+ */
+function compress_base64_image(string $base64Str, int $maxWidth = 100, int $quality = 50): string
+{
+    try {
+        if (strpos($base64Str, 'data:image') === 0) {
+            $parts = explode(',', $base64Str);
+            $data = base64_decode($parts[1]);
+        } else {
+            $data = base64_decode($base64Str);
+        }
+
+        $src = imagecreatefromstring($data);
+        if (!$src)
+            return $base64Str;
+
+        $width = imagesx($src);
+        $height = imagesy($src);
+
+        if ($width <= $maxWidth) {
+            imagedestroy($src);
+            return $base64Str;
+        }
+
+        $newWidth = $maxWidth;
+        $newHeight = floor($height * ($maxWidth / $width));
+
+        $tmp = imagecreatetruecolor($newWidth, $newHeight);
+        imagealphablending($tmp, false);
+        imagesavealpha($tmp, true);
+        imagecopyresampled($tmp, $src, 0, 0, 0, 0, $newWidth, $newHeight, $width, $height);
+
+        ob_start();
+        imagejpeg($tmp, null, $quality);
+        $compressedData = ob_get_clean();
+
+        imagedestroy($src);
+        imagedestroy($tmp);
+
+        return 'data:image/jpeg;base64,' . base64_encode($compressedData);
+    } catch (Exception $e) {
+        return $base64Str;
+    }
+}
+
 function supabase_insert(string $table, array $row): array
 {
     return supabase_request('POST', "rest/v1/{$table}", $row, [
@@ -167,37 +204,22 @@ function supabase_insert(string $table, array $row): array
 function supabase_select(string $table, array $filters = [], string $select = '*', string $orderBy = ''): array
 {
     $path = "rest/v1/{$table}?select={$select}";
-    
-    // Add filters
     foreach ($filters as $key => $value) {
         $path .= "&{$key}=eq." . urlencode($value);
     }
-    
-    // Add ordering
     if ($orderBy !== '') {
         $path .= "&order={$orderBy}";
     }
-    
     return supabase_request('GET', $path);
 }
 
 function supabase_select_single(string $table, array $filters = [], string $select = '*'): array
 {
     $path = "rest/v1/{$table}?select={$select}";
-    
     foreach ($filters as $key => $value) {
         $path .= "&{$key}=eq." . urlencode($value);
     }
-    
-    [$status, $data, $err] = supabase_request('GET', $path, null, [
+    return supabase_request('GET', $path, null, [
         'Accept: application/vnd.pgrst.object+json',
     ]);
-    
-    return [$status, $data, $err];
 }
-
-// No endpoint / echo logic here on purpose.
-// Include this file from other PHP scripts to use supabase_request() / supabase_insert().
-
-// No endpoint / echo logic here on purpose.
-// Include this file from other PHP scripts to use supabase_request() / supabase_insert().

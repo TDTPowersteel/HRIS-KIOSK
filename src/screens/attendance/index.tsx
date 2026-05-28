@@ -1,6 +1,6 @@
 import React from 'react';
 import { ActivityIndicator, Text, TouchableOpacity, View } from 'react-native';
-import { styles } from './styles';
+import { styles } from './style/styles';
 import { useAttendance } from './useAttendance';
 import QRScanView from './QRScanView';
 import FaceScanView from './FaceScanView';
@@ -37,6 +37,20 @@ export default function AttendanceScanner({ onBack, onOpenOffline }: AttendanceP
     );
   }
 
+  if (!state.hasLocationPermission) {
+    return (
+      <View style={styles.loadingContainer}>
+        <Text style={{ color: '#fff', fontSize: 18, marginBottom: 10, fontWeight: 'bold' }}>Location access needed.</Text>
+        <Text style={{ color: 'rgba(255,255,255,0.7)', textAlign: 'center', marginHorizontal: 40, marginBottom: 20 }}>
+          The kiosk requires location services to record secure and verified attendance.
+        </Text>
+        <TouchableOpacity style={styles.permissionButton} onPress={state.requestLocationPermission}>
+          <Text style={styles.permissionText}>Allow Location</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
   return (
     <View style={styles.container}>
       {!state.qrVerified ? (
@@ -47,6 +61,7 @@ export default function AttendanceScanner({ onBack, onOpenOffline }: AttendanceP
           formattedTime={state.formattedTime}
           formattedDate={state.formattedDate}
           isQrLoading={state.isQrLoading}
+          qrSuccessLocal={state.qrSuccessLocal}
           touchlessEnabled={state.touchlessEnabled}
           offlineModeEnabled={state.offlineModeEnabled}
           pendingSyncCount={state.pendingSyncCount}
@@ -56,6 +71,7 @@ export default function AttendanceScanner({ onBack, onOpenOffline }: AttendanceP
       ) : (
         <FaceScanView
           device={state.device}
+          cameraFormat={state.cameraFormat}
           cameraRef={state.cameraRef}
           frameProcessor={state.frameProcessor}
           flashAnim={state.flashAnim}
@@ -63,15 +79,25 @@ export default function AttendanceScanner({ onBack, onOpenOffline }: AttendanceP
           formattedTime={state.formattedTime}
           formattedDate={state.formattedDate}
           isVerifying={state.isVerifying}
+          isCapturingHardware={state.isCapturingHardware}
           isClockingOut={state.isClockingOut}
           touchlessEnabled={state.touchlessEnabled}
           offlineModeEnabled={state.offlineModeEnabled}
           livenessEnabled={state.livenessEnabled}
+          faceEngine={state.faceEngine}
+          scanStage={state.scanStage}
+          cameraVisionFaceDetected={state.cameraVisionFaceDetected}
+          cameraVisionReadiness={state.cameraVisionReadiness}
+          cameraVisionFaceBox={state.cameraVisionFaceBox}
+          cameraVisionAllFaces={state.cameraVisionAllFaces}
+          cameraVisionFaceTelemetry={state.cameraVisionFaceTelemetry}
+          successAnimationTick={state.successAnimationTick}
           pendingSyncCount={state.pendingSyncCount}
           faceCountdown={state.faceCountdown}
           clockInTime={state.clockInTime}
           selectedUser={state.selectedUser}
           accentColor={state.colors.accent}
+          livenessMessage={state.livenessMessage}
           onBack={onBack}
           onOpenOffline={onOpenOffline}
           onAttendance={state.handleAttendance}

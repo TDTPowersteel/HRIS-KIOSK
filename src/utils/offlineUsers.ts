@@ -5,36 +5,41 @@ export const OFFLINE_USER_CACHE_KEY = 'offline_user_cache_v1';
 
 export type CachedOfflineUser = {
   userId: string;
+  empId: string;
   username: string;
   name?: string | null;
   qrCode?: string | null;
   profile_picture?: string | null;
   role?: string | null;
   department?: string | null;
+  face_embedding?: string | number[] | null;
+};
+
+export type EmployeePayloadRow = {
+  emp_id?: number | string | null;
+  name?: string | null;
+  role?: string | null;
+  log_id?: number | string | null;
+  departments?: { name?: string | null } | null;
+  accounts?:
+    | {
+        log_id?: number | string | null;
+        username?: string | null;
+        qr_code?: string | null;
+        profile_picture?: string | null;
+      }
+    | Array<{
+        log_id?: number | string | null;
+        username?: string | null;
+        qr_code?: string | null;
+        profile_picture?: string | null;
+      }>
+    | null;
 };
 
 type EmployeesPayload = {
   ok?: boolean;
-  data?: Array<{
-    name?: string | null;
-    role?: string | null;
-    log_id?: number | string | null;
-    departments?: { name?: string | null } | null;
-    accounts?:
-      | {
-          log_id?: number | string | null;
-          username?: string | null;
-          qr_code?: string | null;
-          profile_picture?: string | null;
-        }
-      | Array<{
-          log_id?: number | string | null;
-          username?: string | null;
-          qr_code?: string | null;
-          profile_picture?: string | null;
-        }>
-      | null;
-  }>;
+  data?: EmployeePayloadRow[];
 };
 
 function normalizeAccount(
@@ -90,6 +95,51 @@ export async function clearOfflineUserCache(): Promise<void> {
   await AsyncStorage.removeItem(OFFLINE_USER_CACHE_KEY);
 }
 
+export function mapEmployeesToOfflineUsers(data: EmployeePayloadRow[]): CachedOfflineUser[] {
+  return data
+    .filter(e => e !== null && typeof e === 'object')
+    .map((employee): CachedOfflineUser | null => {
+      const account = normalizeAccount(employee.accounts);
+      const userId = String(account?.log_id ?? employee.log_id ?? '').trim();
+      
+      // Allow name as fallback for username if account is missing
+      const username = String(account?.username ?? employee.name ?? '').trim();
+
+      if (!userId || !username) {
+        return null;
+      }
+
+      return {
+        userId,
+        empId: String(employee.emp_id ?? '').trim(),
+        username,
+        name: employee.name ?? null,
+        role: employee.role ?? null,
+        department: employee.departments?.name ?? null,
+        profile_picture: account?.profile_picture ?? null,
+        qrCode: account?.qr_code ?? null,
+      };
+    })
+    .filter((u): u is CachedOfflineUser => u !== null);
+}
+
+export async function updateOfflineUserCacheFromEmployees(data: EmployeePayloadRow[]): Promise<CachedOfflineUser[]> {
+  const incomingUsers = mapEmployeesToOfflineUsers(data);
+  const existingUsers = await getOfflineUserCache();
+  
+  const userMap = new Map<string, CachedOfflineUser>();
+  
+  // Load existing
+  existingUsers.forEach(u => userMap.set(u.userId, u));
+  
+  // Merge incoming (overwrite with fresh data)
+  incomingUsers.forEach(u => userMap.set(u.userId, u));
+  
+  const merged = Array.from(userMap.values());
+  await saveOfflineUserCache(merged);
+  return merged;
+}
+
 export async function refreshOfflineUserCache(): Promise<CachedOfflineUser[]> {
   let responseText = '';
   try {
@@ -107,27 +157,7 @@ export async function refreshOfflineUserCache(): Promise<CachedOfflineUser[]> {
       throw new Error('Unable to refresh offline user cache');
     }
 
-    const users = payload.data
-      .map((employee): CachedOfflineUser | null => {
-        const account = normalizeAccount(employee.accounts as any);
-        const userId = String(account?.log_id ?? employee.log_id ?? '').trim();
-        const username = String(account?.username ?? '').trim();
-
-        if (!userId || !username) {
-          return null;
-        }
-        return {
-          userId,
-          username,
-          name: employee.name,
-          role: employee.role ?? '',
-          profilePicture: account?.profile_picture ?? null,
-          qrCode: account?.qr_code ?? null,
-        };
-      })
-      .filter((u): u is CachedOfflineUser => u !== null);
-
-    await saveOfflineUserCache(users);
+    const users = await updateOfflineUserCacheFromEmployees(payload.data);
     return users;
   } catch (error) {
     console.error('refreshOfflineUserCache error:', error);

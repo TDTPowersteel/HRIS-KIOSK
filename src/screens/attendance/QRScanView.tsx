@@ -3,7 +3,7 @@ import { ActivityIndicator, Animated, Text, TouchableOpacity, View } from 'react
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Camera, CameraProps } from 'react-native-vision-camera';
-import { styles } from './styles';
+import { styles } from './style/styles';
 
 type Props = {
   device: CameraProps['device'];
@@ -12,6 +12,7 @@ type Props = {
   formattedTime: string;
   formattedDate: string;
   isQrLoading: boolean;
+  qrSuccessLocal: boolean;
   touchlessEnabled: boolean;
   offlineModeEnabled: boolean;
   pendingSyncCount: number;
@@ -26,6 +27,7 @@ export default function QRScanView({
   formattedTime,
   formattedDate,
   isQrLoading,
+  qrSuccessLocal,
   touchlessEnabled,
   offlineModeEnabled,
   pendingSyncCount,
@@ -90,23 +92,31 @@ export default function QRScanView({
               <View style={[styles.corner, styles.cornerTopRight]} />
               <View style={[styles.corner, styles.cornerBottomLeft]} />
               <View style={[styles.corner, styles.cornerBottomRight]} />
-              {isQrLoading ? (
+              {qrSuccessLocal ? (
+                <MaterialCommunityIcons name="check-circle" size={100} color="#F27121" />
+              ) : isQrLoading ? (
                 <ActivityIndicator size={100} color="#F27121" />
               ) : (
                 <MaterialCommunityIcons name="qrcode-scan" size={100} color="#F27121" />
               )}
             </View>
             <Text style={styles.scanInstructionText}>
-              {isQrLoading ? 'QR CODE SCANNED' : 'READY TO SCAN QR'}
+              {qrSuccessLocal ? 'SUCCESS!' : isQrLoading ? 'QR CODE SCANNED' : 'READY TO SCAN QR'}
             </Text>
           </View>
         </View>
 
         <View style={styles.newFooter}>
-          {isQrLoading && (
-            <View style={[styles.verifyingPill, { borderColor: '#4A90E2' }]}>
-              <ActivityIndicator size="small" color="#4A90E2" />
-              <Text style={styles.verifyingPillText}>QR Code Scanned</Text>
+          {(isQrLoading || qrSuccessLocal) && (
+            <View style={[styles.verifyingPill, { borderColor: qrSuccessLocal ? '#F27121' : '#4A90E2' }]}>
+              {qrSuccessLocal ? (
+                <MaterialCommunityIcons name="check-circle" size={16} color="#F27121" style={{ marginRight: 6 }} />
+              ) : (
+                <ActivityIndicator size="small" color="#4A90E2" />
+              )}
+              <Text style={[styles.verifyingPillText, qrSuccessLocal && { color: '#F27121' }]}>
+                {qrSuccessLocal ? 'QR Verified!' : 'QR Code Scanned'}
+              </Text>
             </View>
           )}
           <View style={styles.welcomeContainer}>

@@ -44,7 +44,9 @@
           "cameraPermissionText": "This app needs access to your camera for face recognition.",
           "enableCodeScanner": true
         }
-      ]
+      ],
+      "expo-asset",
+      "./withOnnxManualLink.js"
     ],
     "web": {
       "favicon": "./assets/favicon.png"

@@ -16,8 +16,8 @@
 
 // Face++ API Configuration
 // IMPORTANT: never commit secrets. Configure via environment variables instead.
-define('FACEPP_API_KEY', getenv('FACEPP_API_KEY') ?: 'YOUR_FACEPP_API_KEY_HERE');
-define('FACEPP_API_SECRET', getenv('FACEPP_API_SECRET') ?: 'YOUR_FACEPP_API_SECRET_HERE');
+define('FACEPP_API_KEY', getenv('FACEPP_API_KEY') ?: '');
+define('FACEPP_API_SECRET', getenv('FACEPP_API_SECRET') ?: '');
 const FACEPP_API_BASE_URL = 'https://api-us.faceplusplus.com/facepp/v3';
 
 // Global variable to store last Face++ API error
@@ -57,8 +57,15 @@ function optimizeImageForFacePP(string $imageData): ?string
     $width = imagesx($img);
     $height = imagesy($img);
     
-    // Calculate new dimensions (max 600px on longest side for extreme upload speed)
-    $maxDimension = 600;
+    // Skip optimization if already reasonable size and not too large in bytes
+    if ($width <= 1200 && $height <= 1200 && strlen($imageData) < 800000) {
+        error_log("Face++ skipping optimization: image is already $width x $height (" . strlen($imageData) . " bytes)");
+        imagedestroy($img);
+        return $imageData;
+    }
+    
+    // Calculate new dimensions (max 1200px on longest side for better detail when far away)
+    $maxDimension = 1200;
     if ($width > $maxDimension || $height > $maxDimension) {
         if ($width > $height) {
             $newWidth = $maxDimension;
@@ -73,15 +80,17 @@ function optimizeImageForFacePP(string $imageData): ?string
         imagecopyresampled($resized, $img, 0, 0, 0, 0, $newWidth, $newHeight, $width, $height);
         imagedestroy($img);
         $img = $resized;
+        $width = $newWidth;
+        $height = $newHeight;
     }
     
-    // Convert to JPEG with 75% quality for smaller file size
+    // Convert to JPEG with 90% quality for better detail
     ob_start();
-    imagejpeg($img, null, 75);
+    imagejpeg($img, null, 90);
     $optimizedData = ob_get_clean();
     imagedestroy($img);
     
-    error_log("Face++ image optimization: " . strlen($imageData) . " bytes -> " . strlen($optimizedData) . " bytes");
+    error_log("Face++ image optimized: $width x $height (" . strlen($imageData) . " bytes -> " . strlen($optimizedData) . " bytes)");
     
     return $optimizedData;
 }
@@ -107,10 +116,25 @@ function facepp_compare_faces(string $image1Base64, string $image2Base64): ?arra
     // Decode base64 images (using robust helper)
     // Helper: robust base64 decode (strip non-base64 chars, try URL-safe variants)
     $safe_base64_decode = function($s) {
+        if (!$s || !is_string($s)) return false;
+        
+        // If it already looks like a binary JPEG or PNG, don't decode
+        if (strpos($s, "\xFF\xD8\xFF") === 0 || strpos($s, "\x89PNG") === 0) {
+            return $s;
+        }
+
         // Remove data URL prefix if present (including weird formats like jpeg;base64,)
         $s = preg_replace('/^[^,]*;base64,/', '', $s);
+        
+        // If it's pure binary after prefix removal, return it
+        if (strpos($s, "\xFF\xD8\xFF") === 0 || strpos($s, "\x89PNG") === 0) {
+            return $s;
+        }
+
         // Strip characters not in base64 alphabet
         $clean = preg_replace('/[^A-Za-z0-9+\/=\-_]/', '', $s);
+        if (empty($clean)) return false;
+
         $decoded = base64_decode($clean, true);
         if ($decoded === false) {
             // Try URL-safe replacements
@@ -205,6 +229,15 @@ function facepp_compare_faces(string $image1Base64, string $image2Base64): ?arra
     // Face++ returns confidence score (0-100)
     $confidence = $result['confidence'] ?? 0;
     $thresholds = $result['thresholds'] ?? [];
+
+    if ($confidence == 0) {
+        error_log("Face++ Confidence is 0. Response detail: " . json_encode([
+            'captured_faces_count' => count($result['faces1'] ?? []),
+            'reference_faces_count' => count($result['faces2'] ?? []),
+            'image_id1' => $result['image_id1'] ?? 'null',
+            'image_id2' => $result['image_id2'] ?? 'null',
+        ]));
+    }
     
     // Use 1e-4 so same person (logged-in user) matches reliably; 1e-5 is too strict for attendance
     // 1e-3: looser | 1e-4: moderate | 1e-5: strict (more false rejections)
@@ -229,6 +262,8 @@ function facepp_compare_faces(string $image1Base64, string $image2Base64): ?arra
         'threshold' => $thresholdNormalized,
         'threshold_raw' => $threshold,
         'similar' => $isSimilar,
+        'captured_faces_count' => count($result['faces1'] ?? []),
+        'reference_faces_count' => count($result['faces2'] ?? []),
         'api' => 'facepp',
     ];
 }

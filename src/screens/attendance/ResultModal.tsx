@@ -1,6 +1,6 @@
 import React from 'react';
 import { Animated, Modal, Text, TouchableOpacity, View } from 'react-native';
-import { styles } from './styles';
+import { styles } from './style/styles';
 import type { ModalType } from './types';
 
 type Props = {

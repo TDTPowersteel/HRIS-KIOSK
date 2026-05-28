@@ -336,6 +336,7 @@ The system enforces a **dual-layer liveness strategy** to prevent attendance fra
 
 ### Layer 1 – Frontend Pre-Capture Guard (ML Kit, On-Device)
 * **Execution:** Runs purely offline inside camera frame processors using `react-native-vision-camera-face-detector`.
+* **Async Performance:** We use the `runAsync` API combined with a `useSharedValue` throttle lock. This pushes the heavy MLKit processing entirely to a background worklet thread. This ensures the main camera preview remains buttery smooth (30-60 FPS) and avoids the `invalid-output-configuration` crash on budget Android tablets.
 * **Condition:** Checks real-time face presence with open-eye probabilities (`leftEyeOpenProbability > 0.4` or `rightEyeOpenProbability > 0.4`).
 * **Purpose:** Ensures the subject is actively present, ready, and looking straight ahead before triggering the dual-shot capture sequence.
 

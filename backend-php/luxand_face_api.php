@@ -12,7 +12,7 @@
  */
 
 // Luxand API Configuration
-define('LUXAND_API_TOKEN', getenv('LUXAND_API_TOKEN') ?: 'YOUR_LUXAND_API_TOKEN_HERE');
+define('LUXAND_API_TOKEN', getenv('LUXAND_API_TOKEN') ?: '');
 const LUXAND_API_BASE_URL = 'https://api.luxand.cloud/v2';
 
 // Global variable to store last Luxand API error

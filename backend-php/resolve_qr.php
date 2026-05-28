@@ -41,6 +41,10 @@ if ($_SERVER['REQUEST_METHOD'] !== 'GET') {
 
 require_once __DIR__ . '/connect.php';
 
+if (file_exists(__DIR__ . '/facepp_api.php')) {
+    require_once __DIR__ . '/facepp_api.php';
+}
+
 $qr = isset($_GET['qr']) ? trim((string) $_GET['qr']) : '';
 if ($qr === '') {
     http_response_code(400);
@@ -62,7 +66,7 @@ if (preg_match('/(?:LOG_?ID|USER):([^|]+)/i', $qr, $m)) {
 
 if (!$logId && !$username) {
     http_response_code(400);
-    echo json_encode(['ok' => false, 'message' => 'Invalid QR format (missing LOGID or USER)']);
+    echo json_encode(['ok' => false, 'message' => 'Invalid QR!']);
     exit;
 }
 
@@ -130,6 +134,8 @@ function normalize_value($value)
 
 $displayName = null;
 $profilePicture = null;
+$face = null;
+$faceEmbedding = null;
 $role = null;
 $gender = null;
 $birthday = null;
@@ -137,76 +143,83 @@ $address = null;
 $phone = null;
 $email = null;
 $department = null;
+$openSession = null;
 
 if ($resolvedLogId) {
-    // First get basic employee data
-    $employeeQuery = "rest/v1/employees?log_id=eq." . urlencode($resolvedLogId) . "&select=name,role,dept_id";
+    // Fetch profile picture, face (for Face++) and face_embedding (for Camera Vision)
+    // We fetch these from accounts table FIRST to ensure availability regardless of employees record state.
+    $selectCols = "profile_picture,face,face_embedding";
+
+    [$s4, $accountRows, $e4] = supabase_request(
+        'GET',
+        "rest/v1/accounts?log_id=eq." . urlencode($resolvedLogId) . "&select=" . $selectCols
+    );
+    if (!$e4 && is_array($accountRows) && count($accountRows) > 0) {
+        $account = $accountRows[0];
+        $profilePicture = normalize_value($account['profile_picture'] ?? null);
+        $face = normalize_value($account['face'] ?? null);
+        
+        $rawEmbedding = $account['face_embedding'] ?? null;
+        if ($rawEmbedding !== null) {
+            if (is_array($rawEmbedding) || is_object($rawEmbedding)) {
+                $faceEmbedding = json_encode($rawEmbedding);
+            } else if (is_string($rawEmbedding)) {
+                $trimmed = trim($rawEmbedding);
+                if (strpos($trimmed, '[') === 0) {
+                    $faceEmbedding = $trimmed;
+                } else {
+                    $faceEmbedding = $trimmed;
+                }
+            }
+        }
+    }
+
+    // Now get basic employee data
+    $employeeQuery = "rest/v1/employees?log_id=eq." . urlencode($resolvedLogId) . "&select=emp_id,name,role,dept_id";
 
     [$s2, $empRows, $e2] = supabase_request(
         'GET',
         $employeeQuery
     );
 
-
-    // Debug: Get all departments to see table structure
-    $tableQueries = [
-        "rest/v1/departments?select=*&limit=10",
-        "rest/v1/department?select=*&limit=10"
-    ];
-
-    foreach ($tableQueries as $index => $query) {
-        [$allDeptStatus, $allDeptRows, $allDeptError] = supabase_request('GET', $query);
-
-        if ($allDeptRows && count($allDeptRows) > 0) {
-            break;
-        }
-    }
-
-    if ($empRows && count($empRows) > 0) {
-        $employee = $empRows[0];
-    }
-
     if (!$e2 && is_array($empRows) && count($empRows) > 0) {
         $employee = $empRows[0];
+        $empId = $employee['emp_id'] ?? null;
 
         $displayName = normalize_value($employee['name'] ?? null);
         $role = normalize_value($employee['role'] ?? null);
         $deptId = $employee['dept_id'] ?? null;
 
+        // Check for ANY open attendance session
+        if ($empId) {
+            $attQuery = "rest/v1/attendance?emp_id=eq." . urlencode($empId) . "&timeout=is.null&order=att_id.desc&limit=1&select=att_id,timein,date";
+            [$sAtt, $attRows, $eAtt] = supabase_request('GET', $attQuery);
 
-        // Get department name if dept_id exists
+            if (!$eAtt && is_array($attRows) && count($attRows) > 0) {
+                $openSession = [
+                    'att_id' => $attRows[0]['att_id'],
+                    'timein' => $attRows[0]['timein'],
+                    'date' => $attRows[0]['date']
+                ];
+            }
+        }
+
+        // Get department name
         $department = null;
         if ($deptId) {
-
-            // Try the actual departments table schema you showed: dept_id key and name column.
             $deptQueries = [
                 "rest/v1/departments?dept_id=eq." . urlencode($deptId) . "&select=name",
                 "rest/v1/department?dept_id=eq." . urlencode($deptId) . "&select=name"
             ];
 
-            foreach ($deptQueries as $index => $query) {
+            foreach ($deptQueries as $query) {
                 [$s3, $deptRows, $e3] = supabase_request('GET', $query);
-
                 if (!$e3 && is_array($deptRows) && count($deptRows) > 0) {
                     $department = normalize_value($deptRows[0]['name'] ?? null);
-                    break; // Stop trying other queries once we find a match
+                    break;
                 }
             }
-
-        } else {
         }
-
-        // Get profile picture
-        [$s4, $accountRows, $e4] = supabase_request(
-            'GET',
-            "rest/v1/accounts?log_id=eq." . urlencode($resolvedLogId) . "&select=profile_picture"
-        );
-        $profilePicture = null;
-        if (!$e4 && is_array($accountRows) && count($accountRows) > 0) {
-            $profilePicture = normalize_value($accountRows[0]['profile_picture'] ?? null);
-        }
-
-    } else {
     }
 }
 
@@ -217,9 +230,18 @@ $jsonResponse = json_encode([
         'username' => $resolvedUsername,
         'name' => $displayName,
         'profile_picture' => $profilePicture,
+        'face' => $face,
+        'face_embedding' => $faceEmbedding,
         'role' => $role,
         'department' => $department,
+        'open_session' => $openSession,
     ],
+    'debug' => [
+        'resolved_log_id' => $resolvedLogId,
+        'has_account_row' => !empty($accountRows),
+        'fetch_error' => $e4,
+        'raw_embedding_type' => isset($account) ? gettype($account['face_embedding'] ?? null) : 'no_account'
+    ]
 ]);
 
 header('Content-Length: ' . strlen($jsonResponse));
