@@ -411,8 +411,8 @@ export default function EmployeeProfileData({ onBack }: Props) {
           style={({ pressed }) => [
             styles.backButton,
             {
-              backgroundColor: withAlpha(Colors.powerOrange, pressed ? 0.16 : 0.11),
-              borderColor: withAlpha(Colors.powerOrange, 0.35),
+              backgroundColor: pressed ? withAlpha(colors.border, 0.2) : 'transparent',
+              borderColor: colors.border,
             },
           ]}
         >
@@ -630,7 +630,7 @@ const styles = StyleSheet.create({
     letterSpacing: 0.8,
   },
   stickyContainer: {
-    paddingHorizontal: 32,
+    paddingHorizontal: 24,
     paddingBottom: 20,
     zIndex: 100,
   },
@@ -734,7 +734,7 @@ const styles = StyleSheet.create({
     transform: [{ skewX: '-25deg' }],
   },
   list: {
-    paddingHorizontal: 32,
+    paddingHorizontal: 24,
     paddingBottom: 40,
   },
   gridContainer: {

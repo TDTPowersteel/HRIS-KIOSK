@@ -1,6 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, View, Modal } from 'react-native';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { BACKEND_URL } from '../../config/backend';
 import { useTheme, Colors } from '../../config/theme';
@@ -29,8 +30,23 @@ type BackendSettings = {
   updated_at?: string;
 };
 
+function withAlpha(hexColor: string, alpha: number) {
+  const normalized = hexColor.replace('#', '');
+  const normalizedSixDigit =
+    normalized.length === 3 ? normalized.split('').map((char) => `${char}${char}`).join('') : normalized;
+  const intColor = Number.parseInt(normalizedSixDigit, 16);
+  if (Number.isNaN(intColor)) {
+    return `rgba(0, 0, 0, ${alpha})`;
+  }
+
+  const red = (intColor >> 16) & 255;
+  const green = (intColor >> 8) & 255;
+  const blue = intColor & 255;
+  return `rgba(${red}, ${green}, ${blue}, ${alpha})`;
+}
+
 export default function Settings({ onBack }: Props) {
-  const { colors } = useTheme();
+  const { colors, theme } = useTheme();
   const [isLoading, setIsLoading] = useState(true);
   const [touchlessEnabled, setTouchlessEnabled] = useState(false);
   const [isOnline, setIsOnline] = useState(true);
@@ -44,6 +60,19 @@ export default function Settings({ onBack }: Props) {
     attendance_interval_minutes: 5,
   });
   const [storageSize, setStorageSize] = useState<string>('0 KB');
+  const [logoutTapCount, setLogoutTapCount] = useState(0);
+  const [showLogout, setShowLogout] = useState(false);
+  const [showWipeConfirm, setShowWipeConfirm] = useState(false);
+
+  const handleHeaderTap = useCallback(() => {
+    const newCount = logoutTapCount + 1;
+    if (newCount >= 7) {
+      setShowLogout(true);
+      setLogoutTapCount(0);
+    } else {
+      setLogoutTapCount(newCount);
+    }
+  }, [logoutTapCount]);
 
   const calculateStorageSize = useCallback(async () => {
     try {
@@ -105,31 +134,23 @@ export default function Settings({ onBack }: Props) {
     loadSettings();
   }, [loadSettings]);
 
+  const confirmWipe = async () => {
+    setShowWipeConfirm(false);
+    setIsLoading(true);
+    try {
+      await AsyncStorage.clear();
+      await calculateStorageSize();
+      Alert.alert('Success', 'Device memory has been cleared.');
+    } catch (e) {
+      Alert.alert('Error', 'Failed to clear memory.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const handleWipeCache = useCallback(() => {
-    Alert.alert(
-      'Wipe System Cache',
-      'This will delete all offline data and cached profile pictures. You will need to sync again when online. Proceed?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { 
-          text: 'Wipe Data', 
-          style: 'destructive', 
-          onPress: async () => {
-            setIsLoading(true);
-            try {
-              await AsyncStorage.clear();
-              await calculateStorageSize();
-              Alert.alert('Success', 'Cache has been cleared.');
-            } catch (e) {
-              Alert.alert('Error', 'Failed to clear cache.');
-            } finally {
-              setIsLoading(false);
-            }
-          } 
-        }
-      ]
-    );
-  }, [calculateStorageSize]);
+    setShowWipeConfirm(true);
+  }, []);
 
   const handleTouchlessChange = useCallback(async (value: boolean) => {
     setTouchlessEnabled(value);
@@ -183,10 +204,10 @@ export default function Settings({ onBack }: Props) {
   }, []);
 
   const handleLogout = useCallback(() => {
-    Alert.alert('Logout', 'Are you sure?', [
+    Alert.alert('Exit Settings', 'Are you sure you want to end this session?', [
       { text: 'Cancel', style: 'cancel' },
       {
-        text: 'Logout',
+        text: 'Confirm',
         style: 'destructive',
         onPress: async () => {
           await AsyncStorage.multiRemove(['userId', 'username', 'emp_id']);
@@ -209,56 +230,149 @@ export default function Settings({ onBack }: Props) {
   return (
     <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]} edges={['top', 'left', 'right']}>
       <View style={styles.header}>
-        <Pressable onPress={onBack} style={styles.backButton}>
-          <Text style={[styles.backArrow, { color: colors.text }]}>{'<'}</Text>
+        <Pressable
+          onPress={onBack}
+          style={({ pressed }) => [
+            styles.backButton,
+            {
+              backgroundColor: pressed ? withAlpha(colors.border, 0.2) : 'transparent',
+              borderColor: colors.border,
+            },
+          ]}
+        >
+          <MaterialCommunityIcons name="chevron-left" size={32} color={colors.text} />
         </Pressable>
-        <Text style={[styles.headerTitle, { color: colors.text }]}>Settings</Text>
+        <View style={styles.headerTitleWrap}>
+          <Text style={[styles.headerTitle, { color: colors.text }]}>Settings</Text>
+          <Text style={[styles.headerSubtitle, { color: colors.textSecondary }]}>
+            Change how this kiosk works and manages data.
+          </Text>
+        </View>
       </View>
 
       <ScrollView contentContainerStyle={styles.listContent} showsVerticalScrollIndicator={false}>
         <View style={styles.sectionContainer}>
           <View style={styles.sectionHeader}>
-            <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>Kiosk Configuration</Text>
+            <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>Device Options</Text>
           </View>
 
-          <TouchlessModeFeature enabled={touchlessEnabled} onToggle={handleTouchlessChange} />
-          <LivenessCheckFeature enabled={livenessEnabled} onToggle={handleLivenessChange} />
-          <FaceRecogEngineFeature engine={faceEngine} onSelect={handleFaceEngineChange} />
-          <SyncLocationFeature
-            attendance_location={backendSettings.attendance_location}
-            saveBackendSettings={saveBackendSettings}
-          />
-          <AdminAccessFeature saveBackendSettings={saveBackendSettings} />
-          <OfflineRedundancyFeature isOnline={isOnline} />
+          <View style={styles.featureGrid}>
+            <TouchlessModeFeature enabled={touchlessEnabled} onToggle={handleTouchlessChange} />
+            <LivenessCheckFeature enabled={livenessEnabled} onToggle={handleLivenessChange} />
+            <FaceRecogEngineFeature engine={faceEngine} onSelect={handleFaceEngineChange} />
+            <SyncLocationFeature
+              attendance_location={backendSettings.attendance_location}
+              saveBackendSettings={saveBackendSettings}
+            />
+            <AdminAccessFeature saveBackendSettings={saveBackendSettings} />
+            <OfflineRedundancyFeature isOnline={isOnline} />
+          </View>
 
+          <View style={styles.sectionHeader}>
+            <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>Visual Style</Text>
+          </View>
           <ThemeSelectorFeature />
           
           <View style={styles.sectionHeader}>
-            <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>System Storage</Text>
-          </View>
-          <View style={[styles.storageCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-            <View style={styles.storageInfo}>
-              <Text style={[styles.storageLabel, { color: colors.text }]}>Total Cached Data</Text>
-              <Text style={[styles.storageValue, { color: Colors.powerOrange }]}>{storageSize}</Text>
-            </View>
-            <Text style={[styles.storageSubtext, { color: colors.textSecondary }]}>
-              Includes offline employee data, QR codes, and profile pictures.
-            </Text>
-            <Pressable 
-              onPress={handleWipeCache}
-              style={({ pressed }) => [
-                styles.wipeButton,
-                { borderColor: '#ef4444' },
-                pressed && { backgroundColor: 'rgba(239, 68, 68, 0.1)' }
-              ]}
-            >
-              <Text style={styles.wipeButtonText}>WIPE SYSTEM CACHE</Text>
+            <Pressable onPress={handleHeaderTap}>
+              <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>Device Storage</Text>
             </Pressable>
           </View>
+          <View style={[styles.storageCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+            <View style={styles.storageMainRow}>
+              <View style={styles.storageInfoBlock}>
+                <Text style={[styles.storageLabel, { color: colors.textSecondary }]}>USED MEMORY</Text>
+                <Text style={[styles.storageValue, { color: colors.text }]}>{storageSize}</Text>
+              </View>
+              <Pressable 
+                onPress={handleWipeCache}
+                style={({ pressed }) => [
+                  styles.wipeButton,
+                  { 
+                    borderColor: '#ef4444', 
+                    backgroundColor: pressed ? 'rgba(239, 68, 68, 0.12)' : 'transparent' 
+                  },
+                ]}
+              >
+                <Text style={styles.wipeButtonText}>CLEAR DATA</Text>
+              </Pressable>
+            </View>
+            <View style={[styles.storageDivider, { backgroundColor: colors.border }]} />
+            <Text style={[styles.storageSubtext, { color: colors.textSecondary }]}>
+              Includes saved employee lists, pictures, and attendance logs.
+            </Text>
+          </View>
 
-          <SettingRow title="System Logout" danger onPress={handleLogout} />
+          {showLogout && (
+            <View style={[styles.logoutSection, { borderTopColor: colors.border }]}>
+              <Pressable 
+                onPress={handleLogout}
+                style={({ pressed }) => [
+                  styles.logoutRow,
+                  { 
+                    backgroundColor: pressed ? withAlpha('#ef4444', 0.05) : 'transparent',
+                    borderColor: colors.border 
+                  }
+                ]}
+              >
+                <View style={styles.logoutContent}>
+                  <MaterialCommunityIcons name="logout-variant" size={24} color="#ef4444" />
+                  <View style={styles.logoutTextWrap}>
+                    <Text style={styles.logoutTitle}>End Management Session</Text>
+                    <Text style={[styles.logoutSubtitle, { color: colors.textSecondary }]}>Close settings and return to home screen</Text>
+                  </View>
+                </View>
+                <MaterialCommunityIcons name="chevron-right" size={24} color={colors.textSecondary} />
+              </Pressable>
+            </View>
+          )}
         </View>
       </ScrollView>
+
+      {/* CUSTOM CONFIRMATION MODAL */}
+      <Modal
+        visible={showWipeConfirm}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowWipeConfirm(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalCard, { backgroundColor: colors.surface }]}>
+            <View style={[styles.modalIconCircle, { backgroundColor: withAlpha('#ef4444', 0.1) }]}>
+              <MaterialCommunityIcons name="database-remove" size={42} color="#ef4444" />
+            </View>
+            
+            <Text style={[styles.modalTitle, { color: colors.text }]}>Clear Device Memory?</Text>
+            <Text style={[styles.modalMessage, { color: colors.textSecondary }]}>
+              This will permanently delete all saved logs and employee pictures from this device.
+              {'\n'}{'\n'}
+              Internet connection will be needed to get this information back.
+            </Text>
+
+            <View style={styles.modalActionRow}>
+              <Pressable 
+                onPress={() => setShowWipeConfirm(false)}
+                style={({ pressed }) => [
+                  styles.modalSecondaryBtn,
+                  { backgroundColor: pressed ? withAlpha(colors.border, 0.5) : colors.background, borderColor: colors.border }
+                ]}
+              >
+                <Text style={[styles.modalSecondaryBtnText, { color: colors.textSecondary }]}>CANCEL</Text>
+              </Pressable>
+
+              <Pressable 
+                onPress={confirmWipe}
+                style={({ pressed }) => [
+                  styles.modalPrimaryBtn,
+                  { backgroundColor: pressed ? '#dc2626' : '#ef4444' }
+                ]}
+              >
+                <Text style={styles.modalPrimaryBtnText}>CLEAR NOW</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -273,82 +387,199 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   header: {
-    height: 90,
+    paddingHorizontal: 24,
+    paddingVertical: 20,
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 32,
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(0,0,0,0.05)',
   },
   backButton: {
-    width: 50,
-    height: 50,
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    borderWidth: 1.5,
     alignItems: 'center',
     justifyContent: 'center',
-    marginRight: 15,
+    marginRight: 16,
   },
-  backArrow: {
-    fontSize: 32,
-    fontWeight: '300',
+  headerTitleWrap: {
+    flex: 1,
   },
   headerTitle: {
-    fontSize: 26,
-    fontWeight: '800',
+    fontSize: 24,
+    fontWeight: '900',
     letterSpacing: -0.5,
   },
+  headerSubtitle: {
+    fontSize: 14,
+    fontWeight: '500',
+    marginTop: 1,
+  },
   listContent: {
-    paddingBottom: 40,
+    paddingBottom: 60,
   },
   sectionContainer: {
-    paddingHorizontal: 32,
-    paddingTop: 20,
+    paddingHorizontal: 24,
+    paddingTop: 10,
+  },
+  featureGrid: {
     gap: 16,
   },
   sectionHeader: {
-    marginTop: 10,
-    marginBottom: 8,
+    marginTop: 32,
+    marginBottom: 12,
   },
   sectionTitle: {
-    fontSize: 13,
-    fontWeight: '700',
+    fontSize: 12,
+    fontWeight: '800',
     textTransform: 'uppercase',
-    letterSpacing: 1.2,
+    letterSpacing: 1.5,
   },
   storageCard: {
     padding: 24,
-    borderRadius: 20,
+    borderRadius: 24,
     borderWidth: 1.5,
   },
-  storageInfo: {
+  storageMainRow: {
     flexDirection: 'row',
+    alignItems: 'center',
     justifyContent: 'space-between',
-    alignItems: 'baseline',
-    marginBottom: 10,
+  },
+  storageInfoBlock: {
+    flex: 1,
   },
   storageLabel: {
-    fontSize: 18,
-    fontWeight: '700',
+    fontSize: 11,
+    fontWeight: '900',
+    letterSpacing: 1,
+    marginBottom: 4,
   },
   storageValue: {
-    fontSize: 22,
+    fontSize: 28,
     fontWeight: '900',
+    letterSpacing: -0.5,
+  },
+  storageDivider: {
+    height: 1,
+    width: '100%',
+    marginVertical: 16,
+    opacity: 0.5,
   },
   storageSubtext: {
-    fontSize: 14,
-    lineHeight: 20,
-    marginBottom: 20,
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '500',
   },
   wipeButton: {
-    height: 50,
+    paddingHorizontal: 20,
+    height: 44,
     borderRadius: 12,
-    borderWidth: 2,
+    borderWidth: 1.5,
     alignItems: 'center',
     justifyContent: 'center',
   },
   wipeButtonText: {
     color: '#ef4444',
+    fontSize: 12,
+    fontWeight: '900',
+    letterSpacing: 0.5,
+  },
+  logoutSection: {
+    marginTop: 48,
+    borderTopWidth: 1.5,
+    paddingTop: 24,
+  },
+  logoutRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: 20,
+    borderRadius: 20,
+    borderWidth: 1.5,
+  },
+  logoutContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 16,
+  },
+  logoutTextWrap: {
+    justifyContent: 'center',
+  },
+  logoutTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#ef4444',
+    letterSpacing: -0.2,
+  },
+  logoutSubtitle: {
+    fontSize: 13,
+    fontWeight: '500',
+    marginTop: 2,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  modalCard: {
+    width: '100%',
+    maxWidth: 500,
+    borderRadius: 32,
+    padding: 32,
+    alignItems: 'center',
+  },
+  modalIconCircle: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 20,
+  },
+  modalTitle: {
+    fontSize: 24,
+    fontWeight: '900',
+    textAlign: 'center',
+    marginBottom: 12,
+    letterSpacing: -0.5,
+  },
+  modalMessage: {
+    fontSize: 15,
+    lineHeight: 22,
+    textAlign: 'center',
+    marginBottom: 32,
+    fontWeight: '500',
+  },
+  modalActionRow: {
+    flexDirection: 'row',
+    gap: 12,
+    width: '100%',
+  },
+  modalPrimaryBtn: {
+    flex: 1.5,
+    height: 56,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modalPrimaryBtnText: {
+    color: '#fff',
+    fontSize: 15,
+    fontWeight: '900',
+    letterSpacing: 1,
+  },
+  modalSecondaryBtn: {
+    flex: 1,
+    height: 56,
+    borderRadius: 16,
+    borderWidth: 1.5,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modalSecondaryBtnText: {
     fontSize: 14,
     fontWeight: '800',
-    letterSpacing: 1,
+    letterSpacing: 0.5,
   },
 });

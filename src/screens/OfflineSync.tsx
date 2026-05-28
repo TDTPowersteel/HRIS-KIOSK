@@ -158,8 +158,8 @@ export default function OfflineSync({ onBack, onOpenScanner }: Props) {
           style={({ pressed }) => [
             styles.backButton,
             {
-              backgroundColor: withAlpha(colors.accent, pressed ? 0.16 : 0.11),
-              borderColor: withAlpha(colors.accent, 0.35),
+              backgroundColor: pressed ? withAlpha(colors.border, 0.2) : 'transparent',
+              borderColor: colors.border,
             },
           ]}
         >
@@ -183,6 +183,12 @@ export default function OfflineSync({ onBack, onOpenScanner }: Props) {
             borderRightWidth: 1, 
             borderRightColor: colors.border,
             zIndex: 10,
+            // Subtle Shadow for "Pop"
+            shadowColor: '#000',
+            shadowOffset: { width: 4, height: 0 },
+            shadowOpacity: 0.08,
+            shadowRadius: 10,
+            elevation: 8, 
           }
         ]}>
           <View style={styles.panelHeaderRow}>
