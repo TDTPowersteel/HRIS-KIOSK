@@ -1,6 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Animated, Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
 import EmployeeDetailsModal from './settings/components/EmployeeDetailsModal';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { BACKEND_URL } from '../config/backend';
@@ -9,6 +10,21 @@ import { useTheme, Colors } from '../config/theme';
 
 const DIRECTORY_POLL_INTERVAL_MS = 30000; // Increased to 30s to reduce background load
 const LAST_SYNC_KEY = 'employee_directory_last_sync';
+
+function withAlpha(hexColor: string, alpha: number) {
+  const normalized = hexColor.replace('#', '');
+  const normalizedSixDigit =
+    normalized.length === 3 ? normalized.split('').map((char) => `${char}${char}`).join('') : normalized;
+  const intColor = Number.parseInt(normalizedSixDigit, 16);
+  if (Number.isNaN(intColor)) {
+    return `rgba(0, 0, 0, ${alpha})`;
+  }
+
+  const red = (intColor >> 16) & 255;
+  const green = (intColor >> 8) & 255;
+  const blue = intColor & 255;
+  return `rgba(${red}, ${green}, ${blue}, ${alpha})`;
+}
 
 type SortOption = 'name_asc' | 'name_desc';
 
@@ -388,13 +404,25 @@ export default function EmployeeProfileData({ onBack }: Props) {
   );
 
   return (
-    <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
+    <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]} edges={['top', 'left', 'right']}>
       <View style={styles.header}>
-        <Pressable onPress={onBack} style={styles.backButton}>
-          <Text style={[styles.backText, { color: Colors.powerOrange }]}>{'<'} BACK</Text>
+        <Pressable
+          onPress={onBack}
+          style={({ pressed }) => [
+            styles.backButton,
+            {
+              backgroundColor: withAlpha(Colors.powerOrange, pressed ? 0.16 : 0.11),
+              borderColor: withAlpha(Colors.powerOrange, 0.35),
+            },
+          ]}
+        >
+          <MaterialCommunityIcons name="chevron-left" size={32} color={colors.text} />
         </Pressable>
         <View style={styles.headerTitleWrap}>
           <Text style={[styles.title, { color: colors.text }]}>Employee Directory</Text>
+          <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
+            Employee information and records.
+          </Text>
         </View>
         <Pressable
           onPress={handleManualRefresh}
@@ -559,26 +587,32 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   header: {
-    paddingHorizontal: 32,
+    paddingHorizontal: 24,
     paddingVertical: 20,
     flexDirection: 'row',
     alignItems: 'center',
   },
   backButton: {
-    marginRight: 20,
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    borderWidth: 1.5,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 16,
   },
   headerTitleWrap: {
     flex: 1,
   },
-  backText: {
-    fontSize: 18,
-    fontWeight: '900',
-    letterSpacing: 1,
-  },
   title: {
-    fontSize: 30,
+    fontSize: 24,
     fontWeight: '900',
     letterSpacing: -0.5,
+  },
+  subtitle: {
+    fontSize: 14,
+    fontWeight: '500',
+    marginTop: 1,
   },
   refreshButton: {
     minWidth: 108,
