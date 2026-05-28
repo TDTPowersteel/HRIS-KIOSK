@@ -1734,7 +1734,7 @@ export function useAttendance() {
               setScanStage('idle');
             }
           }
-        }, 600);
+        }, 300);
 
         // Background server sync to correct session state and fetch face data
         resolveUserFromQr(data).then(async (resolved) => {
