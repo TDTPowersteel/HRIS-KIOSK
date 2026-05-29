@@ -1,2 +1,2 @@
-const IP_ADDRESS = '192.168.12.18';
+const IP_ADDRESS = '192.168.52.100';
 export const BACKEND_URL = `http://${IP_ADDRESS}:8000`;

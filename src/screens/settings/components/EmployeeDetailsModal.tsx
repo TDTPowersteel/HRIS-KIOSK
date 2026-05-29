@@ -3,6 +3,7 @@ import { Modal, View, Text, StyleSheet, Pressable, ActivityIndicator, Image, Scr
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Colors, useTheme } from '../../../config/theme';
 import { BACKEND_URL } from '../../../config/backend';
+import { mmkv, cacheProfilePictureOnDisk } from '../../../utils/offlineUsers';
 
 type AttendanceLog = {
   date: string;
@@ -91,50 +92,25 @@ export default function EmployeeDetailsModal({ visible, onClose, employee }: Pro
   const [history, setHistory] = useState<AttendanceLog[]>([]);
   const [filter, setFilter] = useState<FilterType>('week');
   const [statusFilter, setStatusFilter] = useState<LogStatus | 'All'>('All');
-  const [hqImage, setHqImage] = useState<string | null>(null);
-  const [hqLoading, setHqLoading] = useState(false);
   const [showMonthDropdown, setShowMonthDropdown] = useState(false);
 
   useEffect(() => {
     if (visible && employee?.emp_id) {
-      fetchHistory();
-      fetchHqDetails();
+      setShowMonthDropdown(false);
+      setStatusFilter('All');
     } else {
-      setHistory([]);
-      setHqImage(null);
-      setHqLoading(false);
       setShowMonthDropdown(false);
       setStatusFilter('All');
     }
-  }, [visible, employee, filter]);
+  }, [visible, employee?.emp_id]);
 
-  const fetchHqDetails = async () => {
-    // We need to fetch the profile_picture again from the accounts table properly.
-    const account = Array.isArray(employee?.accounts) ? employee.accounts[0] : employee?.accounts;
-    const userId = account?.log_id || employee?.log_id;
-    
-    if (!userId) return;
-    
-    setHqLoading(true);
-    try {
-      const response = await fetch(`${BACKEND_URL}/employee_details.php?user_id=${userId}`);
-      const text = await response.text();
-      try {
-        const payload = JSON.parse(text);
-        if (payload.ok && payload.user?.profile_picture_hq) {
-          setHqImage(payload.user.profile_picture_hq);
-        } else if (payload.ok && payload.user?.profile_picture) {
-          setHqImage(payload.user.profile_picture);
-        }
-      } catch (jsonErr) {
-        console.error('Invalid JSON from employee_details.php:', text.substring(0, 200));
-      }
-    } catch (e) {
-      console.error('Failed to fetch HQ image', e);
-    } finally {
-      setHqLoading(false);
+  useEffect(() => {
+    if (visible && employee?.emp_id) {
+      fetchHistory();
+    } else {
+      setHistory([]);
     }
-  };
+  }, [visible, employee?.emp_id, filter]);
 
   const fetchHistory = async () => {
     if (!employee?.emp_id) return;
@@ -210,7 +186,6 @@ export default function EmployeeDetailsModal({ visible, onClose, employee }: Pro
   }, [enrichedHistory]);
 
   const getProfilePicture = () => {
-    if (hqImage) return hqImage;
     if (!employee) return null;
     const acc = Array.isArray(employee.accounts) ? employee.accounts[0] : employee.accounts;
     return acc?.profile_picture;
@@ -347,11 +322,6 @@ export default function EmployeeDetailsModal({ visible, onClose, employee }: Pro
                 ) : (
                   <View style={styles.placeholderAvatar}>
                     <Text style={[styles.placeholderText, { color: colors.textSecondary, fontSize: isTablet ? 64 : 40 }]}>{employee?.name?.charAt(0) || '?'}</Text>
-                  </View>
-                )}
-                {hqLoading && (
-                  <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', alignItems: 'center' }]}>
-                    <ActivityIndicator size={isTablet ? 'large' : 'small'} color="#fff" />
                   </View>
                 )}
               </View>

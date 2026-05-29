@@ -28,3 +28,51 @@ jest.mock('expo-location', () => {
 });
 
 global.fetch = jest.fn();
+
+// Mock react-native-mmkv for Jest
+jest.mock('react-native-mmkv', () => {
+  const storage = new Map();
+  const mockInstance = {
+    set: jest.fn((key, value) => {
+      storage.set(key, value);
+    }),
+    getString: jest.fn((key) => {
+      const val = storage.get(key);
+      return typeof val === 'string' ? val : undefined;
+    }),
+    getNumber: jest.fn((key) => {
+      const val = storage.get(key);
+      return typeof val === 'number' ? val : undefined;
+    }),
+    getBoolean: jest.fn((key) => {
+      const val = storage.get(key);
+      return typeof val === 'boolean' ? val : undefined;
+    }),
+    delete: jest.fn((key) => {
+      storage.delete(key);
+    }),
+    clearAll: jest.fn(() => {
+      storage.clear();
+    }),
+    getAllKeys: jest.fn(() => {
+      return Array.from(storage.keys());
+    }),
+  };
+
+  return {
+    createMMKV: jest.fn().mockReturnValue(mockInstance),
+    MMKV: jest.fn().mockImplementation(() => mockInstance),
+  };
+});
+
+
+// Mock expo-file-system for Jest
+jest.mock('expo-file-system', () => {
+  return {
+    documentDirectory: 'file:///mock/documentDirectory/',
+    cacheDirectory: 'file:///mock/cacheDirectory/',
+    downloadAsync: jest.fn().mockResolvedValue({ uri: 'file:///mock/cached_image.jpg' }),
+    deleteAsync: jest.fn().mockResolvedValue(undefined),
+    getInfoAsync: jest.fn().mockResolvedValue({ exists: true }),
+  };
+});

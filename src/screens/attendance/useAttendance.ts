@@ -265,7 +265,7 @@ export function useAttendance() {
   const NETWORK_TIMEOUT_MS = 2500;
   const NETWORK_TOAST_COOLDOWN_MS = 15000;
   const FACEPP_TOUCHLESS_COUNTDOWN_SECONDS = 3;
-  const CAMERA_VISION_STABLE_FACE_FRAMES = 5;
+  const CAMERA_VISION_STABLE_FACE_FRAMES = 3;
   const CAMERA_VISION_TOUCHLESS_MIN_READINESS_TO_VERIFY = 90;
   const CAMERA_VISION_MANUAL_MIN_READINESS_TO_VERIFY = 30;
   const CAMERA_VISION_GATE_LOG_COOLDOWN_MS = 2000;
@@ -631,6 +631,13 @@ export function useAttendance() {
         department: payload.user.department ?? null,
         open_session: payload.user.open_session ?? null,
       };
+
+      try {
+        const cachedUser = await resolveOfflineUserFromQr(qrData);
+        if (cachedUser && cachedUser.profile_picture?.startsWith('file://') && cachedUser.profile_picture_remote === user.profile_picture) {
+          user.profile_picture = cachedUser.profile_picture;
+        }
+      } catch {}
 
       console.log(`[QR] Resolve details for ${user.username}:`, {
         log_id: user.userId,
@@ -1174,9 +1181,9 @@ export function useAttendance() {
                 bestScore = r.maxSimilarity;
                 liveEmbedding = embedding;
               }
-              // First shot already clear pass — skip second
-              if (bestScore >= MODEL_CONFIG.matchThreshold && attempt === 1) {
-                console.log(`[CameraVision] Shot 1 scored well (${(bestScore * 100).toFixed(1)}%), skipping shot 2.`);
+              // First shot already clear pass — skip second (Only if similarity score > 0.92, otherwise proceed to 2nd shot)
+              if (bestScore >= 0.92 && attempt === 1) {
+                console.log(`[CameraVision] Shot 1 scored well (${(bestScore * 100).toFixed(1)}% >= 92%), skipping shot 2.`);
                 break;
               }
             } else {
@@ -1857,9 +1864,15 @@ export function useAttendance() {
   useEffect(() => {
     if (!countdownActive || !qrVerified || isVerifying) return;
     if (faceCountdown <= 0) return;
-    const timer = setTimeout(() => { const next = faceCountdown - 1; setFaceCountdown(next); countdownRef.current = next; }, 1000);
+    const interval = faceEngine === 'camera_vision' ? 500 : 1000;
+    const step = faceEngine === 'camera_vision' ? 0.5 : 1;
+    const timer = setTimeout(() => {
+      const next = Math.max(0, faceCountdown - step);
+      setFaceCountdown(next);
+      countdownRef.current = next;
+    }, interval);
     return () => clearTimeout(timer);
-  }, [countdownActive, qrVerified, isVerifying, faceCountdown]);
+  }, [countdownActive, qrVerified, isVerifying, faceCountdown, faceEngine]);
 
   useEffect(() => {
     if (!countdownActive || !touchlessEnabled || !qrVerified) return;
@@ -1899,11 +1912,11 @@ export function useAttendance() {
       cameraVisionReadiness >= autoReadinessThreshold &&
       !cameraVisionAutoTriggeredRef.current
     ) {
-      setFaceCountdown(2);
-      countdownRef.current = 2;
+      setFaceCountdown(0.5);
+      countdownRef.current = 0.5;
       setCountdownActive(true);
       setScanStage('countdown');
-      setLivenessMessage('Capturing in 2...');
+      setLivenessMessage('Capturing...');
       cameraVisionAutoTriggeredRef.current = true;
       return;
     }
