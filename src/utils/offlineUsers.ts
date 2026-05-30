@@ -1,5 +1,5 @@
 import { createMMKV } from 'react-native-mmkv';
-import * as FileSystem from 'expo-file-system';
+import { File, Paths } from 'expo-file-system';
 import { BACKEND_URL } from '../config/backend';
 
 export const mmkv = createMMKV({
@@ -93,15 +93,12 @@ export async function cacheProfilePictureOnDisk(userId: string, remoteUrl: strin
   try {
     const fileExtension = remoteUrl.split('.').pop()?.split('?')[0] || 'jpg';
     const localFilename = `profile_${userId}.${fileExtension}`;
-    const localUri = `${(FileSystem as any).cacheDirectory}${localFilename}`;
+    const file = new File(Paths.cache, localFilename);
 
     // Download standard 500x500px resolution profile photo directly to device cache
-    const downloadResult = await FileSystem.downloadAsync(remoteUrl, localUri);
-    if (downloadResult.status === 200) {
-      console.log(`[Profile Caching] Successfully cached profile for ${userId} at ${downloadResult.uri}`);
-      return downloadResult.uri;
-    }
-    return null;
+    const downloadedFile = await File.downloadFileAsync(remoteUrl, file);
+    console.log(`[Profile Caching] Successfully cached profile for ${userId} at ${downloadedFile.uri}`);
+    return downloadedFile.uri;
   } catch (err) {
     console.error(`[Profile Caching] Failed to cache profile for ${userId}:`, err);
     return null;
@@ -112,11 +109,11 @@ export async function deleteCachedProfilePicture(userId: string): Promise<void> 
   try {
     const extensions = ['jpg', 'jpeg', 'png'];
     for (const ext of extensions) {
-      const localUri = `${(FileSystem as any).cacheDirectory}profile_${userId}.${ext}`;
-      const info = await FileSystem.getInfoAsync(localUri);
-      if (info.exists) {
-        await FileSystem.deleteAsync(localUri, { idempotent: true });
-        console.log(`[Profile Caching] Deleted cached profile for ${userId} at ${localUri}`);
+      const localFilename = `profile_${userId}.${ext}`;
+      const file = new File(Paths.cache, localFilename);
+      if (file.exists) {
+        await file.delete();
+        console.log(`[Profile Caching] Deleted cached profile for ${userId} at ${file.uri}`);
       }
     }
   } catch (err) {

@@ -282,7 +282,6 @@ export default function EmployeeProfileData({ onBack }: Props) {
   }, [fetchEmployees, currentPage, isLoadingMore, hasMore]);
 
   const sortedAndFilteredEmployees = useMemo(() => {
-    console.log('Filtering. Total loaded employees:', employees.length);
     let result = employees.filter(emp => {
       const matchesSearch = emp.name.toLowerCase().includes(debouncedSearchText.toLowerCase()) ||
         (emp.role && emp.role.toLowerCase().includes(debouncedSearchText.toLowerCase()));
@@ -299,7 +298,6 @@ export default function EmployeeProfileData({ onBack }: Props) {
       result.sort((a, b) => b.name.localeCompare(a.name));
     }
     
-    console.log('Filtered result count:', result.length);
     return result;
   }, [employees, debouncedSearchText, sortBy, selectedDept, selectedRole]);
 
