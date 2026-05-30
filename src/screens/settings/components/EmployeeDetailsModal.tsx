@@ -3,7 +3,7 @@ import { Modal, View, Text, StyleSheet, Pressable, ActivityIndicator, Image, Scr
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Colors, useTheme } from '../../../config/theme';
 import { BACKEND_URL } from '../../../config/backend';
-import { mmkv, cacheProfilePictureOnDisk } from '../../../utils/offlineUsers';
+import { mmkv, cacheProfilePictureOnDisk, upsertOfflineUserCacheUser } from '../../../utils/offlineUsers';
 
 type AttendanceLog = {
   date: string;
@@ -93,6 +93,13 @@ export default function EmployeeDetailsModal({ visible, onClose, employee }: Pro
   const [filter, setFilter] = useState<FilterType>('week');
   const [statusFilter, setStatusFilter] = useState<LogStatus | 'All'>('All');
   const [showMonthDropdown, setShowMonthDropdown] = useState(false);
+  const [localEmployee, setLocalEmployee] = useState<any>(employee);
+
+  useEffect(() => {
+    if (employee) {
+      setLocalEmployee(employee);
+    }
+  }, [employee]);
 
   useEffect(() => {
     if (visible && employee?.emp_id) {
@@ -116,6 +123,44 @@ export default function EmployeeDetailsModal({ visible, onClose, employee }: Pro
     if (!employee?.emp_id) return;
     setLoading(true);
     try {
+      // 1. Fetch fresh details from DB to guarantee correct info
+      try {
+        const detailRes = await fetch(`${BACKEND_URL}/employees.php?detail_id=${employee.emp_id}`);
+        const detailPayload = await detailRes.json();
+        if (detailPayload.ok && detailPayload.user) {
+          const freshUser = detailPayload.user;
+          const hqPic = detailPayload.profile_picture_hq;
+          const acc = Array.isArray(freshUser.accounts) ? freshUser.accounts[0] : freshUser.accounts;
+          const merged = {
+            ...freshUser,
+            accounts: {
+              ...acc,
+              profile_picture: hqPic || acc?.profile_picture || null
+            }
+          };
+          setLocalEmployee(merged);
+
+          // Update offline cache in background
+          const userId = freshUser.log_id || acc?.log_id;
+          if (userId) {
+            upsertOfflineUserCacheUser({
+              userId: String(userId),
+              empId: String(freshUser.emp_id),
+              username: acc?.username || freshUser.name || '',
+              name: freshUser.name,
+              role: freshUser.role,
+              department: freshUser.departments?.name || null,
+              profile_picture: hqPic || acc?.profile_picture || null,
+              profile_picture_remote: acc?.profile_picture || null,
+              qrCode: acc?.qr_code || null,
+            }).catch(e => console.log('Cache update error:', e));
+          }
+        }
+      } catch (err) {
+        console.log('Failed fetching fresh details:', err);
+      }
+
+      // 2. Fetch attendance history
       let url = `${BACKEND_URL}/record_attendance.php?emp_id=${employee.emp_id}`;
       
       const now = new Date();
@@ -186,8 +231,8 @@ export default function EmployeeDetailsModal({ visible, onClose, employee }: Pro
   }, [enrichedHistory]);
 
   const getProfilePicture = () => {
-    if (!employee) return null;
-    const acc = Array.isArray(employee.accounts) ? employee.accounts[0] : employee.accounts;
+    if (!localEmployee) return null;
+    const acc = Array.isArray(localEmployee.accounts) ? localEmployee.accounts[0] : localEmployee.accounts;
     return acc?.profile_picture;
   };
 
@@ -321,16 +366,16 @@ export default function EmployeeDetailsModal({ visible, onClose, employee }: Pro
                   <Image source={{ uri: getProfilePicture() }} style={styles.profileImage} />
                 ) : (
                   <View style={styles.placeholderAvatar}>
-                    <Text style={[styles.placeholderText, { color: colors.textSecondary, fontSize: isTablet ? 64 : 40 }]}>{employee?.name?.charAt(0) || '?'}</Text>
+                    <Text style={[styles.placeholderText, { color: colors.textSecondary, fontSize: isTablet ? 64 : 40 }]}>{localEmployee?.name?.charAt(0) || '?'}</Text>
                   </View>
                 )}
               </View>
-              <Text style={[styles.name, { color: colors.text, fontSize: isTablet ? 32 : 22 }]} numberOfLines={2}>{employee?.name || 'No Name'}</Text>
-              <Text style={[styles.role, { color: colors.textSecondary, fontSize: isTablet ? 18 : 14 }]}>{employee?.role || 'No Role'}</Text>
+              <Text style={[styles.name, { color: colors.text, fontSize: isTablet ? 32 : 22 }]} numberOfLines={2}>{localEmployee?.name || 'No Name'}</Text>
+              <Text style={[styles.role, { color: colors.textSecondary, fontSize: isTablet ? 18 : 14 }]}>{localEmployee?.role || 'No Role'}</Text>
               
               <View style={[styles.deptTag, { backgroundColor: theme === 'light' ? '#f3f4f6' : '#333' }]}>
                 <Text style={[styles.deptText, { color: colors.textSecondary }]}>
-                  {employee?.departments?.name || 'General'}
+                  {localEmployee?.departments?.name || 'General'}
                 </Text>
               </View>
 

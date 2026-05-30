@@ -5,7 +5,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import EmployeeDetailsModal from './settings/components/EmployeeDetailsModal';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { BACKEND_URL } from '../config/backend';
-import { updateOfflineUserCacheFromEmployees, getOfflineUserCache, clearOfflineUserCache } from '../utils/offlineUsers';
+import { updateOfflineUserCacheFromEmployees, getOfflineUserCache, clearOfflineUserCache, mmkv } from '../utils/offlineUsers';
 import { useTheme, Colors } from '../config/theme';
 
 const DIRECTORY_POLL_INTERVAL_MS = 30000; // Increased to 30s to reduce background load
@@ -55,6 +55,40 @@ type Props = {
 let globalEmployeesCache: EmployeeRow[] = [];
 let globalLastSyncCache: number | null = null;
 
+function enrichEmployeesWithCache(data: EmployeeRow[]): EmployeeRow[] {
+  const normalizeAccount = (val: Account | Account[] | null | undefined): Account | null => {
+    if (Array.isArray(val)) return val[0] ?? null;
+    return val ?? null;
+  };
+  return data.map(emp => {
+    if (!emp) return emp;
+    const acc = normalizeAccount(emp.accounts);
+    const logId = emp.log_id || acc?.log_id;
+    if (logId) {
+      const cachedRaw = mmkv.getString(`user_by_id:${logId}`);
+      if (cachedRaw) {
+        try {
+          const cached = JSON.parse(cachedRaw);
+          if (cached.profile_picture?.startsWith('file://')) {
+            const isArr = Array.isArray(emp.accounts);
+            const enrichedAcc = {
+              log_id: logId,
+              username: acc?.username ?? cached.username ?? null,
+              qr_code: acc?.qr_code ?? cached.qrCode ?? null,
+              profile_picture: cached.profile_picture
+            };
+            return {
+              ...emp,
+              accounts: isArr ? [enrichedAcc] : enrichedAcc
+            };
+          }
+        } catch {}
+      }
+    }
+    return emp;
+  });
+}
+
 export default function EmployeeProfileData({ onBack }: Props) {
   const normalizeAccount = (val: Account | Account[] | null | undefined): Account | null => {
     if (Array.isArray(val)) return val[0] ?? null;
@@ -68,7 +102,21 @@ export default function EmployeeProfileData({ onBack }: Props) {
   
   const setUniqueEmployees = useCallback((data: EmployeeRow[], append: boolean = false) => {
     const seen = new Set<number>();
-    const sourceData = append ? [...employeesRef.current, ...data] : data;
+    
+    let sourceData: EmployeeRow[] = [];
+    if (append) {
+      sourceData = [...employeesRef.current, ...data];
+    } else {
+      const existingMap = new Map<number, EmployeeRow>();
+      employeesRef.current.forEach(emp => {
+        if (emp && emp.emp_id) existingMap.set(emp.emp_id, emp);
+      });
+      data.forEach(emp => {
+        if (emp && emp.emp_id) existingMap.set(emp.emp_id, emp);
+      });
+      sourceData = Array.from(existingMap.values());
+    }
+
     const unique = sourceData.filter(emp => {
       if (!emp || !emp.emp_id || seen.has(emp.emp_id)) return false;
       seen.add(emp.emp_id);
@@ -77,7 +125,6 @@ export default function EmployeeProfileData({ onBack }: Props) {
     setEmployees(unique);
     globalEmployeesCache = unique;
     
-    // If we got fewer items than requested, there's no more data
     if (data.length < ITEMS_PER_PAGE) {
       setHasMore(false);
     } else {
@@ -154,13 +201,16 @@ export default function EmployeeProfileData({ onBack }: Props) {
         throw new Error('Unable to sync employee directory');
       }
 
-      const rows = payload.data as EmployeeRow[];
+      let rows = payload.data as EmployeeRow[];
       
       // Update local cache only on first few pages to save storage, 
       // or update it fully but with compressed thumbnails.
       if (isInitial) {
-        await updateOfflineUserCacheFromEmployees(rows);
+        await updateOfflineUserCacheFromEmployees(rows, false);
       }
+
+      // Enrich with local file URIs to prevent flashing/missing profile pictures
+      rows = enrichEmployeesWithCache(rows);
       
       const now = Date.now();
       if (!mountedRef.current) return;
@@ -210,6 +260,34 @@ export default function EmployeeProfileData({ onBack }: Props) {
     }, 300);
     return () => clearTimeout(timer);
   }, [searchText]);
+
+  useEffect(() => {
+    if (!debouncedSearchText) return;
+    
+    let isCurrent = true;
+    const fetchSearchResults = async () => {
+      setIsLoading(true);
+      try {
+        const response = await fetch(`${BACKEND_URL}/employees.php?search=${encodeURIComponent(debouncedSearchText)}&limit=100`);
+        const payload = await response.json();
+        if (payload?.ok && Array.isArray(payload?.data) && isCurrent) {
+          let rows = payload.data as EmployeeRow[];
+          rows = enrichEmployeesWithCache(rows);
+          setUniqueEmployees(rows, false);
+        }
+      } catch (err) {
+        console.log('Search fetch error:', err);
+      } finally {
+        if (isCurrent) {
+          setIsLoading(false);
+        }
+      }
+    };
+    fetchSearchResults();
+    return () => {
+      isCurrent = false;
+    };
+  }, [debouncedSearchText, setUniqueEmployees]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -293,9 +371,21 @@ export default function EmployeeProfileData({ onBack }: Props) {
     });
 
     if (sortBy === 'name_asc') {
-      result.sort((a, b) => a.name.localeCompare(b.name));
+      result.sort((a, b) => {
+        const nameA = a.name.toLowerCase();
+        const nameB = b.name.toLowerCase();
+        if (nameA < nameB) return -1;
+        if (nameA > nameB) return 1;
+        return 0;
+      });
     } else if (sortBy === 'name_desc') {
-      result.sort((a, b) => b.name.localeCompare(a.name));
+      result.sort((a, b) => {
+        const nameA = a.name.toLowerCase();
+        const nameB = b.name.toLowerCase();
+        if (nameA > nameB) return -1;
+        if (nameA < nameB) return 1;
+        return 0;
+      });
     }
     
     return result;

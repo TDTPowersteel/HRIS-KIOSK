@@ -190,7 +190,7 @@ export async function saveOfflineUserCache(users: CachedOfflineUser[]): Promise<
   const keys = mmkv.getAllKeys();
   const indexKeys = keys.filter(k => k.startsWith('user_by_id:') || k.startsWith('user_by_qr:'));
   for (const key of indexKeys) {
-    mmkv.remove(key);
+    (mmkv as any).delete(key);
   }
 
   for (const user of users) {
@@ -205,7 +205,7 @@ export async function clearOfflineUserCache(): Promise<void> {
   const keys = mmkv.getAllKeys();
   const indexKeys = keys.filter(k => k.startsWith('user_by_id:') || k.startsWith('user_by_qr:'));
   for (const key of indexKeys) {
-    mmkv.remove(key);
+    (mmkv as any).delete(key);
   }
 }
 
@@ -239,27 +239,32 @@ export function mapEmployeesToOfflineUsers(data: EmployeePayloadRow[]): CachedOf
     .filter((u): u is CachedOfflineUser => u !== null);
 }
 
-export async function updateOfflineUserCacheFromEmployees(data: EmployeePayloadRow[]): Promise<CachedOfflineUser[]> {
+export async function updateOfflineUserCacheFromEmployees(
+  data: EmployeePayloadRow[],
+  isFullSync: boolean = true
+): Promise<CachedOfflineUser[]> {
   const incomingUsers = mapEmployeesToOfflineUsers(data);
   const incomingIds = new Set(incomingUsers.map(u => u.userId));
   
-  // 1. Delete stale users
-  const keys = mmkv.getAllKeys();
-  const existingUserKeys = keys.filter(k => k.startsWith('user_by_id:'));
-  for (const key of existingUserKeys) {
-    const userId = key.substring('user_by_id:'.length);
-    if (!incomingIds.has(userId)) {
-      const userRaw = mmkv.getString(key);
-      if (userRaw) {
-        try {
-          const user = JSON.parse(userRaw) as CachedOfflineUser;
-          if (user.qrCode) {
-            mmkv.remove(`user_by_qr:${user.qrCode}`);
-          }
-        } catch {}
+  // 1. Delete stale users (only on full synchronization)
+  if (isFullSync) {
+    const keys = mmkv.getAllKeys();
+    const existingUserKeys = keys.filter(k => k.startsWith('user_by_id:'));
+    for (const key of existingUserKeys) {
+      const userId = key.substring('user_by_id:'.length);
+      if (!incomingIds.has(userId)) {
+        const userRaw = mmkv.getString(key);
+        if (userRaw) {
+          try {
+            const user = JSON.parse(userRaw) as CachedOfflineUser;
+            if (user.qrCode) {
+              (mmkv as any).delete(`user_by_qr:${user.qrCode}`);
+            }
+          } catch {}
+        }
+        (mmkv as any).delete(key);
+        await deleteCachedProfilePicture(userId);
       }
-      mmkv.remove(key);
-      await deleteCachedProfilePicture(userId);
     }
   }
 

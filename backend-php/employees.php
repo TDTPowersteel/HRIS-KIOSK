@@ -85,8 +85,15 @@ $page = isset($_GET['page']) ? (int)$_GET['page'] : 0;
 $limit = isset($_GET['limit']) ? (int)$_GET['limit'] : 1000;
 $offset = $page * $limit;
 
+$search = isset($_GET['search']) ? trim($_GET['search']) : null;
+
 $select = 'emp_id,name,role,dept_id,log_id,accounts(log_id,username,qr_code,profile_picture),departments(name)';
 $path = "rest/v1/employees?select={$select}&order=emp_id&limit={$limit}&offset={$offset}";
+
+if (!empty($search)) {
+    $searchEscaped = urlencode('*' . $search . '*');
+    $path .= "&or=(name.ilike.{$searchEscaped},role.ilike.{$searchEscaped})";
+}
 
 [$status, $data, $err] = supabase_request('GET', $path);
 
