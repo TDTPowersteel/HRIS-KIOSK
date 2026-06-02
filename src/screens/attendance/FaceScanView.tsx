@@ -39,6 +39,7 @@ type Props = {
   scanStage: FaceScanStage;
   cameraVisionFaceDetected: boolean;
   cameraVisionReadiness: number;
+  backgroundLivenessPassed: boolean;
   cameraVisionFaceBox: { left: number; top: number; width: number; height: number; frameWidth?: number; frameHeight?: number } | null;
   cameraVisionAllFaces?: Array<{ id: string; left: number; top: number; width: number; height: number; isTarget: boolean; frameWidth?: number; frameHeight?: number }> | null;
   cameraVisionFaceTelemetry: CameraVisionFaceTelemetry | null;
@@ -74,6 +75,7 @@ export default function FaceScanView({
   scanStage,
   cameraVisionFaceDetected,
   cameraVisionReadiness,
+  backgroundLivenessPassed,
   cameraVisionFaceBox,
   cameraVisionAllFaces = [],
   cameraVisionFaceTelemetry,
@@ -326,6 +328,7 @@ export default function FaceScanView({
 
   const showProcessingSpinner = isCapturingHardware || isVerifying || scanStage === 'capturing' || scanStage === 'verifying' || scanStage === 'recording';
   const showDetectionOverlay = isCameraVisionMode && cameraVisionFaceDetected && !!cameraVisionFaceBox && !showProcessingSpinner && scanStage !== 'success' && !showResultModal;
+  const isLivenessPending = livenessEnabled && !backgroundLivenessPassed;
 
   const animatedStatusCardStyle = useAnimatedStyle(() => {
     const cardHeight = 74;
@@ -334,6 +337,17 @@ export default function FaceScanView({
       left: animatedFaceBoxLeft.value + margin,
       top: animatedFaceBoxTop.value + animatedFaceBoxHeight.value - cardHeight - margin,
       opacity: (showDetectionOverlay && showTelemetry) ? 1 : 0,
+    };
+  });
+
+  const animatedInstructionCardStyle = useAnimatedStyle(() => {
+    return {
+      left: animatedFaceBoxLeft.value - 40,
+      top: animatedFaceBoxTop.value - 50,
+      width: animatedFaceBoxWidth.value + 80,
+      opacity: (showDetectionOverlay && livenessEnabled) ? 1 : 0,
+      alignItems: 'center',
+      justifyContent: 'center',
     };
   });
 
@@ -391,7 +405,12 @@ export default function FaceScanView({
     if (showProcessingSpinner) return isClockingOut ? 'PROCESSING LOGOUT...' : 'VERIFYING IDENTITY...';
     if (isCameraVisionMode && scanStage === 'detecting') {
       if (!cameraVisionFaceDetected) return 'SEARCHING FOR FACE...';
-      return isFaceStraight ? `FACE READY ${detectionPercent}%` : 'PLEASE LOOK STRAIGHT TO THE CAMERA';
+      if (!isFaceStraight) return 'PLEASE LOOK STRAIGHT TO THE CAMERA';
+      if (livenessEnabled) {
+        if (!backgroundLivenessPassed) return livenessMessage.toUpperCase();
+        return 'LIVENESS VERIFIED • SCAN NOW';
+      }
+      return `FACE READY ${detectionPercent}%`;
     }
     if (faceCountdown > 0 && touchlessEnabled) return `GET READY... ${faceCountdown}`;
     return 'LOOK AT THE CAMERA';
@@ -448,6 +467,15 @@ export default function FaceScanView({
           );
         })}
         <AnimatedReanimated.View style={[styles.detectionFaceBox, cameraVisionFaceDetected && styles.detectionFaceBoxActive, animatedFaceBoxStyle]} />
+        
+        <AnimatedReanimated.View style={[{ position: 'absolute' }, animatedInstructionCardStyle]}>
+          <View style={{ backgroundColor: 'rgba(0,0,0,0.6)', paddingHorizontal: 16, paddingVertical: 8, borderRadius: 20, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.3, shadowRadius: 3, elevation: 4 }}>
+            <Text style={{ color: '#fff', fontSize: 13, fontWeight: 'bold', textAlign: 'center', letterSpacing: 0.5 }}>
+              {instructionText}
+            </Text>
+          </View>
+        </AnimatedReanimated.View>
+
         {showTelemetry && (
           <AnimatedReanimated.View style={[styles.detectionStatusCard, animatedStatusCardStyle]}>
             <Text style={styles.detectionStatusText}>Horizontal: {yawLabel}</Text>
@@ -524,7 +552,9 @@ export default function FaceScanView({
           <Text style={styles.countdownText}>{faceCountdown}</Text>
         ) : null}
       </View>
-      <Text style={isRight ? styles.scanInstructionTextRight : styles.scanInstructionText}>{instructionText}</Text>
+      {(!showDetectionOverlay || !livenessEnabled) && (
+        <Text style={isRight ? styles.scanInstructionTextRight : styles.scanInstructionText}>{instructionText}</Text>
+      )}
       <Text style={isRight ? styles.faceHintTextRight : styles.faceHintText}>{hintText}</Text>
     </View>
   );
@@ -552,7 +582,7 @@ export default function FaceScanView({
               </View>
             ) : (!touchlessEnabled && (
               <View style={styles.footerButtons}>
-                <TouchableOpacity style={[styles.mainActionButton, isClockingOut ? styles.mainActionButtonClockOut : { backgroundColor: accentColor }]} onPress={onAttendance} disabled={isVerifying || isCapturingHardware}>
+                <TouchableOpacity style={[styles.mainActionButton, isClockingOut ? styles.mainActionButtonClockOut : { backgroundColor: accentColor }, (isVerifying || isCapturingHardware || isLivenessPending) && { opacity: 0.5, backgroundColor: '#9CA3AF' }]} onPress={onAttendance} disabled={isVerifying || isCapturingHardware || isLivenessPending}>
                   <Text style={styles.mainActionButtonText}>{isClockingOut ? 'CONFIRM CLOCK OUT' : 'CONFIRM CLOCK IN'}</Text>
                 </TouchableOpacity>
               </View>
@@ -587,7 +617,7 @@ export default function FaceScanView({
             <View style={styles.leftPanelFooter}>
               {showProcessingSpinner ? (
                 <View style={[styles.verifyingPillLeft, { backgroundColor: isThemeLight ? '#fff' : colors.background }]}><ActivityIndicator size="small" color={accentColor} /><Text style={[styles.verifyingPillTextLeft, { color: accentColor }]}>{scanStage === 'capturing' ? 'Capturing...' : isClockingOut ? 'Processing Logout...' : 'Verifying Identity...'}</Text></View>
-              ) : (!touchlessEnabled && <TouchableOpacity style={[styles.mainActionButtonLeft, isClockingOut ? styles.mainActionButtonLeftClockOut : [styles.mainActionButtonLeftClockIn, { backgroundColor: colors.accent }]]} onPress={onAttendance} disabled={isVerifying || isCapturingHardware}><Text style={[styles.mainActionButtonTextLeft, isClockingOut ? styles.mainActionButtonTextLeftClockOut : { color: '#fff' }]}>{isClockingOut ? 'CONFIRM CLOCK OUT' : 'CONFIRM CLOCK IN'}</Text></TouchableOpacity>)}
+              ) : (!touchlessEnabled && <TouchableOpacity style={[styles.mainActionButtonLeft, isClockingOut ? styles.mainActionButtonLeftClockOut : [styles.mainActionButtonLeftClockIn, { backgroundColor: colors.accent }], (isVerifying || isCapturingHardware || isLivenessPending) && { opacity: 0.5, backgroundColor: '#9CA3AF' }]} onPress={onAttendance} disabled={isVerifying || isCapturingHardware || isLivenessPending}><Text style={[styles.mainActionButtonTextLeft, isClockingOut ? styles.mainActionButtonTextLeftClockOut : { color: '#fff' }]}>{isClockingOut ? 'CONFIRM CLOCK OUT' : 'CONFIRM CLOCK IN'}</Text></TouchableOpacity>)}
             </View>
           </ScrollView>
         </SafeAreaView>

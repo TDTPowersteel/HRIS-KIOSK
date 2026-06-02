@@ -427,7 +427,7 @@ export default function Settings({ onBack }: Props) {
               attendance_location={backendSettings.attendance_location}
               saveBackendSettings={saveBackendSettings}
             />
-            <AdminAccessFeature saveBackendSettings={saveBackendSettings} />
+            {/* <AdminAccessFeature saveBackendSettings={saveBackendSettings} /> */}
             <OfflineRedundancyFeature isOnline={isOnline} />
           </View>
 

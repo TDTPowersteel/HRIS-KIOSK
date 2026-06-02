@@ -311,12 +311,26 @@ export function useAttendance() {
   const lastCameraVisionDetectedSent = useSharedValue(false);
   const frameCounter = useSharedValue(0);
   const lastFaceProcessedFrame = useSharedValue(0);
+  const [backgroundLivenessPassed, setBackgroundLivenessPassed] = useState(false);
+  const onBackgroundLivenessChange = Worklets.createRunOnJS((passed: boolean) => {
+    setBackgroundLivenessPassed(passed);
+  });
   // Last tracked face box from continuous detection — reused during capture to avoid calling detectFaces twice
   const lastTrackedFaceX = useSharedValue(0);
   const lastTrackedFaceY = useSharedValue(0);
   const lastTrackedFaceW = useSharedValue(0);
   const lastTrackedFaceH = useSharedValue(0);
   const hasTrackedFace = useSharedValue(false);
+
+  // PASSIVE LIVENESS HISTORY
+  const leftEyeHistory = useSharedValue<number[]>([0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]);
+  const rightEyeHistory = useSharedValue<number[]>([0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]);
+  const smileHistory = useSharedValue<number[]>([0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]);
+  const historyIndex = useSharedValue(0);
+  const livenessConsecutiveFrames = useSharedValue(0);
+  const consecutiveNoFaceFrames = useSharedValue(0);
+  const hasPassedPassiveLiveness = useSharedValue(false);
+  const isHumanDetected = useSharedValue(false);
 
   // State
   const [hasLocationPermission, setHasLocationPermission] = useState(false);
@@ -554,14 +568,19 @@ export function useAttendance() {
     faceProcessingRef.current = false;
     identityStatusRef.current = 'idle';
     livenessStatusRef.current = 'idle';
+    livenessScoreRef.current = null;
 
     // Reset liveness state machine
-    blinkState.value = 0;
+    consecutiveNoFaceFrames.value = 0;
+    hasPassedPassiveLiveness.value = false;
+    setBackgroundLivenessPassed(false);
+    cameraVisionAutoTriggeredRef.current = false;
+    consecutiveNoFaceFrames.value = 0;
     setLivenessMessage('Face the camera directly');
     workletPhase.value = 0;
 
     try { await AsyncStorage.multiRemove(['userId', 'username']); } catch { }
-  }, []);
+  }, [hasPassedPassiveLiveness, livenessConsecutiveFrames, consecutiveNoFaceFrames]);
 
   const refreshPendingSyncCount = useCallback(async () => {
     try {
@@ -1270,17 +1289,25 @@ export function useAttendance() {
     faceProcessingRef.current = true;
 
     if (livenessEnabled) {
-      // PHASE 1: Active Liveness (Detect blinking first)
-      livenessStatusRef.current = 'pending';
-      livenessScoreRef.current = null;
-      workletPhase.value = 2; // Trigger blinking check in worklet
-      setScanStage('verifying');
-      setLivenessMessage('Please Blink or Smile to verify');
+      if (hasPassedPassiveLiveness.value) {
+        livenessStatusRef.current = 'passed';
+        livenessScoreRef.current = 1.0;
+        await executeFaceVerification();
+      } else {
+        // Reject click instantly since background liveness is not passed yet
+        faceProcessingRef.current = false;
+        showModal(
+          'warning',
+          'Liveness check pending',
+          'Please blink or smile at the camera to verify you are a real person.',
+          2000
+        );
+        return;
+      }
     } else {
-      // Skip active liveness: start verifying face immediately
       await executeFaceVerification();
     }
-  }, [attendanceAction, touchlessEnabled, hasPermission, isLikelyConnectivityError, livenessEnabled, offlineModeEnabled, qrVerified, showModal, workletPhase, executeAttendanceRecording, cameraVisionFaceDetected, cameraVisionReadiness, logCameraVisionGateSkip, executeFaceVerification]);
+  }, [attendanceAction, touchlessEnabled, hasPermission, isLikelyConnectivityError, livenessEnabled, offlineModeEnabled, qrVerified, showModal, workletPhase, executeAttendanceRecording, cameraVisionFaceDetected, cameraVisionReadiness, logCameraVisionGateSkip, executeFaceVerification, hasPassedPassiveLiveness]);
 
   const onFaceDetectedForIdentity = Worklets.createRunOnJS(() => {
     if (!touchlessEnabledRef.current || modalVisibleRef.current || !qrVerified || countdownRef.current > 0 || countdownActive || faceProcessingRef.current || isVerifying) return;
@@ -1426,28 +1453,42 @@ export function useAttendance() {
     try {
       // Run detection synchronously on the frame processor main thread to prevent hardware buffer lock errors
       const faces = detectFaces(frame);
-        const detectedFace = selectBestDetectedFace(faces, frame.width, frame.height);
-        const recognitionFace = selectBestRecognitionFace(faces, frame.width, frame.height);
-        const trackedFace = detectedFace ?? recognitionFace;
-
-        // Store the best face box in shared values for the capture block to reuse
-        if (trackedFace) {
-          lastTrackedFaceX.value = trackedFace.box.x;
-          lastTrackedFaceY.value = trackedFace.box.y;
-          lastTrackedFaceW.value = trackedFace.box.width;
-          lastTrackedFaceH.value = trackedFace.box.height;
-          hasTrackedFace.value = true;
-        }
-
-        if (workletPhase.value === 0) {
-          const isUsable = detectedFace && isFaceBoxUsableForRecognition(detectedFace.box, detectedFace.sourceFace);
-          if (isUsable) {
-            stableFaceFrames.value = Math.min(stableFaceFrames.value + 1, CAMERA_VISION_STABLE_FACE_FRAMES);
-          } else {
-            if (stableFaceFrames.value !== 0) {
-              stableFaceFrames.value = Math.max(0, stableFaceFrames.value - 1);
-            }
+      if (faces.length === 0) {
+        consecutiveNoFaceFrames.value += 1;
+        if (consecutiveNoFaceFrames.value >= 15) {
+          if (hasPassedPassiveLiveness.value) {
+            hasPassedPassiveLiveness.value = false;
+            onBackgroundLivenessChange(false);
           }
+          blinkState.value = 0;
+          livenessConsecutiveFrames.value = 0;
+        }
+      } else {
+        consecutiveNoFaceFrames.value = 0;
+      }
+
+      const detectedFace = selectBestDetectedFace(faces, frame.width, frame.height);
+      const recognitionFace = selectBestRecognitionFace(faces, frame.width, frame.height);
+      const trackedFace = detectedFace ?? recognitionFace;
+
+      // Store the best face box in shared values for the capture block to reuse
+      if (trackedFace) {
+        lastTrackedFaceX.value = trackedFace.box.x;
+        lastTrackedFaceY.value = trackedFace.box.y;
+        lastTrackedFaceW.value = trackedFace.box.width;
+        lastTrackedFaceH.value = trackedFace.box.height;
+        hasTrackedFace.value = true;
+      }
+
+      if (workletPhase.value === 0) {
+        const isUsable = detectedFace && isFaceBoxUsableForRecognition(detectedFace.box, detectedFace.sourceFace);
+        if (isUsable) {
+          stableFaceFrames.value = Math.min(stableFaceFrames.value + 1, CAMERA_VISION_STABLE_FACE_FRAMES);
+        } else {
+          if (stableFaceFrames.value !== 0) {
+            stableFaceFrames.value = Math.max(0, stableFaceFrames.value - 1);
+          }
+        }
 
           if (detectedFace) {
             if (sharedFaceEngineIsCameraVision.value) {
@@ -1502,9 +1543,7 @@ export function useAttendance() {
                 );
               }
             }
-            if (stableFaceFrames.value >= CAMERA_VISION_STABLE_FACE_FRAMES) {
-              onFaceDetectedForIdentity();
-            }
+            // Phase 0 completed, waiting for JS thread to trigger handleAttendance and set Phase 2
           } else {
             if (stableFaceFrames.value !== 0) {
               stableFaceFrames.value = Math.max(0, stableFaceFrames.value - 1);
@@ -1525,66 +1564,64 @@ export function useAttendance() {
           }
         }
 
-        if (faces.length > 0) {
-          const face = faces[0];
-          if (workletPhase.value === 2) {
-            // PHASE 2: Active Liveness (Blink or Smile)
-            const leftOpenProb = face.leftEyeOpenProbability ?? 1;
-            const rightOpenProb = face.rightEyeOpenProbability ?? 1;
-            const smileProb = face.smilingProbability ?? 0;
-            const isEyesOpen = leftOpenProb > 0.4 && rightOpenProb > 0.4;
-            const isEyesClosed = leftOpenProb < 0.2 && rightOpenProb < 0.2;
-            const isSmiling = smileProb > 0.7;
-            const isNotSmiling = smileProb < 0.3;
-            if (blinkState.value === 0 && isEyesOpen) {
-              if (isNotSmiling) {
-                blinkState.value = 1; 
-                updateLivenessMessage('Please Blink or Smile to verify');
-              } else {
-                // If they are already smiling when they walk up, they MUST blink to prove a physical action
-                blinkState.value = 10;
-                updateLivenessMessage('Please Blink to verify');
+        if (workletPhase.value === 0 || workletPhase.value === 2) {
+            if (faces.length > 0) {
+              const faceRaw = faces[0];
+              const leftEye = typeof faceRaw?.leftEyeOpenProbability === 'number' ? faceRaw.leftEyeOpenProbability : 0.5;
+              const rightEye = typeof faceRaw?.rightEyeOpenProbability === 'number' ? faceRaw.rightEyeOpenProbability : 0.5;
+              
+              const isEyesOpen = leftEye > 0.6 && rightEye > 0.6;
+              const isEyesClosed = leftEye < 0.3 && rightEye < 0.3;
+
+              if (!hasPassedPassiveLiveness.value) {
+                if (blinkState.value === 0) {
+                  if (isEyesOpen) {
+                    livenessConsecutiveFrames.value += 1;
+                    if (livenessConsecutiveFrames.value >= 3) {
+                      blinkState.value = 1; // Ready
+                      livenessConsecutiveFrames.value = 0;
+                    }
+                  } else {
+                    livenessConsecutiveFrames.value = 0;
+                  }
+                  if (workletPhase.value === 0 && sharedLivenessEnabled.value) updateLivenessMessage('Look straight with a neutral face');
+                } else if (blinkState.value === 1) {
+                  if (isEyesClosed) {
+                    livenessConsecutiveFrames.value += 1;
+                    if (livenessConsecutiveFrames.value >= 1) { 
+                      blinkState.value = 2; // Blink started
+                      livenessConsecutiveFrames.value = 0;
+                    }
+                  } else {
+                    livenessConsecutiveFrames.value = 0;
+                    if (workletPhase.value === 0 && sharedLivenessEnabled.value) updateLivenessMessage('Please Blink');
+                  }
+                } else if (blinkState.value === 2) {
+                  if (isEyesOpen) {
+                    livenessConsecutiveFrames.value += 1;
+                    if (livenessConsecutiveFrames.value >= 2) { 
+                      blinkState.value = 3; // Blink complete
+                      hasPassedPassiveLiveness.value = true;
+                      onBackgroundLivenessChange(true);
+                    }
+                  } else {
+                    livenessConsecutiveFrames.value = Math.max(0, livenessConsecutiveFrames.value - 1);
+                    if (workletPhase.value === 0 && sharedLivenessEnabled.value) updateLivenessMessage('Open your eyes');
+                  }
+                }
               }
-            } else if (blinkState.value === 1) {
-              if (isEyesClosed) {
-                blinkState.value = 2; // Blink started
-                updateLivenessMessage('Open your eyes');
-              } else if (isSmiling) {
-                blinkState.value = 3; // Genuine new smile detected
-                updateLivenessMessage('Verified!');
-                onActiveLivenessPassed(smileProb);
+
+              if (hasPassedPassiveLiveness.value) {
+                 if (workletPhase.value === 0 && sharedLivenessEnabled.value) updateLivenessMessage('Liveness passed! Ready to verify.');
               }
-            } else if (blinkState.value === 10) {
-              if (isEyesClosed) {
-                blinkState.value = 2; // Blink started
-                updateLivenessMessage('Open your eyes');
-              } else if (isNotSmiling) {
-                // They stopped smiling, reset baseline to 1 so they can now smile or blink
-                blinkState.value = 1;
-                updateLivenessMessage('Please Blink or Smile to verify');
-              }
-            } else if (blinkState.value === 2) {
-              if (isEyesOpen) {
-                blinkState.value = 3; // Blink completed
-                updateLivenessMessage('Verified!');
-                // For a blink, "accuracy" is how deep the blink was (lowest eye prob seen)
-                // Since we're here, we already passed the threshold. We'll send a high confidence score.
-                const blinkDepth = 1 - Math.min(leftOpenProb, rightOpenProb);
-                onActiveLivenessPassed(blinkDepth);
-              }
+            } else {
+               if (workletPhase.value === 0 && sharedLivenessEnabled.value) updateLivenessMessage('Face the camera directly');
             }
-          }
-        } else {
-          // Reset if face is lost
-          if (workletPhase.value === 2 && blinkState.value !== 0 && blinkState.value !== 3) {
-            blinkState.value = 0;
-            updateLivenessMessage('Face the camera directly');
-          }
         }
       } finally {
         isProcessingFace.value = false;
       }
-  }, [detectFaces, sharedTouchlessEnabled, sharedFaceEngineIsCameraVision, onFaceDetectedForIdentity, onTouchlessFaceLost, onCameraVisionDetectionProgress, onActiveLivenessPassed, updateLivenessMessage, isCapturingHardwareRef, workletPhase, blinkState, isProcessingFace, stableFaceFrames, lastCameraVisionReadinessSent, lastCameraVisionDetectedSent, frameCounter, lastFaceProcessedFrame, lastTrackedFaceX, lastTrackedFaceY, lastTrackedFaceW, lastTrackedFaceH, hasTrackedFace]);
+  }, [detectFaces, sharedTouchlessEnabled, sharedFaceEngineIsCameraVision, onFaceDetectedForIdentity, onTouchlessFaceLost, onCameraVisionDetectionProgress, onBackgroundLivenessChange, updateLivenessMessage, isCapturingHardwareRef, workletPhase, blinkState, isProcessingFace, stableFaceFrames, lastCameraVisionReadinessSent, lastCameraVisionDetectedSent, frameCounter, lastFaceProcessedFrame, lastTrackedFaceX, lastTrackedFaceY, lastTrackedFaceW, lastTrackedFaceH, hasTrackedFace, consecutiveNoFaceFrames, hasPassedPassiveLiveness, sharedLivenessEnabled]);
 
   // QR scanner
   const handleBarcodeScanned = async (event: any) => {
@@ -1836,6 +1873,10 @@ export function useAttendance() {
       cameraVisionReadiness >= autoReadinessThreshold &&
       !cameraVisionAutoTriggeredRef.current
     ) {
+      if (livenessEnabled && !backgroundLivenessPassed) {
+        return; // Gated: wait for liveness
+      }
+
       cameraVisionAutoTriggeredRef.current = true;
       setScanStage('capturing');
       handleAttendance();
@@ -1851,6 +1892,8 @@ export function useAttendance() {
   }, [
     cameraVisionFaceDetected,
     cameraVisionReadiness,
+    backgroundLivenessPassed,
+    livenessEnabled,
     handleAttendance,
     isVerifying,
     qrVerified,
@@ -1981,6 +2024,6 @@ export function useAttendance() {
     touchlessEnabled, offlineModeEnabled, livenessEnabled, pendingSyncCount,
     scanStage, cameraVisionFaceDetected, cameraVisionReadiness, cameraVisionFaceBox, cameraVisionAllFaces, cameraVisionFaceTelemetry, successAnimationTick,
     showResultModal, modalType, modalTitle, modalMessage: '', modalHint, livenessMessage,
-    closeModal, handleAttendance, resetAttendanceFlow,
+    closeModal, handleAttendance, resetAttendanceFlow, backgroundLivenessPassed,
   };
 }
