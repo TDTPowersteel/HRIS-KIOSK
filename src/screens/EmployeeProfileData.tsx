@@ -682,9 +682,29 @@ export default function EmployeeProfileData({ onBack }: Props) {
           )}
 
           {sortedAndFilteredEmployees.length === 0 && !isBootstrapping && !isLoading && (
-            <View style={styles.emptyContainer}>
-              <Text style={[styles.emptyText, { color: colors.textSecondary }]}>No matching employees found.</Text>
-            </View>
+            !lastUpdatedAt ? (
+              <View style={styles.notSyncedContainer}>
+                <MaterialCommunityIcons name="database-sync" size={80} color={colors.textSecondary} style={{ marginBottom: 16 }} />
+                <Text style={[styles.notSyncedText, { color: colors.text }]}>Directory Not Synced Yet</Text>
+                <Text style={[styles.notSyncedSubtext, { color: colors.textSecondary }]}>You need to sync to load employee records.</Text>
+                <Pressable
+                  onPress={handleManualRefresh}
+                  style={({ pressed }) => [
+                    styles.syncNowButton,
+                    {
+                      backgroundColor: colors.accent,
+                      opacity: pressed ? 0.85 : 1,
+                    }
+                  ]}
+                >
+                  <Text style={styles.syncNowButtonText}>SYNC NOW</Text>
+                </Pressable>
+              </View>
+            ) : (
+              <View style={styles.emptyContainer}>
+                <Text style={[styles.emptyText, { color: colors.textSecondary }]}>No matching employees found.</Text>
+              </View>
+            )
           )}
         </ScrollView>
       )}
@@ -940,5 +960,40 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '800',
     letterSpacing: 1,
+  },
+  notSyncedContainer: {
+    flex: 1,
+    paddingTop: 100,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 24,
+  },
+  notSyncedText: {
+    fontSize: 20,
+    fontWeight: '800',
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  notSyncedSubtext: {
+    fontSize: 14,
+    fontWeight: '600',
+    marginBottom: 24,
+    textAlign: 'center',
+  },
+  syncNowButton: {
+    paddingHorizontal: 32,
+    paddingVertical: 16,
+    borderRadius: 14,
+    shadowColor: Colors.powerOrange,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 10,
+    elevation: 6,
+  },
+  syncNowButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '900',
+    letterSpacing: 0.5,
   },
 });
