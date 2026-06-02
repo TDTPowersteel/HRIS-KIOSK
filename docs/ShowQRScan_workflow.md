@@ -36,10 +36,10 @@ This is the entry point. Its primary responsibilities are:
 ### 2. Core Logic Hook (`useAttendance.ts`)
 This custom hook holds the entire state machine and side-effects. It keeps the UI components purely presentational.
 - **QR Processing:** Configures the Vision Camera `useCodeScanner`. Validates the scanned QR via the `/resolve_qr.php` backend endpoint (or offline cache).
-- **Liveness Detection:** Configures a `useFrameProcessor` (running on UI thread via Worklets) that leverages `react-native-vision-camera-face-detector` to ensure the user is present (e.g., checking if eyes are open).
-- **Face Verification:** Once liveness triggers, takes two photos with a 600ms burst delay (to prevent frame duplication on slower tablet hardware) and submits them via multipart/form-data to `/verify.php`.
+- **Liveness Detection:** Configures a `useFrameProcessor` (running on UI thread via Worklets) that leverages `react-native-vision-camera-face-detector` to ensure the user is present and verified via the Active Eye Blink state machine.
+- **Face Verification:** Once stability and blink liveness pass, captures the face, applies dynamic crop padding, and runs on-device ONNX inference to generate a 512-dim embedding. Embedding comparison is executed online via `/verify_embedding.php` or offline via `verifyFaceLocal()`.
 - **Attendance Recording:** Submits verified clock-ins/outs to `/record_attendance.php`, or saves them to an Async Queue if Offline Mode is active.
-- **Touchless Mode:** Handles the timer-based auto-clock-out for employees that just want to scan a QR to logout without touching the screen.
+- **Touchless Mode:** Automatically triggers face capture and logs attendance without user touch once face readiness reaches $\ge 65\%$ and liveness is passed.
 
 ### 3. Step 1: QR Code Scanner (`QRScanView.tsx`)
 - Pure UI component. 
@@ -64,12 +64,13 @@ This custom hook holds the entire state machine and side-effects. It keeps the U
    - The user's ID, Name, Role, Profile Picture, and current Clock-In Status are cached in local state.
    - `qrVerified` is set to `true`.
 3. **Face Scan (Step 2):** The UI seamlessly transitions to `FaceScanView`.
-   - A 3-second countdown begins.
-   - The Frame Processor actively hunts for a face and monitors for liveness (eye blinks/open probabilities).
+   - The frame processor scans for face box stability (readiness).
+   - In standard mode, a countdown begins; in touchless mode, the countdown is bypassed.
 4. **Verification & Liveness:**
-   - Once liveness is confirmed by the Frame Processor, `onLivenessDetected` is triggered.
-   - The app plays a shutter sound and captures two distinct photos.
-   - The photos are sent to the `Face++ API` via the PHP backend to confirm the user's identity matches the profile picture bound to the scanned QR code.
+   - The user completes the Active Eye Blink sequence (State 0 → 3) to pass liveness.
+   - Once liveness is passed and stability checks are met, a high-resolution photo is captured and cropped natively.
+   - Preprocessing transforms pixels to a CHW Float32 tensor, and ONNX Runtime infers a 512-dim embedding.
+   - This embedding is compared to stored templates online via `/verify_embedding.php` or locally.
 5. **Completion:**
    - If successful, the attendance is recorded (Clock In or Clock Out) and the `ResultModal` displays a success message.
    - State is reset automatically, bringing the kiosk back to Step 1 (`QRScanView`) for the next employee in line.
