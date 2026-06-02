@@ -7,14 +7,14 @@ import * as ImageManipulator from 'expo-image-manipulator';
 import { useFaceDetector } from 'react-native-vision-camera-face-detector';
 import { Worklets, useSharedValue } from 'react-native-worklets-core';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Alert, Animated, Platform, ToastAndroid, useWindowDimensions } from 'react-native';
+import { Alert, Animated, Image as RNImage, Platform, ToastAndroid, useWindowDimensions } from 'react-native';
 import { BACKEND_URL } from '../../config/backend';
 import { enqueueOfflineAttendance, getOfflineAttendanceQueue } from '../../utils/offlineAttendance';
 import { resolveOfflineUserFromQr, upsertOfflineUserCacheUser } from '../../utils/offlineUsers';
 import { useTheme } from '../../config/theme';
 import { compareEmbeddings, compareMultiAngleEmbeddings, isMatch, MODEL_CONFIG } from '../../utils/face-embedding';
 import { loadFaceModel, getEmbedding, isModelLoaded } from '../../faceEngine/model';
-import { rgbaBufferToCHWTensor } from '../../faceEngine/preprocess';
+import { rgbaBufferToCHWTensor, prepareEmbeddingInput } from '../../faceEngine/preprocess';
 import {
   ATTENDANCE_SESSIONS_KEY,
   TOUCHLESS_SETTING_KEY,
@@ -274,8 +274,8 @@ export function useAttendance() {
   const backDevice = useCameraDevice('back');
   const device = frontDevice ?? backDevice;
   const cameraFormat = useCameraFormat(device, [
-    { photoResolution: 'max' },
-    { videoResolution: 'max' }
+    { photoResolution: { width: 1920, height: 1080 } },
+    { videoResolution: { width: 1920, height: 1080 } }
   ]);
   const cameraRef = useRef<Camera>(null);
 
@@ -690,6 +690,25 @@ export function useAttendance() {
   }, [offlineModeEnabled, isLikelyConnectivityError, showOfflineToast]);
 
 
+  // Helper to run ONNX inference and normalize the output
+  const runOnnxAndNormalize = async (tensor: Float32Array): Promise<number[]> => {
+    const raw = await getEmbedding(tensor);
+    if (raw.length < 64) throw new Error('Embedding output is too small');
+
+    // L2 Normalize
+    const normalized: number[] = Array.from(raw);
+    const norm = Math.sqrt(normalized.reduce((sum, val) => sum + val * val, 0));
+    if (norm > 0) {
+      for (let i = 0; i < normalized.length; i++) normalized[i] /= norm;
+    }
+
+    if (!isValidEmbeddingVector(normalized)) {
+      throw new Error('Captured face data is invalid. Please center your face and try again.');
+    }
+
+    return normalized;
+  };
+
   // Photo-based embedding capture: takes a photo, decodes JPEG, runs buffalo_sc ONNX inference.
   const captureEmbeddingFromPhoto = useCallback(async (): Promise<number[]> => {
     if (!cameraRef.current) throw new Error('Camera not ready');
@@ -710,15 +729,17 @@ export function useAttendance() {
     let imageToProcess = `file://${photo.path}`;
 
     if (faceBox) {
-      // 1. Resolve actual decoded dimensions from ImageManipulator
+      // Resolve actual decoded dimensions natively (avoids full ImageManipulator decode)
       let photoW = photo.width;
       let photoH = photo.height;
       try {
-        const info = await ImageManipulator.manipulateAsync(imageToProcess, [], {});
-        photoW = info.width;
-        photoH = info.height;
+        const [resolvedW, resolvedH] = await new Promise<[number, number]>((resolve, reject) => {
+          RNImage.getSize(imageToProcess, (w, h) => resolve([w, h]), reject);
+        });
+        photoW = resolvedW;
+        photoH = resolvedH;
       } catch (err) {
-        console.warn('[CameraVision] Failed to get image dimensions:', err);
+        console.warn('[CameraVision] Failed to get image dimensions, using photo metadata:', err);
       }
       
       // Determine if the frame is rotated relative to the physical photo
@@ -795,54 +816,42 @@ export function useAttendance() {
               { crop: { originX, originY, width: safeSize, height: safeSize } },
               { resize: { width: 112, height: 112 } }
             ],
-            { format: ImageManipulator.SaveFormat.JPEG, compress: 0.95 }
+            { format: ImageManipulator.SaveFormat.JPEG, compress: 0.95, base64: true }
           );
           imageToProcess = manipResult.uri;
+          if (manipResult.base64) {
+            const tensor = prepareEmbeddingInput(manipResult.base64);
+            return await runOnnxAndNormalize(tensor);
+          }
         } catch (e) {
-          console.warn('[CameraVision] Native crop failed:', e);
+          console.warn('[CameraVision] Native crop failed, falling back to full-frame resize:', e);
         }
       }
-    } else {
-      try {
-        const manipResult = await ImageManipulator.manipulateAsync(
-          imageToProcess,
-          [{ resize: { width: 112 } }],
-          { format: ImageManipulator.SaveFormat.JPEG, compress: 0.9 }
-        );
-        imageToProcess = manipResult.uri;
-      } catch (e) {}
     }
 
-    // Read JPEG file and decode to raw RGBA pixels
+    // Fallback: no faceBox or crop failed — resize full image to 112px and use base64 path
+    try {
+      const fallbackResult = await ImageManipulator.manipulateAsync(
+        imageToProcess,
+        [{ resize: { width: 112 } }],
+        { format: ImageManipulator.SaveFormat.JPEG, compress: 0.9, base64: true }
+      );
+      if (fallbackResult.base64) {
+        const tensor = prepareEmbeddingInput(fallbackResult.base64);
+        return await runOnnxAndNormalize(tensor);
+      }
+      imageToProcess = fallbackResult.uri;
+    } catch (e) {
+      console.warn('[CameraVision] Fallback resize failed:', e);
+    }
+
+    // Last resort: fetch file and decode via jpeg-js (only reached if base64 paths all failed)
     const response = await fetch(imageToProcess);
     const jpegBuffer = await response.arrayBuffer();
     const jpegData = new Uint8Array(jpegBuffer);
-    console.log(`[CameraVision] JPEG size: ${jpegData.length} bytes`);
-
     const decoded = jpeg.decode(jpegData, { useTArray: true, formatAsRGBA: true });
-    console.log(`[CameraVision] Decoded: ${decoded.width}x${decoded.height}, RGBA pixels: ${decoded.data.length} bytes`);
-
-    // Convert to CHW Float32 tensor for buffalo_sc ONNX model
     const tensor = rgbaBufferToCHWTensor(decoded.data, decoded.width, decoded.height, undefined);
-    console.log(`[CameraVision] CHW Tensor created: ${tensor.byteLength} bytes (expected: ${112 * 112 * 3 * 4})`);
-
-    // Run buffalo_sc ONNX inference → 512-dim embedding
-    const raw = await getEmbedding(tensor);
-    if (raw.length < 64) throw new Error('Embedding output is too small');
-
-    // L2 Normalize (must match HRIS-APP registration)
-    const normalized: number[] = Array.from(raw);
-    const norm = Math.sqrt(normalized.reduce((sum, val) => sum + val * val, 0));
-    if (norm > 0) {
-      for (let i = 0; i < normalized.length; i++) normalized[i] /= norm;
-    }
-
-    if (!isValidEmbeddingVector(normalized)) {
-      throw new Error('Captured face data is invalid. Please center your face and try again.');
-    }
-
-    console.log(`[CameraVision] Embedding captured: ${normalized.length} dimensions (buffalo_sc)`);
-    return normalized;
+    return await runOnnxAndNormalize(tensor);
   }, [cameraVisionFaceBox]);
 
   const verifyFaceViaAPI = useCallback(async (liveEmbedding: number[]): Promise<{ ok: boolean; verified: boolean; message?: string; hint?: string; similarity?: number; angle_count?: number; best_angle_index?: number; agreeing_angles?: number } | null> => {

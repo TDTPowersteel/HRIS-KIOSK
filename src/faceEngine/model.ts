@@ -22,9 +22,16 @@ export async function loadFaceModel(): Promise<void> {
   }
 
   const cleanPath = file.uri.replace('file://', '');
-  session = await InferenceSession.create(cleanPath);
+  session = await InferenceSession.create(cleanPath, {
+    executionProviders: Platform.OS === 'ios'
+      ? ['coreml', 'xnnpack', 'cpu']
+      : ['xnnpack', 'cpu'],
+    graphOptimizationLevel: 'all',
+    enableCpuMemArena: true,
+    enableMemPattern: true,
+  });
 
-  console.log('[FaceEngine] buffalo_sc ONNX model loaded');
+  console.log(`[FaceEngine] buffalo_sc ONNX model loaded (${Platform.OS === 'ios' ? 'CoreML→' : ''}XNNPACK→CPU)`);
 }
 
 export function isModelLoaded(): boolean {
