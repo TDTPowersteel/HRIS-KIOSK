@@ -58,6 +58,7 @@ export default function AttendanceScanner({ onBack, onOpenOffline }: AttendanceP
           device={state.device}
           codeScanner={state.codeScanner}
           flashAnim={state.flashAnim}
+          scanLineAnim={state.scanLineAnim}
           formattedTime={state.formattedTime}
           formattedDate={state.formattedDate}
           isQrLoading={state.isQrLoading}
@@ -75,7 +76,6 @@ export default function AttendanceScanner({ onBack, onOpenOffline }: AttendanceP
           cameraRef={state.cameraRef}
           frameProcessor={state.frameProcessor}
           flashAnim={state.flashAnim}
-          scanLineAnim={state.scanLineAnim}
           formattedTime={state.formattedTime}
           formattedDate={state.formattedDate}
           isVerifying={state.isVerifying}

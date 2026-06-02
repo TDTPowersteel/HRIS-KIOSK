@@ -9,6 +9,7 @@ type Props = {
   device: CameraProps['device'];
   codeScanner: any;
   flashAnim: Animated.Value;
+  scanLineAnim: Animated.Value;
   formattedTime: string;
   formattedDate: string;
   isQrLoading: boolean;
@@ -24,6 +25,7 @@ export default function QRScanView({
   device,
   codeScanner,
   flashAnim,
+  scanLineAnim,
   formattedTime,
   formattedDate,
   isQrLoading,
@@ -83,7 +85,9 @@ export default function QRScanView({
             <MaterialCommunityIcons name="check-circle" size={100} color="#4ade80" />
           ) : isQrLoading ? (
             <ActivityIndicator size={80} color="#F27121" />
-          ) : null}
+          ) : (
+            <Animated.View style={[styles.scanLine, { width: SCAN_BOX_SIZE, position: 'absolute', top: 0, transform: [{ translateY: scanLineAnim.interpolate({ inputRange: [0, 1], outputRange: [0, SCAN_BOX_SIZE - 4] }) }] }]} />
+          )}
         </View>
       </View>
 

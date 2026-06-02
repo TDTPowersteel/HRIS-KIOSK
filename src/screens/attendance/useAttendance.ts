@@ -1818,16 +1818,19 @@ export function useAttendance() {
     return () => { if (snapSound) snapSound.unloadAsync(); };
   }, []);
 
-  useEffect(() => { setIsLoading(false); }, []);
-
   useEffect(() => {
-    if (qrVerified && !isVerifying) {
+    if (!qrVerified) {
       Animated.loop(Animated.sequence([
         Animated.timing(scanLineAnim, { toValue: 1, duration: 2000, useNativeDriver: true }),
         Animated.timing(scanLineAnim, { toValue: 0, duration: 2000, useNativeDriver: true }),
       ])).start();
-    } else { scanLineAnim.setValue(0); }
-  }, [qrVerified, isVerifying, scanLineAnim]);
+    } else { 
+      scanLineAnim.stopAnimation();
+      scanLineAnim.setValue(0); 
+    }
+  }, [qrVerified, scanLineAnim]);
+
+  useEffect(() => { setIsLoading(false); }, []);
 
   useEffect(() => {
     if (!countdownActive || !qrVerified || isVerifying) return;

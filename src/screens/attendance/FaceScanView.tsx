@@ -27,7 +27,6 @@ type Props = {
   cameraRef: React.RefObject<Camera | null>;
   frameProcessor: any;
   flashAnim: Animated.Value;
-  scanLineAnim: Animated.Value;
   formattedTime: string;
   formattedDate: string;
   isVerifying: boolean;
@@ -63,7 +62,6 @@ export default function FaceScanView({
   cameraRef,
   frameProcessor,
   flashAnim,
-  scanLineAnim,
   formattedTime,
   formattedDate,
   isVerifying,
@@ -151,7 +149,8 @@ export default function FaceScanView({
         height: overlayWidth,
         top: (overlayHeight - overlayWidth) / 2,
         left: (overlayWidth - overlayHeight) / 2,
-        transform: [{ rotate: '90deg' }]
+        transform: [{ rotate: '90deg' }],
+        overflow: 'hidden' as const
       };
     } else if (orientation === ScreenOrientation.Orientation.LANDSCAPE_RIGHT) {
       return {
@@ -160,10 +159,11 @@ export default function FaceScanView({
         height: overlayWidth,
         top: (overlayHeight - overlayWidth) / 2,
         left: (overlayWidth - overlayHeight) / 2,
-        transform: [{ rotate: '-90deg' }]
+        transform: [{ rotate: '-90deg' }],
+        overflow: 'hidden' as const
       };
     } else if (orientation === ScreenOrientation.Orientation.PORTRAIT_DOWN) {
-      return [styles.fullScreenCamera, { transform: [{ rotate: '180deg' }] }];
+      return [styles.fullScreenCamera, { transform: [{ rotate: '180deg' }], overflow: 'hidden' as const }];
     }
     return styles.fullScreenCamera;
   };
@@ -317,12 +317,6 @@ export default function FaceScanView({
       top: animatedFaceBoxTop.value,
       width: animatedFaceBoxWidth.value,
       height: animatedFaceBoxHeight.value,
-      position: 'absolute',
-      borderWidth: 1.0,
-      borderRadius: 0,
-      borderColor: '#ffffff',
-      borderStyle: 'solid',
-      backgroundColor: 'transparent',
     };
   });
 
@@ -466,7 +460,12 @@ export default function FaceScanView({
             />
           );
         })}
-        <AnimatedReanimated.View style={[styles.detectionFaceBox, cameraVisionFaceDetected && styles.detectionFaceBoxActive, animatedFaceBoxStyle]} />
+        {(() => {
+          const isFaceReady = livenessEnabled ? backgroundLivenessPassed : (detectionPercent === 100);
+          return (
+            <AnimatedReanimated.View style={[styles.detectionFaceBox, (cameraVisionFaceDetected && isFaceReady) && styles.detectionFaceBoxActive, animatedFaceBoxStyle]} />
+          );
+        })()}
         
         <AnimatedReanimated.View style={[{ position: 'absolute' }, animatedInstructionCardStyle]}>
           <View style={{ backgroundColor: 'rgba(0,0,0,0.6)', paddingHorizontal: 16, paddingVertical: 8, borderRadius: 20, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.3, shadowRadius: 3, elevation: 4 }}>
@@ -539,9 +538,6 @@ export default function FaceScanView({
         <View style={[styles.corner, styles.cornerTopRight]} />
         <View style={[styles.corner, styles.cornerBottomLeft]} />
         <View style={[styles.corner, styles.cornerBottomRight]} />
-        {!isVerifying && !isCapturingHardware && (
-          <Animated.View style={[styles.scanLine, { transform: [{ translateY: scanLineAnim.interpolate({ inputRange: [0, 1], outputRange: [0, 240] }) }] }]} />
-        )}
         {scanStage === 'success' ? (
           <Animated.View style={[styles.successIconWrap, { transform: [{ scale: successScale }] }]}>
             <MaterialCommunityIcons name="check-circle" size={118} color="#4ade80" />
@@ -562,7 +558,9 @@ export default function FaceScanView({
   if (!isLandscape) {
     return (
       <View style={styles.portraitFaceContainer} onLayout={handleOverlayLayout}>
-        <Camera ref={cameraRef} style={getDynamicCameraStyle()} device={device} format={cameraFormat} isActive={true} photo={true} pixelFormat="yuv" frameProcessor={frameProcessor} androidPreviewViewType="texture-view" outputOrientation="device" resizeMode="cover" />
+        <View style={getDynamicCameraStyle()}>
+          <Camera ref={cameraRef} style={styles.fullScreenCamera} device={device} format={cameraFormat} isActive={true} photo={true} pixelFormat="yuv" frameProcessor={frameProcessor} androidPreviewViewType="texture-view" outputOrientation="device" resizeMode="cover" />
+        </View>
         <Animated.View style={[styles.snapFlash, { opacity: flashAnim }]} pointerEvents="none" />
         <View style={styles.cameraTintLight} pointerEvents="none" />
         {renderDetectionOverlay()}
@@ -595,18 +593,17 @@ export default function FaceScanView({
 
   return (
     <View style={styles.splitScreenContainer}>
-      <View style={[styles.leftPanel, { backgroundColor: profileBgColor }]}>
+      <View style={[styles.employeeDetailPanel, { backgroundColor: profileBgColor }]}>
         <SafeAreaView style={styles.panelSafeArea} edges={['top', 'left', 'bottom']}>
           <ScrollView contentContainerStyle={{ flexGrow: 1, justifyContent: 'space-between' }} showsVerticalScrollIndicator={false}>
             <View>
-              <View style={styles.leftPanelHeader}>
+              <View style={styles.employeeDetailPanelHeader}>
                 <TouchableOpacity onPress={onBack} style={[styles.headerIconButtonLight, { backgroundColor: isThemeLight ? '#fff' : colors.background }, showProcessingSpinner && { opacity: 0.5 }]} disabled={showProcessingSpinner}><MaterialCommunityIcons name="chevron-left" size={28} color={iconColor} /></TouchableOpacity>
                 <TouchableOpacity onPress={onOpenOffline} style={[styles.headerIconButtonLight, styles.marginLeft10, { backgroundColor: isThemeLight ? '#fff' : colors.background }, showProcessingSpinner && { opacity: 0.5 }]} disabled={showProcessingSpinner}><MaterialCommunityIcons name="history" size={22} color={iconColor} />{pendingSyncCount > 0 && <View style={styles.headerSyncBadge} />}</TouchableOpacity>
               </View>
               <View style={styles.profileInfoContainer}>
                 <View style={styles.profileImageContainer}>
                   {selectedUser?.profile_picture ? <Image source={{ uri: selectedUser.profile_picture }} style={[styles.profileImage, { borderColor: portraitBorderColor }]} /> : <View style={[styles.profileImagePlaceholder, { backgroundColor: placeholderBg, borderColor: portraitBorderColor }]}><MaterialCommunityIcons name="account" size={100} color={iconColor} /></View>}
-                  {!isVerifying && !isCapturingHardware && <View style={styles.verifiedBadge}><MaterialCommunityIcons name="check-circle" size={32} color="#4ade80" /></View>}
                 </View>
                 <Text style={[styles.profileName, { color: nameTextColor }]}>{selectedUser?.name || selectedUser?.username || 'Employee'}</Text>
                 <Text style={[styles.profileRole, { color: roleTextColor }]}>{selectedUser?.role || 'Staff Member'}</Text>
@@ -614,7 +611,7 @@ export default function FaceScanView({
                 {isClockingOut && clockInTime ? <View style={[styles.clockInTimeContainer, { backgroundColor: isThemeLight ? 'rgba(0,0,0,0.05)' : 'rgba(0,0,0,0.2)' }]}><MaterialCommunityIcons name="clock-outline" size={18} color={roleTextColor} /><Text style={[styles.clockInTimeText, { color: roleTextColor }]}>Clocked In at: {clockInTime}</Text></View> : null}
               </View>
             </View>
-            <View style={styles.leftPanelFooter}>
+            <View style={styles.employeeDetailPanelFooter}>
               {showProcessingSpinner ? (
                 <View style={[styles.verifyingPillLeft, { backgroundColor: isThemeLight ? '#fff' : colors.background }]}><ActivityIndicator size="small" color={accentColor} /><Text style={[styles.verifyingPillTextLeft, { color: accentColor }]}>{scanStage === 'capturing' ? 'Capturing...' : isClockingOut ? 'Processing Logout...' : 'Verifying Identity...'}</Text></View>
               ) : (!touchlessEnabled && <TouchableOpacity style={[styles.mainActionButtonLeft, isClockingOut ? styles.mainActionButtonLeftClockOut : [styles.mainActionButtonLeftClockIn, { backgroundColor: colors.accent }], (isVerifying || isCapturingHardware || isLivenessPending) && { opacity: 0.5, backgroundColor: '#9CA3AF' }]} onPress={onAttendance} disabled={isVerifying || isCapturingHardware || isLivenessPending}><Text style={[styles.mainActionButtonTextLeft, isClockingOut ? styles.mainActionButtonTextLeftClockOut : { color: '#fff' }]}>{isClockingOut ? 'CONFIRM CLOCK OUT' : 'CONFIRM CLOCK IN'}</Text></TouchableOpacity>)}
@@ -622,13 +619,15 @@ export default function FaceScanView({
           </ScrollView>
         </SafeAreaView>
       </View>
-      <View style={styles.rightPanel} onLayout={handleOverlayLayout}>
-        <Camera ref={cameraRef} style={getDynamicCameraStyle()} device={device} format={cameraFormat} isActive={true} photo={true} pixelFormat="yuv" frameProcessor={frameProcessor} androidPreviewViewType="texture-view" outputOrientation="device" resizeMode="cover" />
+      <View style={styles.cameraPanel} onLayout={handleOverlayLayout}>
+        <View style={getDynamicCameraStyle()}>
+          <Camera ref={cameraRef} style={styles.fullScreenCamera} device={device} format={cameraFormat} isActive={true} photo={true} pixelFormat="yuv" frameProcessor={frameProcessor} androidPreviewViewType="texture-view" outputOrientation="device" resizeMode="cover" />
+        </View>
         <Animated.View style={[styles.snapFlash, { opacity: flashAnim }]} pointerEvents="none" />
         <View style={styles.cameraTintLight} pointerEvents="none" />
         {renderDetectionOverlay()}
         <SafeAreaView style={styles.cameraSafeArea} edges={['top', 'right', 'bottom']}>
-          <View style={styles.rightPanelHeader}>
+          <View style={styles.cameraPanelHeader}>
             <View style={styles.headerCenterRight}><Text style={styles.topTimeRight}>{formattedTime}</Text><Text style={styles.topDateRight}>{formattedDate}</Text></View>
             <View style={[styles.miniOfflineBadge, offlineModeEnabled && styles.miniOfflineBadgeActive]}><MaterialCommunityIcons name={offlineModeEnabled ? 'cloud-off' : 'cloud-check'} size={18} color="#fff" /><Text style={styles.miniOfflineText}>{offlineModeEnabled ? 'OFFLINE' : 'ONLINE'}</Text></View>
           </View>
