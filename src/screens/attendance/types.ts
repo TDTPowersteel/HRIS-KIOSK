@@ -30,7 +30,7 @@ export type StoredAttendanceSession = {
   clockInDate: string;
 };
 
-export type ModalType = 'success' | 'error' | 'info' | 'warning';
+export type ModalType = 'success' | 'error' | 'info' | 'warning' | 'qr_error' | 'camera_error' | 'face_error';
 
 export type FaceScanStage =
   | 'idle'

@@ -108,7 +108,6 @@ export default function AttendanceScanner({ onBack, onOpenOffline }: AttendanceP
         visible={state.showResultModal}
         type={state.modalType}
         title={state.modalTitle}
-        message={state.modalMessage}
         hint={state.modalHint}
         scaleAnim={state.scaleAnim}
         onClose={state.closeModal}

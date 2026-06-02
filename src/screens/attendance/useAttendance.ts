@@ -487,11 +487,10 @@ export function useAttendance() {
   }, [scaleAnim, workletPhase, blinkState, stableFaceFrames, attendanceAction, qrVerified]);
 
   const showModal = useCallback(
-    (type: ModalType, title: string, message: string, hint: string, autoCloseMs?: number) => {
+    (type: ModalType, title: string, hint: string, autoCloseMs?: number) => {
       modalVisibleRef.current = true;
       setModalType(type);
       setModalTitle(title);
-      setModalMessage(message);
       setModalHint(hint);
       setShowResultModal(true);
       Animated.spring(scaleAnim, { toValue: 1, friction: 5, tension: 100, useNativeDriver: true }).start();
@@ -1074,15 +1073,14 @@ export function useAttendance() {
       await resetAttendanceFlow();
       workletPhase.value = 0; // Reset worklet phase
       showModal('success',
-        action === 'clock_in' ? 'Clock In Success' : 'Clock Out Success',
-        capturedOffline ? 'Captured and saved offline.' : 'Face verified and recorded.',
-        '', 2000);
+        action === 'clock_in'
+          ? (capturedOffline ? 'Clocked In — Saved Offline' : "You're Clocked In!")
+          : (capturedOffline ? 'Clocked Out — Saved Offline' : "You're Clocked Out!"),
+        capturedOffline ? 'Will sync automatically when connected.' : '', 2000);
     } catch (e: any) {
       faceProcessingRef.current = false;
       livenessTriggeredRef.current = false;
       setScanStage('idle');
-      const showOfflineError = offlineModeEnabled || isLikelyConnectivityError(e);
-      showModal('error', showOfflineError ? 'Offline Mode Error' : 'Connection Error', e?.message || 'Please try again.', showOfflineError ? 'Connect once to refresh employee QR cache.' : 'Check your internet connection', 2000);
     } finally {
       setIsVerifying(false);
     }
@@ -1173,7 +1171,7 @@ export function useAttendance() {
       identityStatusRef.current = 'failed';
       modalContextRef.current = 'face_error';
       setScanStage('idle');
-      showModal('error', 'Camera Error', e?.message || 'Failed to capture photo', '', 2000);
+      showModal('camera_error', 'Camera could not capture', 'Make sure nothing is blocking the lens.', 2000);
       return;
     }
 
@@ -1219,7 +1217,7 @@ export function useAttendance() {
         faceProcessingRef.current = false; // reset so touchless can auto-retry
         modalContextRef.current = 'face_error';
         setScanStage('idle');
-        showModal('error', 'Verification Failed', result?.message || 'Face verification failed.', result?.hint || 'Please try again.', 2000);
+        showModal('face_error', 'Face not recognized', result?.hint || 'Ensure good lighting and try again.', 2000);
       }
     } catch (e: any) {
       identityStatusRef.current = 'failed';
@@ -1228,8 +1226,6 @@ export function useAttendance() {
       faceProcessingRef.current = false; // reset so touchless can auto-retry
       modalContextRef.current = 'face_error';
       setScanStage('idle');
-      const showOfflineError = offlineModeEnabled || isLikelyConnectivityError(e);
-      showModal('error', showOfflineError ? 'Offline Mode Error' : 'Connection Error', e?.message || 'Please try again.', showOfflineError ? 'Connect once to refresh employee QR cache.' : 'Check your internet connection', 2000);
     }
   }, [qrVerified, offlineModeEnabled, verifyFaceLocal, captureEmbeddingFromPhoto, executeAttendanceRecording, showModal, flashAnim, isLikelyConnectivityError, workletPhase]);
 
@@ -1238,14 +1234,14 @@ export function useAttendance() {
     if (faceProcessingRef.current || isVerifying) return;
     if (!qrVerified || !selectedUserRef.current) {
       setScanStage('idle');
-      showModal('warning', 'Scan QR Code First', 'Please scan your personal QR code before continuing.', 'The user must scan a QR code.');
+      showModal('warning', 'Scan your QR code first', 'Place your personal QR code in front of the camera.');
       return;
     }
     
 
     if (!hasPermission) {
       setScanStage('idle');
-      showModal('warning', 'Camera Required', 'Please allow camera access to verify your identity.', '');
+      showModal('warning', 'Camera access is needed', 'Allow camera permission to continue.');
       return;
     }
 
@@ -1263,9 +1259,8 @@ export function useAttendance() {
         });
         showModal(
           'warning',
-          'Face Not Ready',
-          'No stable face detected yet. Please center your face and hold still.',
-          'Ensure your full face is visible with good lighting.',
+          'Hold still — face not detected',
+          'Center your face with good lighting.',
           1500,
         );
         return;
@@ -1761,7 +1756,7 @@ export function useAttendance() {
       setQrVerified(false);
       qrProcessingRef.current = false;
       setSelectedUser(null);
-      showModal('error', 'QR Validation Error', e?.message || 'Could not validate QR code.', '', 2000);
+      showModal('qr_error', 'QR code not recognized', 'Make sure you are using a valid employee QR.', 2000);
     } finally {
       setIsQrLoading(false);
     }
@@ -1985,7 +1980,7 @@ export function useAttendance() {
     qrVerified, qrSuccessLocal, selectedUser, clockInTime: displayClockInTime, faceCountdown,
     touchlessEnabled, offlineModeEnabled, livenessEnabled, pendingSyncCount,
     scanStage, cameraVisionFaceDetected, cameraVisionReadiness, cameraVisionFaceBox, cameraVisionAllFaces, cameraVisionFaceTelemetry, successAnimationTick,
-    showResultModal, modalType, modalTitle, modalMessage, modalHint, livenessMessage,
+    showResultModal, modalType, modalTitle, modalMessage: '', modalHint, livenessMessage,
     closeModal, handleAttendance, resetAttendanceFlow,
   };
 }
