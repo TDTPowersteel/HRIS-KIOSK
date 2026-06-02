@@ -1,5 +1,6 @@
 import React from 'react';
 import { Animated, Image, Modal, Text, TouchableOpacity, View } from 'react-native';
+import { useTheme } from '../../config/theme';
 import { styles } from './style/styles';
 import type { ModalType } from './types';
 
@@ -43,6 +44,7 @@ const MODAL_BTN: Record<ModalType, { btn: string; label: string }> = {
 };
 
 export default function ResultModal({ visible, type, title, hint, scaleAnim, onClose }: Props) {
+  const { colors } = useTheme();
   const btnConfig = MODAL_BTN[type];
   const iconSource = MODAL_ICONS[type];
   const circleColor = MODAL_CIRCLE_COLORS[type];
@@ -53,16 +55,16 @@ export default function ResultModal({ visible, type, title, hint, scaleAnim, onC
         <Animated.View
           style={[styles.modalWrapper, { transform: [{ scale: scaleAnim }] }]}
         >
-          <View style={[styles.modalCircle, { backgroundColor: circleColor }]}>
+          <View style={[styles.modalCircle, { backgroundColor: circleColor, borderColor: colors.surface }]}>
             <Image source={iconSource} style={styles.modalCircleIcon} resizeMode="cover" />
           </View>
 
-          <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>{title}</Text>
+          <View style={[styles.modalCard, { backgroundColor: colors.surface }]}>
+            <Text style={[styles.modalTitle, { color: colors.text }]}>{title}</Text>
 
             {hint ? (
-              <View style={styles.modalHintContainer}>
-                <Text style={styles.modalHint}>{hint}</Text>
+              <View style={[styles.modalHintContainer, { backgroundColor: colors.background }]}>
+                <Text style={[styles.modalHint, { color: colors.textSecondary }]}>{hint}</Text>
               </View>
             ) : null}
 
