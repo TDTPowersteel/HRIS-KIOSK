@@ -15,10 +15,13 @@ export type SettingRowProps = {
 export function SettingRow({ title, description, extraText = [], action, danger = false, onPress, disabled = false }: SettingRowProps) {
   const { colors } = useTheme();
   
-  const content = (
+  const renderContent = (pressed = false) => (
     <View style={[
       styles.row, 
-      { backgroundColor: colors.surface, borderColor: colors.border },
+      { 
+        backgroundColor: (pressed && onPress) ? colors.background : colors.surface, 
+        borderColor: colors.border 
+      },
       disabled && styles.rowDisabled
     ]}>
       <View style={styles.rowTextBlock}>
@@ -45,15 +48,13 @@ export function SettingRow({ title, description, extraText = [], action, danger 
 
   if (onPress) {
     return (
-      <Pressable onPress={onPress} disabled={disabled} style={({ pressed }) => [
-        { opacity: pressed ? 0.7 : 1 }
-      ]}>
-        {content}
+      <Pressable onPress={onPress} disabled={disabled}>
+        {({ pressed }) => renderContent(pressed)}
       </Pressable>
     );
   }
 
-  return content;
+  return renderContent(false);
 }
 
 const styles = StyleSheet.create({
@@ -73,7 +74,7 @@ const styles = StyleSheet.create({
     elevation: 2,
   },
   rowDisabled: {
-    opacity: 0.5,
+    opacity: 1,
   },
   rowTextBlock: {
     flex: 1,
