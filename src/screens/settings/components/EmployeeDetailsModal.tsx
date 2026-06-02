@@ -236,7 +236,28 @@ export default function EmployeeDetailsModal({ visible, onClose, employee }: Pro
     return acc?.profile_picture;
   };
 
-  const isTablet = windowWidth > 600;
+  const shortDimension = Math.min(windowWidth, windowHeight);
+  const isTablet = shortDimension >= 768;
+  const isSmallTablet = shortDimension >= 480 && shortDimension < 768;
+  const isPhone = shortDimension < 480;
+  const isLargeLayout = windowWidth > 600;
+
+  const placeholderFontSize = isTablet ? 64 : isSmallTablet ? 48 : 36;
+  const nameFontSize = isTablet ? 32 : isSmallTablet ? 24 : 18;
+  const roleFontSize = isTablet ? 18 : isSmallTablet ? 15 : 12;
+  const historyTitleFontSize = isTablet ? 24 : isSmallTablet ? 20 : 18;
+  const logDateFontSize = isTablet ? 18 : isSmallTablet ? 15 : 12;
+  const logTimeFontSize = isTablet ? 18 : isSmallTablet ? 15 : 12;
+
+  const deptTextFontSize = isTablet ? 14 : isSmallTablet ? 12 : 10;
+  const statsHeaderFontSize = isTablet ? 12 : isSmallTablet ? 11 : 9;
+  const statusPillTextFontSize = isTablet ? 13 : isSmallTablet ? 11 : 10;
+  const filterBtnTextFontSize = isTablet ? 12 : isSmallTablet ? 11 : 9;
+  const optionTextFontSize = isTablet ? 14 : isSmallTablet ? 12 : 11;
+  const tableLabelFontSize = isTablet ? 11 : isSmallTablet ? 10 : 9;
+  const smallStatusTextFontSize = isTablet ? 10 : isSmallTablet ? 9 : 8;
+  const loadingTextFontSize = isTablet ? 16 : isSmallTablet ? 14 : 12;
+  const noDataFontSize = isTablet ? 18 : isSmallTablet ? 15 : 13;
 
   const modalWidth = useMemo(() => {
     if (windowWidth > 1200) return 900;
@@ -260,7 +281,7 @@ export default function EmployeeDetailsModal({ visible, onClose, employee }: Pro
       ]}
     >
       <MaterialCommunityIcons name={icon} size={18} color={filter === type ? '#fff' : colors.textSecondary} />
-      <Text style={[styles.filterBtnText, { color: filter === type ? '#fff' : colors.textSecondary }]}>{label}</Text>
+      <Text style={[styles.filterBtnText, { color: filter === type ? '#fff' : colors.textSecondary, fontSize: filterBtnTextFontSize }]}>{label}</Text>
     </Pressable>
   );
 
@@ -294,7 +315,7 @@ export default function EmployeeDetailsModal({ visible, onClose, employee }: Pro
           ]}
         >
           <MaterialCommunityIcons name="calendar-range" size={18} color={isActive ? '#fff' : colors.textSecondary} />
-          <Text style={[styles.filterBtnText, { color: isActive ? '#fff' : colors.textSecondary }]}>
+          <Text style={[styles.filterBtnText, { color: isActive ? '#fff' : colors.textSecondary, fontSize: filterBtnTextFontSize }]}>
             {label} ▼
           </Text>
         </Pressable>
@@ -321,7 +342,7 @@ export default function EmployeeDetailsModal({ visible, onClose, employee }: Pro
                   onPress={() => { setFilter('all'); setStatusFilter('All'); setShowMonthDropdown(false); }}
                   style={[styles.dropdownOption, filter === 'all' && { backgroundColor: theme === 'light' ? '#f3f4f6' : '#322721' }]}
                 >
-                  <Text style={[styles.optionText, { color: colors.text }]}>All Time</Text>
+                  <Text style={[styles.optionText, { color: colors.text, fontSize: optionTextFontSize }]}>All Time</Text>
                 </Pressable>
                 {months.map((m, idx) => {
                   const typeVal = idx.toString();
@@ -338,7 +359,7 @@ export default function EmployeeDetailsModal({ visible, onClose, employee }: Pro
                         filter === typeVal && { backgroundColor: theme === 'light' ? '#f3f4f6' : '#322721' }
                       ]}
                     >
-                      <Text style={[styles.optionText, { color: colors.text }]}>{m}</Text>
+                      <Text style={[styles.optionText, { color: colors.text, fontSize: optionTextFontSize }]}>{m}</Text>
                     </Pressable>
                   );
                 })}
@@ -358,30 +379,30 @@ export default function EmployeeDetailsModal({ visible, onClose, employee }: Pro
             <MaterialCommunityIcons name="close-circle" size={36} color={colors.textSecondary} />
           </Pressable>
           
-          <View style={[styles.contentLayout, !isTablet && { flexDirection: 'column' }]}>
+          <View style={[styles.contentLayout, !isLargeLayout && { flexDirection: 'column' }]}>
             {/* Left Panel: Profile & Filters */}
-            <View style={[styles.profilePanel, isTablet ? { width: '35%', borderRightWidth: 1, borderRightColor: colors.border } : { width: '100%', borderBottomWidth: 1, borderBottomColor: colors.border, paddingBottom: 20 }]}>
-              <View style={[styles.avatarContainer, { borderColor: Colors.powerOrange, width: isTablet ? 160 : 100, height: isTablet ? 160 : 100, borderRadius: isTablet ? 80 : 50 }]}>
+            <View style={[styles.profilePanel, isLargeLayout ? { width: '35%', borderRightWidth: 1, borderRightColor: colors.border } : { width: '100%', borderBottomWidth: 1, borderBottomColor: colors.border, paddingBottom: 20 }]}>
+              <View style={[styles.avatarContainer, { borderColor: Colors.powerOrange, width: isLargeLayout ? 160 : 100, height: isLargeLayout ? 160 : 100, borderRadius: isLargeLayout ? 80 : 50 }]}>
                 {getProfilePicture() ? (
                   <Image source={{ uri: getProfilePicture() }} style={styles.profileImage} />
                 ) : (
                   <View style={styles.placeholderAvatar}>
-                    <Text style={[styles.placeholderText, { color: colors.textSecondary, fontSize: isTablet ? 64 : 40 }]}>{localEmployee?.name?.charAt(0) || '?'}</Text>
+                    <Text style={[styles.placeholderText, { color: colors.textSecondary, fontSize: placeholderFontSize }]}>{localEmployee?.name?.charAt(0) || '?'}</Text>
                   </View>
                 )}
               </View>
-              <Text style={[styles.name, { color: colors.text, fontSize: isTablet ? 32 : 22 }]} numberOfLines={2}>{localEmployee?.name || 'No Name'}</Text>
-              <Text style={[styles.role, { color: colors.textSecondary, fontSize: isTablet ? 18 : 14 }]}>{localEmployee?.role || 'No Role'}</Text>
+              <Text style={[styles.name, { color: colors.text, fontSize: nameFontSize }]} numberOfLines={2}>{localEmployee?.name || 'No Name'}</Text>
+              <Text style={[styles.role, { color: colors.textSecondary, fontSize: roleFontSize }]}>{localEmployee?.role || 'No Role'}</Text>
               
               <View style={[styles.deptTag, { backgroundColor: theme === 'light' ? '#f3f4f6' : '#333' }]}>
-                <Text style={[styles.deptText, { color: colors.textSecondary }]}>
+                <Text style={[styles.deptText, { color: colors.textSecondary, fontSize: deptTextFontSize }]}>
                   {localEmployee?.departments?.name || 'General'}
                 </Text>
               </View>
 
-              {isTablet && (
+              {isLargeLayout && (
                 <View style={styles.statsContainer}>
-                  <Text style={[styles.statsHeader, { color: colors.textSecondary }]}>STATUS FILTERS</Text>
+                  <Text style={[styles.statsHeader, { color: colors.textSecondary, fontSize: statsHeaderFontSize }]}>STATUS FILTERS</Text>
                   <View style={styles.statusPillGrid}>
                     <Pressable 
                       onPress={() => setStatusFilter('All')}
@@ -392,7 +413,7 @@ export default function EmployeeDetailsModal({ visible, onClose, employee }: Pro
                       ]}
                     >
                       <MaterialCommunityIcons name="format-list-bulleted" size={16} color={colors.text} />
-                      <Text style={[styles.statusPillText, { color: colors.text }]}>All Logs ({enrichedHistory.length})</Text>
+                      <Text style={[styles.statusPillText, { color: colors.text, fontSize: statusPillTextFontSize }]}>All Logs ({enrichedHistory.length})</Text>
                     </Pressable>
 
                     {(Object.keys(STATUS_COLORS) as LogStatus[]).map(status => {
@@ -415,7 +436,7 @@ export default function EmployeeDetailsModal({ visible, onClose, employee }: Pro
                           <MaterialCommunityIcons name={STATUS_ICONS[status]} size={16} color={isActive ? '#fff' : color} />
                           <Text style={[
                             styles.statusPillText, 
-                            { color: isActive ? '#fff' : color }
+                            { color: isActive ? '#fff' : color, fontSize: statusPillTextFontSize }
                           ]}>
                             {status} ({count})
                           </Text>
@@ -429,9 +450,9 @@ export default function EmployeeDetailsModal({ visible, onClose, employee }: Pro
 
             {/* Right Panel: History */}
             <View style={styles.historyPanel}>
-              <View style={[styles.historyHeader, !isTablet && { flexDirection: 'column', alignItems: 'flex-start', gap: 15 }]}>
+              <View style={[styles.historyHeader, !isLargeLayout && { flexDirection: 'column', alignItems: 'flex-start', gap: 15 }]}>
                 <View style={styles.headerLeftInfo}>
-                  <Text style={[styles.historyTitle, { color: colors.text, fontSize: isTablet ? 24 : 18 }]}>Attendance Records</Text>
+                  <Text style={[styles.historyTitle, { color: colors.text, fontSize: historyTitleFontSize }]}>Attendance Records</Text>
                   <View style={styles.filterRow}>
                     <FilterButton type="week" label="7D" icon="calendar-week" />
                     <FilterButton type="month" label="30D" icon="calendar-month" />
@@ -443,7 +464,7 @@ export default function EmployeeDetailsModal({ visible, onClose, employee }: Pro
               {loading ? (
                 <View style={styles.centered}>
                   <ActivityIndicator size="large" color={Colors.powerOrange} />
-                  <Text style={[styles.loadingText, { color: colors.textSecondary }]}>Updating history...</Text>
+                  <Text style={[styles.loadingText, { color: colors.textSecondary, fontSize: loadingTextFontSize }]}>Updating history...</Text>
                 </View>
               ) : (
                 <ScrollView 
@@ -453,10 +474,10 @@ export default function EmployeeDetailsModal({ visible, onClose, employee }: Pro
                 >
                   {filteredHistory.length > 0 ? (
                     <View style={styles.tableHeader}>
-                      <Text style={[styles.tableLabel, { flex: 2, color: colors.textSecondary }]}>DATE</Text>
-                      <Text style={[styles.tableLabel, { flex: 1, textAlign: 'center', color: colors.textSecondary }]}>IN</Text>
-                      <Text style={[styles.tableLabel, { flex: 1, textAlign: 'center', color: colors.textSecondary }]}>OUT</Text>
-                      <Text style={[styles.tableLabel, { flex: 2, textAlign: 'center', color: colors.textSecondary }]}>STATUS</Text>
+                      <Text style={[styles.tableLabel, { flex: 2, color: colors.textSecondary, fontSize: tableLabelFontSize }]}>DATE</Text>
+                      <Text style={[styles.tableLabel, { flex: 1, textAlign: 'center', color: colors.textSecondary, fontSize: tableLabelFontSize }]}>IN</Text>
+                      <Text style={[styles.tableLabel, { flex: 1, textAlign: 'center', color: colors.textSecondary, fontSize: tableLabelFontSize }]}>OUT</Text>
+                      <Text style={[styles.tableLabel, { flex: 2, textAlign: 'center', color: colors.textSecondary, fontSize: tableLabelFontSize }]}>STATUS</Text>
                     </View>
                   ) : null}
 
@@ -464,18 +485,18 @@ export default function EmployeeDetailsModal({ visible, onClose, employee }: Pro
                     filteredHistory.map((log, index) => (
                       <View key={index} style={[styles.logRow, { borderBottomColor: colors.border }]}>
                         <View style={{ flex: 2 }}>
-                          <Text style={[styles.logDate, { color: colors.text, fontSize: isTablet ? 18 : 14 }]}>{new Date(log.date).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}</Text>
+                          <Text style={[styles.logDate, { color: colors.text, fontSize: logDateFontSize }]}>{new Date(log.date).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}</Text>
                         </View>
                         <View style={styles.timeBox}>
-                          <Text style={[styles.logTime, { color: Colors.powerOrange, fontSize: isTablet ? 18 : 14 }]}>{log.timein?.substring(0, 5) || '--:--'}</Text>
+                          <Text style={[styles.logTime, { color: Colors.powerOrange, fontSize: logTimeFontSize }]}>{log.timein?.substring(0, 5) || '--:--'}</Text>
                         </View>
                         <View style={styles.timeBox}>
-                          <Text style={[styles.logTime, { color: colors.text, fontSize: isTablet ? 18 : 14 }]}>{log.timeout?.substring(0, 5) || '--:--'}</Text>
+                          <Text style={[styles.logTime, { color: colors.text, fontSize: logTimeFontSize }]}>{log.timeout?.substring(0, 5) || '--:--'}</Text>
                         </View>
                         <View style={{ flex: 2, flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 4 }}>
                           {log.calculatedStatuses.length > 0 ? log.calculatedStatuses.map((s) => (
                             <View key={s} style={[styles.smallStatusPill, { backgroundColor: STATUS_COLORS[s] + '15', borderColor: STATUS_COLORS[s] + '40' }]}>
-                              <Text style={[styles.smallStatusText, { color: STATUS_COLORS[s] }]}>{s}</Text>
+                              <Text style={[styles.smallStatusText, { color: STATUS_COLORS[s], fontSize: smallStatusTextFontSize }]}>{s}</Text>
                             </View>
                           )) : (
                             <Text style={{ color: colors.textSecondary, fontSize: 12 }}>---</Text>
@@ -486,7 +507,7 @@ export default function EmployeeDetailsModal({ visible, onClose, employee }: Pro
                   ) : (
                     <View style={styles.centered}>
                       <MaterialCommunityIcons name="calendar-blank" size={64} color={colors.border} />
-                      <Text style={[styles.noData, { color: colors.textSecondary }]}>No records found matching filters.</Text>
+                      <Text style={[styles.noData, { color: colors.textSecondary, fontSize: noDataFontSize }]}>No records found matching filters.</Text>
                     </View>
                   )}
                 </ScrollView>

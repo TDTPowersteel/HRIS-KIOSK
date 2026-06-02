@@ -126,10 +126,11 @@ function formatTimeDisplay(rawTime?: string | null) {
 
 export default function OfflineSync({ onBack, onOpenScanner }: Props) {
   const { theme, colors } = useTheme();
-  const { width: windowWidth } = useWindowDimensions();
-  const isTablet = windowWidth >= 768;
-  const isSmallTablet = windowWidth >= 480 && windowWidth < 768;
-  const isPhone = windowWidth < 480;
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
+  const shortDimension = Math.min(windowWidth, windowHeight);
+  const isTablet = shortDimension >= 768;
+  const isSmallTablet = shortDimension >= 480 && shortDimension < 768;
+  const isPhone = shortDimension < 480;
 
   const [items, setItems] = useState<OfflineAttendanceItem[]>([]);
   const [history, setHistory] = useState<HistoryItem[]>([]);
@@ -150,7 +151,7 @@ export default function OfflineSync({ onBack, onOpenScanner }: Props) {
   const columnWidth = isPhone ? 52 : 60;
   const gridGap = isPhone ? 6 : 8;
 
-  const headerFontSize = isTablet ? 24 : isSmallTablet ? 20 : 16;
+  const headerFontSize = isTablet ? 24 : isSmallTablet ? 20 : 18;
   const subtitleFontSize = isTablet ? 14 : isSmallTablet ? 12 : 10;
   const panelTitleFontSize = isTablet ? 20 : isSmallTablet ? 18 : 16;
   const panelIconSize = isTablet ? 24 : isSmallTablet ? 22 : 18;
@@ -183,6 +184,8 @@ export default function OfflineSync({ onBack, onOpenScanner }: Props) {
   const rowNameFontSize = isTablet ? 13 : isSmallTablet ? 12 : 11;
   const rowIdFontSize = isTablet ? 11 : isSmallTablet ? 10 : 9;
   const rowTimeFontSize = isTablet ? 12 : isSmallTablet ? 11 : 10;
+  const avatarTextFontSize = isTablet ? 16 : isSmallTablet ? 14 : 12;
+  const emptyTextFontSize = isTablet ? 13 : isSmallTablet ? 12 : 11;
 
   const reloadQueue = useCallback(async () => {
     const queue = await getOfflineAttendanceQueue();
@@ -486,7 +489,7 @@ export default function OfflineSync({ onBack, onOpenScanner }: Props) {
                         borderRadius: isPhone ? 10 : 12,
                       }
                     ]}>
-                      <Text style={styles.avatarText}>{getInitials(displayName)}</Text>
+                      <Text style={[styles.avatarText, { fontSize: avatarTextFontSize }]}>{getInitials(displayName)}</Text>
                     </View>
                     <View style={styles.standardContent}>
                       <View style={styles.standardTopRow}>
@@ -505,7 +508,7 @@ export default function OfflineSync({ onBack, onOpenScanner }: Props) {
             ) : (
               <View style={styles.emptyState}>
                 <MaterialCommunityIcons name="check-circle-outline" size={48} color={colors.border} />
-                <Text style={[styles.emptyText, { color: colors.textSecondary }]}>Queue is Clear</Text>
+                <Text style={[styles.emptyText, { color: colors.textSecondary, fontSize: emptyTextFontSize }]}>Queue is Clear</Text>
               </View>
             )}
           </ScrollView>
@@ -674,7 +677,7 @@ export default function OfflineSync({ onBack, onOpenScanner }: Props) {
             ) : (
               <View style={styles.emptyState}>
                 <MaterialCommunityIcons name="table-search" size={48} color={colors.border} />
-                <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
+                <Text style={[styles.emptyText, { color: colors.textSecondary, fontSize: emptyTextFontSize }]}>
                   {history.length > 0 ? "No Matching Records" : "No History Yet"}
                 </Text>
               </View>

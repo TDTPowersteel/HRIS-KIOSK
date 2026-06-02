@@ -1,6 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useCallback, useEffect, useState, useRef } from 'react';
-import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, View, Modal, Animated } from 'react-native';
+import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, View, Modal, Animated, useWindowDimensions } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { BACKEND_URL } from '../../config/backend';
@@ -48,6 +48,26 @@ let settingsHasLoadedOnce = false;
 
 export default function Settings({ onBack }: Props) {
   const { colors, theme } = useTheme();
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
+  const shortDimension = Math.min(windowWidth, windowHeight);
+  const isTablet = shortDimension >= 768;
+  const isSmallTablet = shortDimension >= 480 && shortDimension < 768;
+  const isPhone = shortDimension < 480;
+
+  const headerTitleFontSize = isTablet ? 24 : isSmallTablet ? 20 : 18;
+  const headerSubtitleFontSize = isTablet ? 14 : isSmallTablet ? 12 : 10;
+  const sectionTitleFontSize = isTablet ? 12 : isSmallTablet ? 11 : 10;
+  const storageLabelFontSize = isTablet ? 11 : isSmallTablet ? 10 : 9;
+  const storageValueFontSize = isTablet ? 28 : isSmallTablet ? 23 : 18;
+  const storageSubtextFontSize = isTablet ? 13 : isSmallTablet ? 11 : 10;
+  const wipeButtonTextFontSize = isTablet ? 12 : isSmallTablet ? 11 : 10;
+  const logoutTitleFontSize = isTablet ? 18 : isSmallTablet ? 15 : 13;
+  const logoutSubtitleFontSize = isTablet ? 13 : isSmallTablet ? 11 : 10;
+  const modalTitleFontSize = isTablet ? 24 : isSmallTablet ? 20 : 16;
+  const modalMessageFontSize = isTablet ? 15 : isSmallTablet ? 13 : 11;
+  const modalPrimaryBtnTextFontSize = isTablet ? 15 : isSmallTablet ? 13 : 11;
+  const modalSecondaryBtnTextFontSize = isTablet ? 14 : isSmallTablet ? 12 : 10;
+
   const [isLoading, setIsLoading] = useState(!settingsHasLoadedOnce);
   const [touchlessEnabled, setTouchlessEnabled] = useState(false);
   const [isOnline, setIsOnline] = useState(true);
@@ -292,8 +312,8 @@ export default function Settings({ onBack }: Props) {
             <MaterialCommunityIcons name="chevron-left" size={32} color={colors.text} />
           </Pressable>
           <View style={styles.headerTitleWrap}>
-            <Text style={[styles.headerTitle, { color: colors.text }]}>Settings</Text>
-            <Text style={[styles.headerSubtitle, { color: colors.textSecondary }]}>
+            <Text style={[styles.headerTitle, { color: colors.text, fontSize: headerTitleFontSize }]}>Settings</Text>
+            <Text style={[styles.headerSubtitle, { color: colors.textSecondary, fontSize: headerSubtitleFontSize }]}>
               Change how this kiosk works and manages data.
             </Text>
           </View>
@@ -407,8 +427,8 @@ export default function Settings({ onBack }: Props) {
           <MaterialCommunityIcons name="chevron-left" size={32} color={colors.text} />
         </Pressable>
         <View style={styles.headerTitleWrap}>
-          <Text style={[styles.headerTitle, { color: colors.text }]}>Settings</Text>
-          <Text style={[styles.headerSubtitle, { color: colors.textSecondary }]}>
+          <Text style={[styles.headerTitle, { color: colors.text, fontSize: headerTitleFontSize }]}>Settings</Text>
+          <Text style={[styles.headerSubtitle, { color: colors.textSecondary, fontSize: headerSubtitleFontSize }]}>
             Change how this kiosk works and manages data.
           </Text>
         </View>
@@ -417,7 +437,7 @@ export default function Settings({ onBack }: Props) {
       <ScrollView contentContainerStyle={styles.listContent} showsVerticalScrollIndicator={false}>
         <View style={styles.sectionContainer}>
           <View style={styles.sectionHeader}>
-            <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>Device Options</Text>
+            <Text style={[styles.sectionTitle, { color: colors.textSecondary, fontSize: sectionTitleFontSize }]}>Device Options</Text>
           </View>
 
           <View style={styles.featureGrid}>
@@ -432,20 +452,20 @@ export default function Settings({ onBack }: Props) {
           </View>
 
           <View style={styles.sectionHeader}>
-            <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>Visual Style</Text>
+            <Text style={[styles.sectionTitle, { color: colors.textSecondary, fontSize: sectionTitleFontSize }]}>Visual Style</Text>
           </View>
           <ThemeSelectorFeature />
           
           <View style={styles.sectionHeader}>
             <Pressable onPress={handleHeaderTap}>
-              <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>Device Storage</Text>
+              <Text style={[styles.sectionTitle, { color: colors.textSecondary, fontSize: sectionTitleFontSize }]}>Device Storage</Text>
             </Pressable>
           </View>
           <View style={[styles.storageCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
             <View style={styles.storageMainRow}>
               <View style={styles.storageInfoBlock}>
-                <Text style={[styles.storageLabel, { color: colors.textSecondary }]}>USED MEMORY</Text>
-                <Text style={[styles.storageValue, { color: colors.text }]}>{storageSize}</Text>
+                <Text style={[styles.storageLabel, { color: colors.textSecondary, fontSize: storageLabelFontSize }]}>USED MEMORY</Text>
+                <Text style={[styles.storageValue, { color: colors.text, fontSize: storageValueFontSize }]}>{storageSize}</Text>
               </View>
               <Pressable 
                 onPress={handleWipeCache}
@@ -457,11 +477,11 @@ export default function Settings({ onBack }: Props) {
                   },
                 ]}
               >
-                <Text style={styles.wipeButtonText}>CLEAR DATA</Text>
+                <Text style={[styles.wipeButtonText, { fontSize: wipeButtonTextFontSize }]}>CLEAR DATA</Text>
               </Pressable>
             </View>
             <View style={[styles.storageDivider, { backgroundColor: colors.border }]} />
-            <Text style={[styles.storageSubtext, { color: colors.textSecondary }]}>
+            <Text style={[styles.storageSubtext, { color: colors.textSecondary, fontSize: storageSubtextFontSize }]}>
               Includes saved employee lists, pictures, and attendance logs.
             </Text>
           </View>
@@ -481,8 +501,8 @@ export default function Settings({ onBack }: Props) {
                 <View style={styles.logoutContent}>
                   <MaterialCommunityIcons name="logout-variant" size={24} color="#ef4444" />
                   <View style={styles.logoutTextWrap}>
-                    <Text style={styles.logoutTitle}>End Management Session</Text>
-                    <Text style={[styles.logoutSubtitle, { color: colors.textSecondary }]}>Close settings and return to home screen</Text>
+                    <Text style={[styles.logoutTitle, { fontSize: logoutTitleFontSize }]}>End Management Session</Text>
+                    <Text style={[styles.logoutSubtitle, { color: colors.textSecondary, fontSize: logoutSubtitleFontSize }]}>Close settings and return to home screen</Text>
                   </View>
                 </View>
                 <MaterialCommunityIcons name="chevron-right" size={24} color={colors.textSecondary} />
@@ -505,8 +525,8 @@ export default function Settings({ onBack }: Props) {
               <MaterialCommunityIcons name="database-remove" size={42} color="#ef4444" />
             </View>
             
-            <Text style={[styles.modalTitle, { color: colors.text }]}>Clear Device Memory?</Text>
-            <Text style={[styles.modalMessage, { color: colors.textSecondary }]}>
+            <Text style={[styles.modalTitle, { color: colors.text, fontSize: modalTitleFontSize }]}>Clear Device Memory?</Text>
+            <Text style={[styles.modalMessage, { color: colors.textSecondary, fontSize: modalMessageFontSize }]}>
               This will permanently delete all saved logs and employee pictures from this device.
               {'\n'}{'\n'}
               Internet connection will be needed to get this information back.
@@ -520,7 +540,7 @@ export default function Settings({ onBack }: Props) {
                   { backgroundColor: pressed ? withAlpha(colors.border, 0.5) : colors.background, borderColor: colors.border }
                 ]}
               >
-                <Text style={[styles.modalSecondaryBtnText, { color: colors.textSecondary }]}>CANCEL</Text>
+                <Text style={[styles.modalSecondaryBtnText, { color: colors.textSecondary, fontSize: modalSecondaryBtnTextFontSize }]}>CANCEL</Text>
               </Pressable>
 
               <Pressable 
@@ -530,7 +550,7 @@ export default function Settings({ onBack }: Props) {
                   { backgroundColor: pressed ? '#dc2626' : '#ef4444' }
                 ]}
               >
-                <Text style={styles.modalPrimaryBtnText}>CLEAR NOW</Text>
+                <Text style={[styles.modalPrimaryBtnText, { fontSize: modalPrimaryBtnTextFontSize }]}>CLEAR NOW</Text>
               </Pressable>
             </View>
           </View>

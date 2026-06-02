@@ -1,15 +1,22 @@
-import { Dimensions, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Dimensions, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { useTheme, ThemeType, Theme, Colors } from '../../../config/theme';
 
 const { width: WINDOW_WIDTH } = Dimensions.get('window');
 
 export function ThemeSelectorFeature() {
   const { theme, setTheme, colors } = useTheme();
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
+  const shortDimension = Math.min(windowWidth, windowHeight);
+  const isTablet = shortDimension >= 768;
+  const isSmallTablet = shortDimension >= 480 && shortDimension < 768;
+  const isPhone = shortDimension < 480;
+
+  const labelFontSize = isTablet ? 11 : isSmallTablet ? 10 : 9;
 
   return (
     <View style={styles.container}>
       <View style={styles.themeGrid}>
-        {(['light', 'dark', 'industrial', 'midnight'] as ThemeType[]).map((t) => (
+        {([ 'light', 'dark', 'industrial', 'midnight' ] as ThemeType[]).map((t) => (
           <Pressable 
             key={t}
             onPress={() => setTheme(t)}
@@ -24,7 +31,7 @@ export function ThemeSelectorFeature() {
             <View style={[styles.themePreview, { backgroundColor: Theme[t].surface }]} />
             <Text style={[
               styles.themeLabel, 
-              { color: Theme[t].text }
+              { color: Theme[t].text, fontSize: labelFontSize }
             ]}>
               {t.toUpperCase()}
             </Text>

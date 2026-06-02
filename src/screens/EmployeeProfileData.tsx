@@ -148,7 +148,30 @@ export default function EmployeeProfileData({ onBack }: Props) {
   const [lastUpdatedAt, setLastUpdatedAt] = useState<number | null>(globalLastSyncCache);
   const [selectedEmployee, setSelectedEmployee] = useState<EmployeeRow | null>(null);
   const { colors, theme } = useTheme();
-  const { width: windowWidth } = useWindowDimensions();
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
+  const shortDimension = Math.min(windowWidth, windowHeight);
+  const isTablet = shortDimension >= 768;
+  const isSmallTablet = shortDimension >= 480 && shortDimension < 768;
+  const isPhone = shortDimension < 480;
+
+  const titleFontSize = isTablet ? 24 : isSmallTablet ? 20 : 18;
+  const subtitleFontSize = isTablet ? 14 : isSmallTablet ? 12 : 10;
+  const refreshButtonTextFontSize = isTablet ? 12 : isSmallTablet ? 11 : 10;
+  const searchInputFontSize = isTablet ? 18 : isSmallTablet ? 16 : 14;
+  const cacheStatusTextFontSize = isTablet ? 12 : isSmallTablet ? 11 : 10;
+  const dropdownValueFontSize = isTablet ? 14 : isSmallTablet ? 12 : 11;
+  const optionTextFontSize = isTablet ? 14 : isSmallTablet ? 12 : 11;
+  const dropdownArrowFontSize = isTablet ? 12 : isSmallTablet ? 11 : 10;
+  const emptyTextFontSize = isTablet ? 18 : isSmallTablet ? 16 : 14;
+  const employeeNameFontSize = isTablet ? 20 : isSmallTablet ? 17 : 14;
+  const employeeRoleFontSize = isTablet ? 14 : isSmallTablet ? 12 : 10;
+  const deptTextFontSize = isTablet ? 12 : isSmallTablet ? 11 : 9;
+  const loadMoreTextFontSize = isTablet ? 14 : isSmallTablet ? 12 : 11;
+  const notSyncedTextFontSize = isTablet ? 20 : isSmallTablet ? 17 : 15;
+  const notSyncedSubtextFontSize = isTablet ? 14 : isSmallTablet ? 12 : 11;
+  const syncNowButtonTextFontSize = isTablet ? 16 : isSmallTablet ? 14 : 12;
+  const avatarPlaceholderTextFontSize = isTablet ? 24 : isSmallTablet ? 20 : 16;
+  const sortToggleTextFontSize = isTablet ? 13 : isSmallTablet ? 12 : 11;
   const isFetchingRef = useRef(false);
   const mountedRef = useRef(true);
 
@@ -417,10 +440,10 @@ export default function EmployeeProfileData({ onBack }: Props) {
           }
         ]}
       >
-        <Text style={[styles.dropdownValue, { color: colors.text }]} numberOfLines={1}>
+        <Text style={[styles.dropdownValue, { color: colors.text, fontSize: dropdownValueFontSize }]} numberOfLines={1}>
           {value}
         </Text>
-        <Text style={{ color: Colors.powerOrange, fontSize: 12 }}>{isOpen ? '▲' : '▼'}</Text>
+        <Text style={{ color: Colors.powerOrange, fontSize: dropdownArrowFontSize }}>{isOpen ? '▲' : '▼'}</Text>
       </Pressable>
       
       {isOpen && (
@@ -438,7 +461,7 @@ export default function EmployeeProfileData({ onBack }: Props) {
                   value === opt && { backgroundColor: theme === 'light' ? '#f3f4f6' : '#322721' }
                 ]}
               >
-                <Text style={[styles.optionText, { color: colors.text }]}>{opt}</Text>
+                <Text style={[styles.optionText, { color: colors.text, fontSize: optionTextFontSize }]}>{opt}</Text>
               </Pressable>
             ))}
           </ScrollView>
@@ -529,8 +552,8 @@ export default function EmployeeProfileData({ onBack }: Props) {
           <MaterialCommunityIcons name="chevron-left" size={32} color={colors.text} />
         </Pressable>
         <View style={styles.headerTitleWrap}>
-          <Text style={[styles.title, { color: colors.text }]}>Employee Directory</Text>
-          <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
+          <Text style={[styles.title, { color: colors.text, fontSize: titleFontSize }]}>Employee Directory</Text>
+          <Text style={[styles.subtitle, { color: colors.textSecondary, fontSize: subtitleFontSize }]}>
             Employee information and records.
           </Text>
         </View>
@@ -542,7 +565,7 @@ export default function EmployeeProfileData({ onBack }: Props) {
             { backgroundColor: colors.surface, borderColor: colors.border, opacity: isRefreshing ? 0.6 : 1 },
           ]}
         >
-          <Text style={styles.refreshButtonText}>{isRefreshing ? 'SYNCING...' : 'REFRESH'}</Text>
+          <Text style={[styles.refreshButtonText, { fontSize: refreshButtonTextFontSize }]}>{isRefreshing ? 'SYNCING...' : 'REFRESH'}</Text>
         </Pressable>
       </View>
 
@@ -555,7 +578,7 @@ export default function EmployeeProfileData({ onBack }: Props) {
           }
         ]}>
           <TextInput
-            style={[styles.searchInput, { color: colors.text }]}
+            style={[styles.searchInput, { color: colors.text, fontSize: searchInputFontSize }]}
             placeholder="Search by name or role..."
             placeholderTextColor={colors.textSecondary}
             value={searchText}
@@ -565,7 +588,7 @@ export default function EmployeeProfileData({ onBack }: Props) {
           />
           {searchText.length > 0 && (
             <Pressable onPress={() => setSearchText('')} style={styles.clearButton}>
-              <Text style={{ color: Colors.steelGray, fontSize: 20, fontWeight: '800' }}>✕</Text>
+              <Text style={{ color: Colors.steelGray, fontSize: deleteIconFontSize, fontWeight: '800' }}>✕</Text>
             </Pressable>
           )}
         </View>
@@ -597,12 +620,12 @@ export default function EmployeeProfileData({ onBack }: Props) {
             onPress={() => setSortBy(sortBy === 'name_asc' ? 'name_desc' : 'name_asc')}
             style={[styles.sortToggle, { borderColor: colors.border, backgroundColor: colors.surface }]}
           >
-            <Text style={{ color: colors.textSecondary, fontWeight: '900', fontSize: 13 }}>
+            <Text style={{ color: colors.textSecondary, fontWeight: '900', fontSize: sortToggleTextFontSize }}>
               {sortBy === 'name_asc' ? 'A-Z' : 'Z-A'}
             </Text>
           </Pressable>
         </View>
-        <Text style={[styles.cacheStatusText, { color: colors.textSecondary }]}>
+        <Text style={[styles.cacheStatusText, { color: colors.textSecondary, fontSize: cacheStatusTextFontSize }]}>
           {lastUpdatedAt
             ? `Last Sync: ${new Date(lastUpdatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit'})}`
             : 'Last Sync: Not yet synced'}
@@ -644,20 +667,20 @@ export default function EmployeeProfileData({ onBack }: Props) {
                           />
                         ) : (
                           <View style={[styles.profileImage, { backgroundColor: colors.background, justifyContent: 'center', alignItems: 'center' }]}>
-                            <Text style={{ color: colors.textSecondary, fontWeight: '800', fontSize: 24 }}>{emp.name?.charAt(0) || '?'}</Text>
+                            <Text style={{ color: colors.textSecondary, fontWeight: '800', fontSize: avatarPlaceholderTextFontSize }}>{emp.name?.charAt(0) || '?'}</Text>
                           </View>
                         );
                       })()}
                     </View>
                     <View style={styles.infoBlock}>
-                      <Text style={[styles.employeeName, { color: colors.text }]} numberOfLines={1}>{emp?.name || 'Unknown'}</Text>
-                      <Text style={[styles.employeeRole, { color: Colors.steelGray }]} numberOfLines={1}>{emp?.role ?? 'Unassigned Role'}</Text>
+                      <Text style={[styles.employeeName, { color: colors.text, fontSize: employeeNameFontSize }]} numberOfLines={1}>{emp?.name || 'Unknown'}</Text>
+                      <Text style={[styles.employeeRole, { color: Colors.steelGray, fontSize: employeeRoleFontSize }]} numberOfLines={1}>{emp?.role ?? 'Unassigned Role'}</Text>
                     </View>
                   </View>
                   
                   <View style={styles.cardFooter}>
                     <View style={[styles.deptBadge, { backgroundColor: theme === 'light' ? '#f3f4f6' : '#322721' }]}>
-                      <Text style={[styles.deptText, { color: colors.textSecondary }]}>
+                      <Text style={[styles.deptText, { color: colors.textSecondary, fontSize: deptTextFontSize }]}>
                         {emp.departments?.name ?? 'General'}
                       </Text>
                     </View>
@@ -676,7 +699,7 @@ export default function EmployeeProfileData({ onBack }: Props) {
               {isLoadingMore ? (
                 <ActivityIndicator color={Colors.powerOrange} />
               ) : (
-                <Text style={[styles.loadMoreText, { color: Colors.powerOrange }]}>LOAD MORE EMPLOYEES</Text>
+                <Text style={[styles.loadMoreText, { color: Colors.powerOrange, fontSize: loadMoreTextFontSize }]}>LOAD MORE EMPLOYEES</Text>
               )}
             </Pressable>
           )}
@@ -685,8 +708,8 @@ export default function EmployeeProfileData({ onBack }: Props) {
             !lastUpdatedAt ? (
               <View style={styles.notSyncedContainer}>
                 <MaterialCommunityIcons name="database-sync" size={80} color={colors.textSecondary} style={{ marginBottom: 16 }} />
-                <Text style={[styles.notSyncedText, { color: colors.text }]}>Directory Not Synced Yet</Text>
-                <Text style={[styles.notSyncedSubtext, { color: colors.textSecondary }]}>You need to sync to load employee records.</Text>
+                <Text style={[styles.notSyncedText, { color: colors.text, fontSize: notSyncedTextFontSize }]}>Directory Not Synced Yet</Text>
+                <Text style={[styles.notSyncedSubtext, { color: colors.textSecondary, fontSize: notSyncedSubtextFontSize }]}>You need to sync to load employee records.</Text>
                 <Pressable
                   onPress={handleManualRefresh}
                   style={({ pressed }) => [
@@ -697,12 +720,12 @@ export default function EmployeeProfileData({ onBack }: Props) {
                     }
                   ]}
                 >
-                  <Text style={styles.syncNowButtonText}>SYNC NOW</Text>
+                  <Text style={[styles.syncNowButtonText, { fontSize: syncNowButtonTextFontSize }]}>SYNC NOW</Text>
                 </Pressable>
               </View>
             ) : (
               <View style={styles.emptyContainer}>
-                <Text style={[styles.emptyText, { color: colors.textSecondary }]}>No matching employees found.</Text>
+                <Text style={[styles.emptyText, { color: colors.textSecondary, fontSize: emptyTextFontSize }]}>No matching employees found.</Text>
               </View>
             )
           )}
