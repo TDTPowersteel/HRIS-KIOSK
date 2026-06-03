@@ -1,5 +1,5 @@
-import React, { useEffect, useState, useMemo } from 'react';
-import { Modal, View, Text, StyleSheet, Pressable, ActivityIndicator, Image, ScrollView, useWindowDimensions } from 'react-native';
+import React, { useEffect, useState, useMemo, useRef } from 'react';
+import { Modal, View, Text, StyleSheet, Pressable, ActivityIndicator, Image, ScrollView, useWindowDimensions, Platform, ToastAndroid } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Colors, useTheme } from '../../../config/theme';
 import { BACKEND_URL } from '../../../config/backend';
@@ -85,15 +85,174 @@ const getLogStatuses = (log: AttendanceLog): LogStatus[] => {
   return statuses;
 };
 
+interface FilterButtonProps {
+  type: FilterType;
+  label: string;
+  icon: any;
+  filter: FilterType;
+  setFilter: (filter: FilterType) => void;
+  setStatusFilter: (statusFilter: LogStatus | 'All') => void;
+  colors: any;
+  theme: string;
+  fontSize: number;
+}
+
+const FilterButton = ({
+  type,
+  label,
+  icon,
+  filter,
+  setFilter,
+  setStatusFilter,
+  colors,
+  theme,
+  fontSize,
+}: FilterButtonProps) => (
+  <Pressable 
+    onPress={() => {
+      setFilter(type);
+      setStatusFilter('All');
+    }}
+    style={[
+      styles.filterBtn, 
+      { backgroundColor: filter === type ? Colors.powerOrange : (theme === 'light' ? '#f3f4f6' : '#2a2a2a') }
+    ]}
+  >
+    <MaterialCommunityIcons name={icon} size={18} color={filter === type ? '#fff' : colors.textSecondary} />
+    <Text style={[styles.filterBtnText, { color: filter === type ? '#fff' : colors.textSecondary, fontSize }]}>{label}</Text>
+  </Pressable>
+);
+
+interface MonthDropdownProps {
+  filter: FilterType;
+  setFilter: (filter: FilterType) => void;
+  setStatusFilter: (statusFilter: LogStatus | 'All') => void;
+  showMonthDropdown: boolean;
+  setShowMonthDropdown: (show: boolean) => void;
+  colors: any;
+  theme: string;
+  filterBtnTextFontSize: number;
+  optionTextFontSize: number;
+}
+
+const MonthDropdown = ({
+  filter,
+  setFilter,
+  setStatusFilter,
+  showMonthDropdown,
+  setShowMonthDropdown,
+  colors,
+  theme,
+  filterBtnTextFontSize,
+  optionTextFontSize,
+}: MonthDropdownProps) => {
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const isActive = filter !== 'week' && filter !== 'month';
+  const label = filter === 'all' ? 'All Time' : (isActive ? months[parseInt(filter as string, 10)] : 'Month');
+  
+  const [buttonPos, setButtonPos] = useState({ x: 0, y: 0, width: 0, height: 0 });
+  const buttonRef = useRef<View>(null);
+
+  return (
+    <View 
+      ref={buttonRef} 
+      onLayout={() => {
+        buttonRef.current?.measureInWindow((x, y, width, height) => {
+          setButtonPos({ x, y, width, height });
+        });
+      }}
+    >
+      <Pressable 
+        onPress={() => {
+          buttonRef.current?.measureInWindow((x, y, width, height) => {
+            setButtonPos({ x, y, width, height });
+            setShowMonthDropdown(!showMonthDropdown);
+          });
+        }}
+        style={[
+          styles.filterBtn, 
+          { backgroundColor: isActive ? Colors.powerOrange : (theme === 'light' ? '#f3f4f6' : '#2a2a2a') }
+        ]}
+      >
+        <MaterialCommunityIcons name="calendar-range" size={18} color={isActive ? '#fff' : colors.textSecondary} />
+        <Text style={[styles.filterBtnText, { color: isActive ? '#fff' : colors.textSecondary, fontSize: filterBtnTextFontSize }]}>
+          {label} ▼
+        </Text>
+      </Pressable>
+
+      <Modal visible={showMonthDropdown} transparent animationType="fade" onRequestClose={() => setShowMonthDropdown(false)}>
+        <Pressable style={StyleSheet.absoluteFill} onPress={() => setShowMonthDropdown(false)}>
+          <View style={[
+            styles.dropdownList, 
+            { 
+              backgroundColor: colors.surface, 
+              borderColor: colors.border, 
+              top: buttonPos.y + buttonPos.height + 5, 
+              left: buttonPos.x,
+              width: 140
+            }
+          ]}>
+            <ScrollView 
+              nestedScrollEnabled={true} 
+              style={{ maxHeight: 200 }} 
+              showsVerticalScrollIndicator={true}
+              keyboardShouldPersistTaps="handled"
+            >
+              <Pressable 
+                onPress={() => { setFilter('all'); setStatusFilter('All'); setShowMonthDropdown(false); }}
+                style={[styles.dropdownOption, filter === 'all' && { backgroundColor: theme === 'light' ? '#f3f4f6' : '#322721' }]}
+              >
+                <Text style={[styles.optionText, { color: colors.text, fontSize: optionTextFontSize }]}>All Time</Text>
+              </Pressable>
+              {months.map((m, idx) => {
+                const typeVal = idx.toString();
+                return (
+                  <Pressable 
+                    key={m} 
+                    onPress={() => {
+                      setFilter(typeVal);
+                      setStatusFilter('All');
+                      setShowMonthDropdown(false);
+                    }}
+                    style={[
+                      styles.dropdownOption,
+                      filter === typeVal && { backgroundColor: theme === 'light' ? '#f3f4f6' : '#322721' }
+                    ]}
+                  >
+                    <Text style={[styles.optionText, { color: colors.text, fontSize: optionTextFontSize }]}>{m}</Text>
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+          </View>
+        </Pressable>
+      </Modal>
+    </View>
+  );
+};
+
 export default function EmployeeDetailsModal({ visible, onClose, employee }: Props) {
   const { colors, theme } = useTheme();
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const [loading, setLoading] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
   const [history, setHistory] = useState<AttendanceLog[]>([]);
   const [filter, setFilter] = useState<FilterType>('week');
   const [statusFilter, setStatusFilter] = useState<LogStatus | 'All'>('All');
   const [showMonthDropdown, setShowMonthDropdown] = useState(false);
   const [localEmployee, setLocalEmployee] = useState<any>(employee);
+  const activeEmployee = useMemo(() => {
+    if (!employee) return null;
+    if (localEmployee && Number(localEmployee.emp_id) !== Number(employee.emp_id)) {
+      return employee;
+    }
+    return {
+      ...employee,
+      ...(localEmployee || {}),
+      accounts: localEmployee?.accounts || employee.accounts
+    };
+  }, [employee, localEmployee]);
+  const activeControllerRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     if (employee) {
@@ -105,99 +264,155 @@ export default function EmployeeDetailsModal({ visible, onClose, employee }: Pro
     if (visible && employee?.emp_id) {
       setShowMonthDropdown(false);
       setStatusFilter('All');
-    } else {
-      setShowMonthDropdown(false);
-      setStatusFilter('All');
-    }
-  }, [visible, employee?.emp_id]);
-
-  useEffect(() => {
-    if (visible && employee?.emp_id) {
       fetchHistory();
     } else {
       setHistory([]);
+      setLoading(false);
     }
+    return () => {
+      if (activeControllerRef.current) {
+        activeControllerRef.current.abort();
+        activeControllerRef.current = null;
+      }
+    };
   }, [visible, employee?.emp_id, filter]);
 
   const fetchHistory = async () => {
     if (!employee?.emp_id) return;
-    setLoading(true);
-    try {
-      // 1. Fetch fresh details from DB to guarantee correct info
+
+    if (activeControllerRef.current) {
+      activeControllerRef.current.abort();
+    }
+    
+    const cacheKey = `attendance_history:${employee.emp_id}:${filter}`;
+    const cachedString = mmkv.getString(cacheKey);
+    const hasCache = !!cachedString;
+
+    if (hasCache) {
       try {
-        const detailRes = await fetch(`${BACKEND_URL}/employees.php?detail_id=${employee.emp_id}`);
-        const detailPayload = await detailRes.json();
-        if (detailPayload.ok && detailPayload.user) {
-          const freshUser = detailPayload.user;
-          const hqPic = detailPayload.profile_picture_hq;
-          const acc = Array.isArray(freshUser.accounts) ? freshUser.accounts[0] : freshUser.accounts;
-          const merged = {
-            ...freshUser,
-            accounts: {
-              ...acc,
-              profile_picture: hqPic || acc?.profile_picture || null
-            }
-          };
-          setLocalEmployee(merged);
-
-          // Update offline cache in background
-          const userId = freshUser.log_id || acc?.log_id;
-          if (userId) {
-            upsertOfflineUserCacheUser({
-              userId: String(userId),
-              empId: String(freshUser.emp_id),
-              username: acc?.username || freshUser.name || '',
-              name: freshUser.name,
-              role: freshUser.role,
-              department: freshUser.departments?.name || null,
-              profile_picture: hqPic || acc?.profile_picture || null,
-              profile_picture_remote: acc?.profile_picture || null,
-              qrCode: acc?.qr_code || null,
-            }).catch(e => console.log('Cache update error:', e));
-          }
-        }
+        const parsed = JSON.parse(cachedString);
+        setHistory(parsed);
       } catch (err) {
-        console.log('Failed fetching fresh details:', err);
-      }
-
-      // 2. Fetch attendance history
-      let url = `${BACKEND_URL}/record_attendance.php?emp_id=${employee.emp_id}`;
-      
-      const now = new Date();
-      if (filter === 'week') {
-        const lastWeek = new Date();
-        lastWeek.setDate(now.getDate() - 7);
-        url += `&since=${lastWeek.toISOString().split('T')[0]}&limit=50`;
-      } else if (filter === 'month') {
-        const lastMonth = new Date();
-        lastMonth.setDate(now.getDate() - 30);
-        url += `&since=${lastMonth.toISOString().split('T')[0]}&limit=50`;
-      } else if (filter !== 'all') {
-        const year = now.getFullYear();
-        const monthIdx = parseInt(filter, 10);
-        const startDate = new Date(year, monthIdx, 1);
-        url += `&since=${startDate.toISOString().split('T')[0]}&limit=100`;
-      } else {
-        url += `&limit=100`;
-      }
-
-      const response = await fetch(url);
-      const payload = await response.json();
-      if (payload.ok) {
-        let fetchedData = payload.data || [];
-        if (filter !== 'all' && filter !== 'week' && filter !== 'month') {
-          const targetMonth = parseInt(filter, 10);
-          fetchedData = fetchedData.filter((log: any) => new Date(log.date).getMonth() === targetMonth);
+        console.error('Failed to parse cached history:', err);
+        try {
+          if (typeof (mmkv as any).delete === 'function') {
+            (mmkv as any).delete(cacheKey);
+          } else if (typeof (mmkv as any).remove === 'function') {
+            (mmkv as any).remove(cacheKey);
+          } else {
+            (mmkv as any).delete(cacheKey);
+          }
+        } catch (deleteErr) {
+          console.error('Failed to delete corrupted cache key:', deleteErr);
         }
-        setHistory(fetchedData);
-      } else {
+        setLoading(true);
+      }
+    } else {
+      setLoading(true);
+    }
+
+    setIsSyncing(true);
+
+    let historyUrl = `${BACKEND_URL}/record_attendance.php?emp_id=${employee.emp_id}`;
+    const now = new Date();
+    if (filter === 'week') {
+      const lastWeek = new Date();
+      lastWeek.setDate(now.getDate() - 7);
+      historyUrl += `&since=${lastWeek.toISOString().split('T')[0]}&limit=50`;
+    } else if (filter === 'month') {
+      const lastMonth = new Date();
+      lastMonth.setDate(now.getDate() - 30);
+      historyUrl += `&since=${lastMonth.toISOString().split('T')[0]}&limit=50`;
+    } else if (filter !== 'all') {
+      const year = now.getFullYear();
+      const monthIdx = parseInt(filter, 10);
+      const startDate = new Date(year, monthIdx, 1);
+      historyUrl += `&since=${startDate.toISOString().split('T')[0]}&limit=100`;
+    } else {
+      historyUrl += `&limit=100`;
+    }
+
+    const controller = new AbortController();
+    activeControllerRef.current = controller;
+    const timeoutId = setTimeout(() => controller.abort(), 15000);
+
+    try {
+      const [detailRes, historyRes] = await Promise.all([
+        fetch(`${BACKEND_URL}/employees.php?detail_id=${employee.emp_id}`, { signal: controller.signal }),
+        fetch(historyUrl, { signal: controller.signal })
+      ]);
+
+      const [detailPayload, historyPayload] = await Promise.all([
+        detailRes.json(),
+        historyRes.json()
+      ]);
+
+      if (activeControllerRef.current !== controller) return;
+
+      if (!detailPayload.ok || !historyPayload.ok) {
+        throw new Error('Server returned unsuccessful response');
+      }
+
+      if (detailPayload.user) {
+        const freshUser = detailPayload.user;
+        const hqPic = detailPayload.profile_picture_hq;
+        const acc = Array.isArray(freshUser.accounts) ? freshUser.accounts[0] : freshUser.accounts;
+        const merged = {
+          ...freshUser,
+          accounts: {
+            ...acc,
+            profile_picture: hqPic || acc?.profile_picture || null
+          }
+        };
+        setLocalEmployee(merged);
+
+        const userId = freshUser.log_id || acc?.log_id;
+        if (userId) {
+          upsertOfflineUserCacheUser({
+            userId: String(userId),
+            empId: String(freshUser.emp_id),
+            username: acc?.username || freshUser.name || '',
+            name: freshUser.name,
+            role: freshUser.role,
+            department: freshUser.departments?.name || null,
+            profile_picture: hqPic || acc?.profile_picture || null,
+            profile_picture_remote: acc?.profile_picture || null,
+            qrCode: acc?.qr_code || null,
+          }).catch(e => console.log('Cache update error:', e));
+        }
+      }
+
+      let fetchedData = historyPayload.data || [];
+      if (filter !== 'all' && filter !== 'week' && filter !== 'month') {
+        const targetMonth = parseInt(filter, 10);
+        fetchedData = fetchedData.filter((log: any) => new Date(log.date).getMonth() === targetMonth);
+      }
+
+      setHistory(fetchedData);
+      mmkv.set(cacheKey, JSON.stringify(fetchedData));
+    } catch (e: any) {
+      if (activeControllerRef.current !== controller) {
+        return;
+      }
+      console.error('Failed to fetch attendance history or details:', e);
+      if (!hasCache) {
         setHistory([]);
       }
-    } catch (e) {
-      console.error('Failed to fetch attendance history', e);
-      setHistory([]);
+      if (Platform.OS === 'android') {
+        ToastAndroid.show(
+          e?.name === 'AbortError'
+            ? 'Sync timed out. Showing offline records.'
+            : 'Sync failed. Showing offline records.',
+          ToastAndroid.SHORT
+        );
+      }
     } finally {
-      setLoading(false);
+      clearTimeout(timeoutId);
+      if (activeControllerRef.current === controller) {
+        activeControllerRef.current = null;
+        setLoading(false);
+        setIsSyncing(false);
+      }
     }
   };
 
@@ -231,8 +446,8 @@ export default function EmployeeDetailsModal({ visible, onClose, employee }: Pro
   }, [enrichedHistory]);
 
   const getProfilePicture = () => {
-    if (!localEmployee) return null;
-    const acc = Array.isArray(localEmployee.accounts) ? localEmployee.accounts[0] : localEmployee.accounts;
+    if (!activeEmployee) return null;
+    const acc = Array.isArray(activeEmployee.accounts) ? activeEmployee.accounts[0] : activeEmployee.accounts;
     return acc?.profile_picture;
   };
 
@@ -269,107 +484,7 @@ export default function EmployeeDetailsModal({ visible, onClose, employee }: Pro
     return windowHeight * 0.85;
   }, [windowHeight]);
 
-  const FilterButton = ({ type, label, icon }: { type: FilterType, label: string, icon: any }) => (
-    <Pressable 
-      onPress={() => {
-        setFilter(type);
-        setStatusFilter('All');
-      }}
-      style={[
-        styles.filterBtn, 
-        { backgroundColor: filter === type ? Colors.powerOrange : (theme === 'light' ? '#f3f4f6' : '#2a2a2a') }
-      ]}
-    >
-      <MaterialCommunityIcons name={icon} size={18} color={filter === type ? '#fff' : colors.textSecondary} />
-      <Text style={[styles.filterBtnText, { color: filter === type ? '#fff' : colors.textSecondary, fontSize: filterBtnTextFontSize }]}>{label}</Text>
-    </Pressable>
-  );
-
-  const MonthDropdown = () => {
-    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-    const isActive = filter !== 'week' && filter !== 'month';
-    const label = filter === 'all' ? 'All Time' : (isActive ? months[parseInt(filter as string, 10)] : 'Month');
-    
-    const [buttonPos, setButtonPos] = useState({ x: 0, y: 0, width: 0, height: 0 });
-    const buttonRef = React.useRef<View>(null);
-
-    return (
-      <View 
-        ref={buttonRef} 
-        onLayout={() => {
-          buttonRef.current?.measureInWindow((x, y, width, height) => {
-            setButtonPos({ x, y, width, height });
-          });
-        }}
-      >
-        <Pressable 
-          onPress={() => {
-            buttonRef.current?.measureInWindow((x, y, width, height) => {
-              setButtonPos({ x, y, width, height });
-              setShowMonthDropdown(!showMonthDropdown);
-            });
-          }}
-          style={[
-            styles.filterBtn, 
-            { backgroundColor: isActive ? Colors.powerOrange : (theme === 'light' ? '#f3f4f6' : '#2a2a2a') }
-          ]}
-        >
-          <MaterialCommunityIcons name="calendar-range" size={18} color={isActive ? '#fff' : colors.textSecondary} />
-          <Text style={[styles.filterBtnText, { color: isActive ? '#fff' : colors.textSecondary, fontSize: filterBtnTextFontSize }]}>
-            {label} ▼
-          </Text>
-        </Pressable>
-
-        <Modal visible={showMonthDropdown} transparent animationType="fade" onRequestClose={() => setShowMonthDropdown(false)}>
-          <Pressable style={StyleSheet.absoluteFill} onPress={() => setShowMonthDropdown(false)}>
-            <View style={[
-              styles.dropdownList, 
-              { 
-                backgroundColor: colors.surface, 
-                borderColor: colors.border, 
-                top: buttonPos.y + buttonPos.height + 5, 
-                left: buttonPos.x,
-                width: 140
-              }
-            ]}>
-              <ScrollView 
-                nestedScrollEnabled={true} 
-                style={{ maxHeight: 200 }} 
-                showsVerticalScrollIndicator={true}
-                keyboardShouldPersistTaps="handled"
-              >
-                <Pressable 
-                  onPress={() => { setFilter('all'); setStatusFilter('All'); setShowMonthDropdown(false); }}
-                  style={[styles.dropdownOption, filter === 'all' && { backgroundColor: theme === 'light' ? '#f3f4f6' : '#322721' }]}
-                >
-                  <Text style={[styles.optionText, { color: colors.text, fontSize: optionTextFontSize }]}>All Time</Text>
-                </Pressable>
-                {months.map((m, idx) => {
-                  const typeVal = idx.toString();
-                  return (
-                    <Pressable 
-                      key={m} 
-                      onPress={() => {
-                        setFilter(typeVal);
-                        setStatusFilter('All');
-                        setShowMonthDropdown(false);
-                      }}
-                      style={[
-                        styles.dropdownOption,
-                        filter === typeVal && { backgroundColor: theme === 'light' ? '#f3f4f6' : '#322721' }
-                      ]}
-                    >
-                      <Text style={[styles.optionText, { color: colors.text, fontSize: optionTextFontSize }]}>{m}</Text>
-                    </Pressable>
-                  );
-                })}
-              </ScrollView>
-            </View>
-          </Pressable>
-        </Modal>
-      </View>
-    );
-  };
+  if (!activeEmployee) return null;
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
@@ -387,16 +502,16 @@ export default function EmployeeDetailsModal({ visible, onClose, employee }: Pro
                   <Image source={{ uri: getProfilePicture() }} style={styles.profileImage} />
                 ) : (
                   <View style={styles.placeholderAvatar}>
-                    <Text style={[styles.placeholderText, { color: colors.textSecondary, fontSize: placeholderFontSize }]}>{localEmployee?.name?.charAt(0) || '?'}</Text>
+                    <Text style={[styles.placeholderText, { color: colors.textSecondary, fontSize: placeholderFontSize }]}>{activeEmployee?.name?.charAt(0) || '?'}</Text>
                   </View>
                 )}
               </View>
-              <Text style={[styles.name, { color: colors.text, fontSize: nameFontSize }]} numberOfLines={2}>{localEmployee?.name || 'No Name'}</Text>
-              <Text style={[styles.role, { color: colors.textSecondary, fontSize: roleFontSize }]}>{localEmployee?.role || 'No Role'}</Text>
+              <Text style={[styles.name, { color: colors.text, fontSize: nameFontSize }]} numberOfLines={2}>{activeEmployee?.name || 'No Name'}</Text>
+              <Text style={[styles.role, { color: colors.textSecondary, fontSize: roleFontSize }]}>{activeEmployee?.role || 'No Role'}</Text>
               
               <View style={[styles.deptTag, { backgroundColor: theme === 'light' ? '#f3f4f6' : '#333' }]}>
                 <Text style={[styles.deptText, { color: colors.textSecondary, fontSize: deptTextFontSize }]}>
-                  {localEmployee?.departments?.name || 'General'}
+                  {activeEmployee?.departments?.name || 'General'}
                 </Text>
               </View>
 
@@ -454,9 +569,39 @@ export default function EmployeeDetailsModal({ visible, onClose, employee }: Pro
                 <View style={styles.headerLeftInfo}>
                   <Text style={[styles.historyTitle, { color: colors.text, fontSize: historyTitleFontSize }]}>Attendance Records</Text>
                   <View style={styles.filterRow}>
-                    <FilterButton type="week" label="7D" icon="calendar-week" />
-                    <FilterButton type="month" label="30D" icon="calendar-month" />
-                    <MonthDropdown />
+                    <FilterButton 
+                      type="week" 
+                      label="7D" 
+                      icon="calendar-week" 
+                      filter={filter}
+                      setFilter={setFilter}
+                      setStatusFilter={setStatusFilter}
+                      colors={colors}
+                      theme={theme}
+                      fontSize={filterBtnTextFontSize}
+                    />
+                    <FilterButton 
+                      type="month" 
+                      label="30D" 
+                      icon="calendar-month" 
+                      filter={filter}
+                      setFilter={setFilter}
+                      setStatusFilter={setStatusFilter}
+                      colors={colors}
+                      theme={theme}
+                      fontSize={filterBtnTextFontSize}
+                    />
+                    <MonthDropdown 
+                      filter={filter}
+                      setFilter={setFilter}
+                      setStatusFilter={setStatusFilter}
+                      showMonthDropdown={showMonthDropdown}
+                      setShowMonthDropdown={setShowMonthDropdown}
+                      colors={colors}
+                      theme={theme}
+                      filterBtnTextFontSize={filterBtnTextFontSize}
+                      optionTextFontSize={optionTextFontSize}
+                    />
                   </View>
                 </View>
               </View>

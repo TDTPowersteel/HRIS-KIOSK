@@ -62,17 +62,17 @@ function enrichEmployeesWithCache(data: EmployeeRow[]): EmployeeRow[] {
   };
   return data.map(emp => {
     if (!emp) return emp;
-    const acc = normalizeAccount(emp.accounts);
-    const logId = emp.log_id || acc?.log_id;
-    if (logId) {
-      const cachedRaw = mmkv.getString(`user_by_id:${logId}`);
+    const empId = emp.emp_id;
+    if (empId) {
+      const cachedRaw = mmkv.getString(`user_by_emp_id:${empId}`) || mmkv.getString(`user_by_id:${emp.log_id || normalizeAccount(emp.accounts)?.log_id}`);
       if (cachedRaw) {
         try {
           const cached = JSON.parse(cachedRaw);
           if (cached.profile_picture?.startsWith('file://')) {
+            const acc = normalizeAccount(emp.accounts);
             const isArr = Array.isArray(emp.accounts);
             const enrichedAcc = {
-              log_id: logId,
+              log_id: emp.log_id || acc?.log_id || parseInt(cached.userId) || 0,
               username: acc?.username ?? cached.username ?? null,
               qr_code: acc?.qr_code ?? cached.qrCode ?? null,
               profile_picture: cached.profile_picture
@@ -109,17 +109,19 @@ export default function EmployeeProfileData({ onBack }: Props) {
     } else {
       const existingMap = new Map<number, EmployeeRow>();
       employeesRef.current.forEach(emp => {
-        if (emp && emp.emp_id) existingMap.set(emp.emp_id, emp);
+        if (emp && emp.emp_id != null) existingMap.set(Number(emp.emp_id), emp);
       });
       data.forEach(emp => {
-        if (emp && emp.emp_id) existingMap.set(emp.emp_id, emp);
+        if (emp && emp.emp_id != null) existingMap.set(Number(emp.emp_id), emp);
       });
       sourceData = Array.from(existingMap.values());
     }
 
     const unique = sourceData.filter(emp => {
-      if (!emp || !emp.emp_id || seen.has(emp.emp_id)) return false;
-      seen.add(emp.emp_id);
+      if (!emp || emp.emp_id == null) return false;
+      const id = Number(emp.emp_id);
+      if (seen.has(id)) return false;
+      seen.add(id);
       return true;
     });
     setEmployees(unique);
@@ -147,6 +149,16 @@ export default function EmployeeProfileData({ onBack }: Props) {
   const [isBootstrapping, setIsBootstrapping] = useState(globalEmployeesCache.length === 0);
   const [lastUpdatedAt, setLastUpdatedAt] = useState<number | null>(globalLastSyncCache);
   const [selectedEmployee, setSelectedEmployee] = useState<EmployeeRow | null>(null);
+  const localMatchCount = useMemo(() => {
+    if (!searchText) return 0;
+    return employees.filter(emp => {
+      if (!emp) return false;
+      const acc = normalizeAccount(emp.accounts ?? null);
+      return emp.name.toLowerCase().includes(searchText.toLowerCase()) ||
+        (emp.role && emp.role.toLowerCase().includes(searchText.toLowerCase())) ||
+        (acc?.username && acc.username.toLowerCase().includes(searchText.toLowerCase()));
+    }).length;
+  }, [employees, searchText]);
   const { colors, theme } = useTheme();
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const shortDimension = Math.min(windowWidth, windowHeight);
@@ -175,12 +187,13 @@ export default function EmployeeProfileData({ onBack }: Props) {
   const deleteIconFontSize = isTablet ? 18 : isSmallTablet ? 16 : 14;
   const isFetchingRef = useRef(false);
   const mountedRef = useRef(true);
+  const isBackgroundSyncingRef = useRef(false);
 
   // Animation for sliding shimmer
   const shimmerTranslate = useRef(new Animated.Value(-1)).current;
 
   useEffect(() => {
-    if (isRefreshing || (isLoading && employees.length === 0)) {
+    if (isRefreshing || isLoading) {
       Animated.loop(
         Animated.timing(shimmerTranslate, {
           toValue: 1,
@@ -191,7 +204,7 @@ export default function EmployeeProfileData({ onBack }: Props) {
     } else {
       shimmerTranslate.setValue(-1);
     }
-  }, [isRefreshing, isLoading, employees.length, shimmerTranslate]);
+  }, [isRefreshing, isLoading, shimmerTranslate]);
 
   const updateLastSync = useCallback(async (timestamp: number) => {
     setLastUpdatedAt(timestamp);
@@ -202,6 +215,76 @@ export default function EmployeeProfileData({ onBack }: Props) {
   useEffect(() => {
     employeesRef.current = employees;
   }, [employees]);
+
+  const handleProfileCached = useCallback((userId: string, localUri: string) => {
+    if (!mountedRef.current) return;
+    setEmployees(prev => {
+      const updated = prev.map(emp => {
+        const acc = Array.isArray(emp.accounts) ? emp.accounts[0] : emp.accounts;
+        const logId = emp.log_id || acc?.log_id;
+        if ((logId && String(logId) === String(userId)) || (emp.emp_id && String(emp.emp_id) === String(userId))) {
+          const isArr = Array.isArray(emp.accounts);
+          const enrichedAcc: Account = {
+            ...(acc ?? {}),
+            log_id: logId || parseInt(userId) || 0,
+            username: acc?.username ?? null,
+            profile_picture: localUri
+          };
+          return {
+            ...emp,
+            accounts: isArr ? [enrichedAcc] : enrichedAcc
+          };
+        }
+        return emp;
+      });
+      globalEmployeesCache = updated;
+      return updated;
+    });
+  }, []);
+
+  const syncRemainingEmployeesInBackground = useCallback(async () => {
+    if (isBackgroundSyncingRef.current) return;
+    isBackgroundSyncingRef.current = true;
+    try {
+      let page = 1;
+      let keepFetching = true;
+      while (keepFetching && mountedRef.current) {
+        const url = `${BACKEND_URL}/employees.php?page=${page}&limit=${ITEMS_PER_PAGE}`;
+        console.log('[BackgroundSync] Fetching URL:', url);
+        const response = await fetch(url);
+        if (!response.ok) {
+          keepFetching = false;
+          break;
+        }
+        const text = await response.text();
+        const payload = JSON.parse(text);
+        if (payload?.ok && Array.isArray(payload?.data)) {
+          const rows = payload.data as EmployeeRow[];
+          if (rows.length === 0) {
+            keepFetching = false;
+            break;
+          }
+          const enriched = enrichEmployeesWithCache(rows);
+          await updateOfflineUserCacheFromEmployees(rows, false, handleProfileCached);
+          if (!mountedRef.current) break;
+          setUniqueEmployees(enriched, true);
+          setCurrentPage(page);
+          if (rows.length < ITEMS_PER_PAGE) {
+            keepFetching = false;
+          } else {
+            page++;
+          }
+        } else {
+          keepFetching = false;
+        }
+        await new Promise(r => setTimeout(r, 200));
+      }
+    } catch (err) {
+      console.log('[BackgroundSync] error:', err);
+    } finally {
+      isBackgroundSyncingRef.current = false;
+    }
+  }, [setUniqueEmployees, handleProfileCached]);
 
   const fetchEmployees = useCallback(async (options?: { showLoading?: boolean; manual?: boolean; page?: number }) => {
     if (isFetchingRef.current) return;
@@ -217,23 +300,33 @@ export default function EmployeeProfileData({ onBack }: Props) {
     if (!isInitial) setIsLoadingMore(true);
     if (options?.manual && isInitial) setIsRefreshing(true);
 
+    const url = `${BACKEND_URL}/employees.php?page=${page}&limit=${ITEMS_PER_PAGE}`;
+    console.log('[fetchEmployees] Fetching URL:', url);
     try {
-      const response = await fetch(`${BACKEND_URL}/employees.php?page=${page}&limit=${ITEMS_PER_PAGE}`);
-      const payload = await response.json();
+      const response = await fetch(url);
+      console.log('[fetchEmployees] Response Status:', response.status);
+      const responseText = await response.text();
+      console.log('[fetchEmployees] Raw Response (first 500 chars):', responseText.slice(0, 500));
+
+      let payload: any;
+      try {
+        payload = JSON.parse(responseText);
+      } catch (parseErr) {
+        console.log('[fetchEmployees] JSON Parse Error:', parseErr);
+        throw new Error('Invalid JSON response');
+      }
 
       if (!payload?.ok || !Array.isArray(payload?.data)) {
+        console.log('[fetchEmployees] Payload validation failed:', payload);
         throw new Error('Unable to sync employee directory');
       }
 
       let rows = payload.data as EmployeeRow[];
       
-      // Update local cache only on first few pages to save storage, 
-      // or update it fully but with compressed thumbnails.
       if (isInitial) {
-        await updateOfflineUserCacheFromEmployees(rows, false);
+        await updateOfflineUserCacheFromEmployees(rows, false, handleProfileCached);
       }
 
-      // Enrich with local file URIs to prevent flashing/missing profile pictures
       rows = enrichEmployeesWithCache(rows);
       
       const now = Date.now();
@@ -243,11 +336,14 @@ export default function EmployeeProfileData({ onBack }: Props) {
       if (isInitial) {
         await updateLastSync(now);
         setCurrentPage(0);
+        setTimeout(() => {
+          syncRemainingEmployeesInBackground();
+        }, 500);
       } else {
         setCurrentPage(page);
       }
     } catch (error) {
-      console.log('fetchEmployees error:', error);
+      console.log('[fetchEmployees] fetchEmployees error:', error);
     } finally {
       isFetchingRef.current = false;
       if (mountedRef.current) {
@@ -256,7 +352,7 @@ export default function EmployeeProfileData({ onBack }: Props) {
         setIsLoadingMore(false);
       }
     }
-  }, [setUniqueEmployees, updateLastSync]);
+  }, [setUniqueEmployees, updateLastSync, handleProfileCached, syncRemainingEmployeesInBackground]);
 
   const departments = useMemo(() => {
     const depts = new Set<string>();
@@ -279,6 +375,12 @@ export default function EmployeeProfileData({ onBack }: Props) {
   }, [employees, selectedDept]);
 
   useEffect(() => {
+    if (!searchText) {
+      setHasMore(true);
+    }
+  }, [searchText]);
+
+  useEffect(() => {
     const timer = setTimeout(() => {
       setDebouncedSearchText(searchText);
     }, 300);
@@ -291,16 +393,29 @@ export default function EmployeeProfileData({ onBack }: Props) {
     let isCurrent = true;
     const fetchSearchResults = async () => {
       setIsLoading(true);
+      const url = `${BACKEND_URL}/employees.php?search=${encodeURIComponent(debouncedSearchText)}&limit=100`;
+      console.log('[fetchSearchResults] Fetching URL:', url);
       try {
-        const response = await fetch(`${BACKEND_URL}/employees.php?search=${encodeURIComponent(debouncedSearchText)}&limit=100`);
-        const payload = await response.json();
+        const response = await fetch(url);
+        console.log('[fetchSearchResults] Response Status:', response.status);
+        const responseText = await response.text();
+        console.log('[fetchSearchResults] Raw Response (first 500 chars):', responseText.slice(0, 500));
+
+        let payload: any;
+        try {
+          payload = JSON.parse(responseText);
+        } catch (parseErr) {
+          console.log('[fetchSearchResults] JSON Parse Error:', parseErr);
+          throw new Error('Invalid JSON response');
+        }
+
         if (payload?.ok && Array.isArray(payload?.data) && isCurrent) {
           let rows = payload.data as EmployeeRow[];
           rows = enrichEmployeesWithCache(rows);
           setUniqueEmployees(rows, false);
         }
       } catch (err) {
-        console.log('Search fetch error:', err);
+        console.log('[fetchSearchResults] Search fetch error:', err);
       } finally {
         if (isCurrent) {
           setIsLoading(false);
@@ -385,8 +500,10 @@ export default function EmployeeProfileData({ onBack }: Props) {
 
   const sortedAndFilteredEmployees = useMemo(() => {
     let result = employees.filter(emp => {
+      const acc = normalizeAccount(emp.accounts ?? null);
       const matchesSearch = emp.name.toLowerCase().includes(debouncedSearchText.toLowerCase()) ||
-        (emp.role && emp.role.toLowerCase().includes(debouncedSearchText.toLowerCase()));
+        (emp.role && emp.role.toLowerCase().includes(debouncedSearchText.toLowerCase())) ||
+        (acc?.username && acc.username.toLowerCase().includes(debouncedSearchText.toLowerCase()));
       
       const matchesDept = selectedDept === 'All Departments' || emp.departments?.name === selectedDept;
       const matchesRole = selectedRole === 'All Roles' || emp.role === selectedRole;
@@ -639,10 +756,12 @@ export default function EmployeeProfileData({ onBack }: Props) {
         employee={selectedEmployee} 
       />
 
-      {(isRefreshing || (isLoading && employees.length === 0)) ? (
+      {(isRefreshing || (isLoading && (employees.length === 0 || searchText.trim().length > 0))) ? (
         <ScrollView contentContainerStyle={styles.list} scrollEnabled={false}>
           <View style={styles.gridContainer}>
-            {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map((i) => <SkeletonCard key={i} />)}
+            {Array.from({ length: searchText ? (localMatchCount > 0 ? localMatchCount : 3) : 12 }).map((_, i) => (
+              <SkeletonCard key={i} />
+            ))}
           </View>
         </ScrollView>
       ) : (
@@ -726,7 +845,8 @@ export default function EmployeeProfileData({ onBack }: Props) {
               </View>
             ) : (
               <View style={styles.emptyContainer}>
-                <Text style={[styles.emptyText, { color: colors.textSecondary, fontSize: emptyTextFontSize }]}>No matching employees found.</Text>
+                <MaterialCommunityIcons name="account-search-outline" size={80} color={colors.textSecondary} style={{ marginBottom: 16 }} />
+                <Text style={[styles.emptyText, { color: colors.textSecondary, fontSize: emptyTextFontSize }]}>No result found in searching</Text>
               </View>
             )
           )}

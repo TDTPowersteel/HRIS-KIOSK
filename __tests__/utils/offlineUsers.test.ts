@@ -312,5 +312,69 @@ describe('Offline Users Caching Utils', () => {
 
       await expect(refreshOfflineUserCache()).rejects.toThrow('Unable to refresh offline user cache');
     });
+
+    it('calls onProfileCached callback when already cached locally', async () => {
+      const users = [
+        {
+          userId: '10',
+          empId: '123',
+          username: 'keith123',
+          profile_picture: 'file:///mock/cacheDirectory/profile_10.jpg',
+          profile_picture_remote: 'https://example.com/pic10.jpg',
+        }
+      ];
+      mmkv.set('user_by_id:10', JSON.stringify(users[0]));
+
+      const onProfileCached = jest.fn();
+      await triggerBackgroundProfileCaching(users, onProfileCached);
+
+      expect(onProfileCached).toHaveBeenCalledWith('10', 'file:///mock/cacheDirectory/profile_10.jpg');
+    });
+
+    it('calls onProfileCached callback after fresh download succeeds', async () => {
+      const mockDownload = FileSystem.downloadAsync as jest.Mock;
+      mockDownload.mockResolvedValue({ status: 200, uri: 'file:///mock/cacheDirectory/profile_10.jpg' });
+
+      const users = [
+        {
+          userId: '10',
+          empId: '123',
+          username: 'keith123',
+          profile_picture_remote: 'https://example.com/pic10.jpg',
+        }
+      ];
+
+      const onProfileCached = jest.fn();
+      await triggerBackgroundProfileCaching(users, onProfileCached);
+
+      expect(onProfileCached).toHaveBeenCalledWith('10', 'file:///mock/cacheDirectory/profile_10.jpg');
+    });
+
+    it('updateOfflineUserCacheFromEmployees forwards the callback to triggerBackgroundProfileCaching', async () => {
+      const mockDownload = FileSystem.downloadAsync as jest.Mock;
+      mockDownload.mockResolvedValue({ status: 200, uri: 'file:///mock/cacheDirectory/profile_99.jpg' });
+      const mockGetInfo = FileSystem.getInfoAsync as jest.Mock;
+      mockGetInfo.mockResolvedValue({ exists: true });
+
+      const employeePayload = [
+        {
+          emp_id: '999',
+          name: 'New Employee',
+          log_id: '99',
+          accounts: {
+            log_id: '99',
+            username: 'new_emp',
+            qr_code: 'QR_NEW',
+            profile_picture: 'https://example.com/pic99.jpg',
+          }
+        }
+      ];
+
+      const onProfileCached = jest.fn();
+      await updateOfflineUserCacheFromEmployees(employeePayload, true, onProfileCached);
+
+      expect(onProfileCached).toHaveBeenCalledWith('99', 'file:///mock/cacheDirectory/profile_99.jpg');
+    });
   });
 });
+

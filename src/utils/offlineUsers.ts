@@ -121,7 +121,10 @@ export async function deleteCachedProfilePicture(userId: string): Promise<void> 
   }
 }
 
-export async function triggerBackgroundProfileCaching(users: CachedOfflineUser[]): Promise<void> {
+export async function triggerBackgroundProfileCaching(
+  users: CachedOfflineUser[],
+  onProfileCached?: (userId: string, localUri: string) => void
+): Promise<void> {
   const batchSize = 5;
   for (let i = 0; i < users.length; i += batchSize) {
     const batch = users.slice(i, i + batchSize);
@@ -139,6 +142,7 @@ export async function triggerBackgroundProfileCaching(users: CachedOfflineUser[]
               existing.profile_picture.startsWith('file://') && 
               existing.profile_picture_remote === remoteUrl
             ) {
+              onProfileCached?.(user.userId, existing.profile_picture);
               return;
             }
           } catch {}
@@ -161,6 +165,7 @@ export async function triggerBackgroundProfileCaching(users: CachedOfflineUser[]
             } catch {}
           }
           mmkv.set(`user_by_id:${user.userId}`, JSON.stringify(mergedUser));
+          onProfileCached?.(user.userId, cachedUri);
         }
       })
     );
@@ -188,13 +193,16 @@ export async function getOfflineUserCache(): Promise<CachedOfflineUser[]> {
 
 export async function saveOfflineUserCache(users: CachedOfflineUser[]): Promise<void> {
   const keys = mmkv.getAllKeys();
-  const indexKeys = keys.filter(k => k.startsWith('user_by_id:') || k.startsWith('user_by_qr:'));
+  const indexKeys = keys.filter(k => k.startsWith('user_by_id:') || k.startsWith('user_by_emp_id:') || k.startsWith('user_by_qr:'));
   for (const key of indexKeys) {
     (mmkv as any).delete(key);
   }
 
   for (const user of users) {
     mmkv.set(`user_by_id:${user.userId}`, JSON.stringify(user));
+    if (user.empId) {
+      mmkv.set(`user_by_emp_id:${user.empId}`, JSON.stringify(user));
+    }
     if (user.qrCode) {
       mmkv.set(`user_by_qr:${user.qrCode}`, user.userId);
     }
@@ -203,7 +211,7 @@ export async function saveOfflineUserCache(users: CachedOfflineUser[]): Promise<
 
 export async function clearOfflineUserCache(): Promise<void> {
   const keys = mmkv.getAllKeys();
-  const indexKeys = keys.filter(k => k.startsWith('user_by_id:') || k.startsWith('user_by_qr:'));
+  const indexKeys = keys.filter(k => k.startsWith('user_by_id:') || k.startsWith('user_by_emp_id:') || k.startsWith('user_by_qr:'));
   for (const key of indexKeys) {
     (mmkv as any).delete(key);
   }
@@ -241,7 +249,8 @@ export function mapEmployeesToOfflineUsers(data: EmployeePayloadRow[]): CachedOf
 
 export async function updateOfflineUserCacheFromEmployees(
   data: EmployeePayloadRow[],
-  isFullSync: boolean = true
+  isFullSync: boolean = true,
+  onProfileCached?: (userId: string, localUri: string) => void
 ): Promise<CachedOfflineUser[]> {
   const incomingUsers = mapEmployeesToOfflineUsers(data);
   const incomingIds = new Set(incomingUsers.map(u => u.userId));
@@ -259,6 +268,9 @@ export async function updateOfflineUserCacheFromEmployees(
             const user = JSON.parse(userRaw) as CachedOfflineUser;
             if (user.qrCode) {
               (mmkv as any).delete(`user_by_qr:${user.qrCode}`);
+            }
+            if (user.empId) {
+              (mmkv as any).delete(`user_by_emp_id:${user.empId}`);
             }
           } catch {}
         }
@@ -285,13 +297,16 @@ export async function updateOfflineUserCacheFromEmployees(
     }
     
     mmkv.set(`user_by_id:${user.userId}`, JSON.stringify(finalUser));
+    if (user.empId) {
+      mmkv.set(`user_by_emp_id:${user.empId}`, JSON.stringify(finalUser));
+    }
     if (user.qrCode) {
       mmkv.set(`user_by_qr:${user.qrCode}`, user.userId);
     }
   }
   
   // Trigger background downloading in the background asynchronously (non-blocking)
-  triggerBackgroundProfileCaching(incomingUsers).catch(err => {
+  triggerBackgroundProfileCaching(incomingUsers, onProfileCached).catch(err => {
     console.error('[Profile Caching] Background caching failed:', err);
   });
   
@@ -417,6 +432,9 @@ export async function upsertOfflineUserCacheUser(
   }
 
   mmkv.set(`user_by_id:${user.userId}`, JSON.stringify(merged));
+  if (merged.empId) {
+    mmkv.set(`user_by_emp_id:${merged.empId}`, JSON.stringify(merged));
+  }
   if (normalizedQr) {
     mmkv.set(`user_by_qr:${normalizedQr}`, user.userId);
   }
@@ -430,6 +448,9 @@ export async function upsertOfflineUserCacheUser(
             const finalUser = JSON.parse(finalRaw);
             finalUser.profile_picture = cachedUri;
             mmkv.set(`user_by_id:${merged.userId}`, JSON.stringify(finalUser));
+            if (finalUser.empId) {
+              mmkv.set(`user_by_emp_id:${finalUser.empId}`, JSON.stringify(finalUser));
+            }
           } catch {}
         }
       }

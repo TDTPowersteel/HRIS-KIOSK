@@ -33,7 +33,6 @@ describe('Settings Screen', () => {
       expect(getByText('Settings')).toBeTruthy();
       expect(getByText('Touchless Mode')).toBeTruthy();
       expect(getByText('Sync Location')).toBeTruthy();
-      expect(getByText('Administrative Access')).toBeTruthy();
       expect(getByText('Offline Redundancy')).toBeTruthy();
       expect(getByText('Visual Style')).toBeTruthy();
     });

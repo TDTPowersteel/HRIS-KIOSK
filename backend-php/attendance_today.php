@@ -10,7 +10,7 @@ date_default_timezone_set('Asia/Manila');
 $today = date('Y-m-d');
 
 // Fetch today's attendance with joined employee and account info
-$select = 'att_id,emp_id,timein,timeout,date,employees(name,log_id,accounts(username,profile_picture))';
+$select = 'att_id,emp_id,timein,timeout,date,employees(name,log_id,accounts!log_id(username,profile_picture))';
 $path = "rest/v1/attendance?select=" . urlencode($select) . "&date=eq.{$today}&order=att_id.desc";
 
 [$status, $data, $err] = supabase_request('GET', $path);
