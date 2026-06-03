@@ -16,6 +16,7 @@ type Props = {
   qrSuccessLocal: boolean;
   touchlessEnabled: boolean;
   offlineModeEnabled: boolean;
+  isOnline: boolean;
   pendingSyncCount: number;
   onBack: () => void;
   onOpenOffline: () => void;
@@ -32,6 +33,7 @@ export default function QRScanView({
   qrSuccessLocal,
   touchlessEnabled,
   offlineModeEnabled,
+  isOnline,
   pendingSyncCount,
   onBack,
   onOpenOffline,
@@ -111,10 +113,10 @@ export default function QRScanView({
 
           <View style={styles.headerRight}>
             <View
-              style={[styles.miniOfflineBadge, offlineModeEnabled && styles.miniOfflineBadgeActive]}
+              style={[styles.miniOfflineBadge, !isOnline && styles.miniOfflineBadgeActive]}
             >
-              <MaterialCommunityIcons name={offlineModeEnabled ? 'cloud-off' : 'cloud-check'} size={18} color="#fff" />
-              <Text style={styles.miniOfflineText}>{offlineModeEnabled ? 'OFFLINE' : 'ONLINE'}</Text>
+              <MaterialCommunityIcons name={!isOnline ? 'cloud-off' : 'cloud-check'} size={18} color="#fff" />
+              <Text style={styles.miniOfflineText}>{!isOnline ? 'OFFLINE' : 'ONLINE'}</Text>
             </View>
           </View>
         </View>

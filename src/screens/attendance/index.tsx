@@ -66,6 +66,7 @@ export default function AttendanceScanner({ onBack, onOpenOffline }: AttendanceP
           touchlessEnabled={state.touchlessEnabled}
           offlineModeEnabled={state.offlineModeEnabled}
           pendingSyncCount={state.pendingSyncCount}
+          isOnline={state.isOnline}
           onBack={onBack}
           onOpenOffline={onOpenOffline}
         />
@@ -93,6 +94,7 @@ export default function AttendanceScanner({ onBack, onOpenOffline }: AttendanceP
           cameraVisionFaceTelemetry={state.cameraVisionFaceTelemetry}
           successAnimationTick={state.successAnimationTick}
           pendingSyncCount={state.pendingSyncCount}
+          isOnline={state.isOnline}
           faceCountdown={state.faceCountdown}
           clockInTime={state.clockInTime}
           selectedUser={state.selectedUser}

@@ -1100,8 +1100,11 @@ export function useAttendance() {
           : (isActuallyOffline ? 'Clocked Out — Saved Offline' : "You're Clocked Out!"),
         isActuallyOffline ? 'Will sync automatically when connected.' : '', 2000);
 
-      // FIRE AND FORGET: Trigger sync in background
-      syncOfflineQueue().catch(e => console.log('[Attendance] Background sync error (safe to ignore)', e));
+      // FIRE AND FORGET: Trigger sync in background if enabled
+      const autoSyncRaw = await AsyncStorage.getItem('settings_auto_sync_enabled');
+      if (autoSyncRaw !== 'false') {
+        syncOfflineQueue().catch(e => console.log('[Attendance] Background sync error (safe to ignore)', e));
+      }
 
     } catch (e: any) {
       faceProcessingRef.current = false;
@@ -2022,6 +2025,7 @@ export function useAttendance() {
   const formattedDate = currentTime.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
   const isClockingOut = attendanceAction === 'clock_out';
   const displayClockInTime = formatTo12Hour(clockInTime);
+  const isOnline = isConnected && hasGoodInternet;
 
   return {
     colors, device, hasPermission, requestPermission,
@@ -2031,7 +2035,7 @@ export function useAttendance() {
     formattedTime, formattedDate,
     isLoading, isVerifying, isQrLoading, isClockingOut, isCapturingHardware: uiCapturingHardware,
     qrVerified, qrSuccessLocal, selectedUser, clockInTime: displayClockInTime, faceCountdown,
-    touchlessEnabled, offlineModeEnabled, livenessEnabled, pendingSyncCount,
+    touchlessEnabled, offlineModeEnabled, livenessEnabled, pendingSyncCount, isOnline,
     scanStage, cameraVisionFaceDetected, cameraVisionReadiness, cameraVisionFaceBox, cameraVisionAllFaces, cameraVisionFaceTelemetry, successAnimationTick,
     showResultModal, modalType, modalTitle, modalMessage: '', modalHint, livenessMessage,
     closeModal, handleAttendance, resetAttendanceFlow, backgroundLivenessPassed,

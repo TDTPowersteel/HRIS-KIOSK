@@ -195,6 +195,20 @@ export default function OfflineSync({ onBack, onOpenScanner }: Props) {
   const loadHistory = useCallback(async () => {
     setIsHistoryLoading(true);
     
+    // Check if we have internet before trying to fetch
+    if (!hasGoodInternet) {
+      try {
+        const cached = await AsyncStorage.getItem('cached_attendance_today_history');
+        if (cached) {
+          setHistory(JSON.parse(cached));
+        }
+      } catch (e) {
+        console.error('[OfflineSync] Failed to load cached history', e);
+      }
+      setIsHistoryLoading(false);
+      return;
+    }
+
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 3000);
     
@@ -212,7 +226,13 @@ export default function OfflineSync({ onBack, onOpenScanner }: Props) {
       }
     } catch (e) {
       clearTimeout(timeoutId);
-      console.error('Failed to fetch history', e);
+      // Only log if it's not a standard connectivity error
+      const message = String(e?.message || '').toLowerCase();
+      const isConnectivity = message.includes('network request failed') || message.includes('aborted');
+      if (!isConnectivity) {
+        console.error('[OfflineSync] Failed to fetch history', e);
+      }
+
       try {
         const cached = await AsyncStorage.getItem('cached_attendance_today_history');
         if (cached) {
@@ -222,7 +242,7 @@ export default function OfflineSync({ onBack, onOpenScanner }: Props) {
     } finally {
       setIsHistoryLoading(false);
     }
-  }, []);
+  }, [hasGoodInternet]);
 
   useEffect(() => {
     const initHistoryFromCache = async () => {
@@ -557,11 +577,16 @@ export default function OfflineSync({ onBack, onOpenScanner }: Props) {
               <MaterialCommunityIcons name="history" size={panelIconSize} color={colors.accent} />
               <Text style={[styles.panelTitle, { color: colors.text, fontSize: panelTitleFontSize }]}>Today's History</Text>
             </View>
-            <Pressable onPress={loadHistory} disabled={isHistoryLoading}>
-              <Text style={[styles.refreshText, { color: colors.accent, fontSize: refreshTextFontSize }]}>
-                {isHistoryLoading ? '...' : 'REFRESH'}
-              </Text>
-            </Pressable>
+            <View style={{alignItems: 'flex-end'}}>
+              <Pressable onPress={loadHistory} disabled={isHistoryLoading}>
+                <Text style={[styles.refreshText, { color: colors.accent, fontSize: refreshTextFontSize }]}>
+                  {isHistoryLoading ? '...' : 'REFRESH'}
+                </Text>
+              </Pressable>
+              {!hasGoodInternet && (
+                <Text style={{fontSize: 9, color: colors.textSecondary, fontWeight: '700', marginTop: 2}}>CACHED DATA</Text>
+              )}
+            </View>
           </View>
 
           <View style={[styles.historySubHeader, { zIndex: 50 }]}>

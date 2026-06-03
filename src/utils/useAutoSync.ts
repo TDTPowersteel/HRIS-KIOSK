@@ -1,16 +1,10 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useEffect, useRef, useState } from 'react';
 import { BACKEND_URL } from '../config/backend';
 import { getOfflineAttendanceQueue, syncOfflineQueue } from './offlineAttendance';
 
 /**
  * Hook to handle automatic background syncing of offline attendance records.
- * 
- * Logic:
- * 1. Checks if the offline queue has items.
- * 2. If items exist, pings the backend every 30 seconds to check connectivity.
- * 3. If 2 consecutive pings succeed (1 minute total), triggers syncOfflineQueue().
- * 4. If any ping fails, resets the counter.
- * 5. Sleeps when the queue is empty to save battery.
  */
 export function useAutoSync() {
   const [isOnline, setIsOnline] = useState(true);
@@ -22,6 +16,15 @@ export function useAutoSync() {
 
     const checkAndSync = async () => {
       try {
+        // Check if auto-sync is enabled
+        const autoSyncRaw = await AsyncStorage.getItem('settings_auto_sync_enabled');
+        const isAutoSyncEnabled = autoSyncRaw !== 'false'; // Default to true
+
+        if (!isAutoSyncEnabled) {
+          timeoutId = setTimeout(checkAndSync, 30000);
+          return;
+        }
+
         const queue = await getOfflineAttendanceQueue();
         
         // If queue is empty, sleep and check again in 30s (minimal cost)

@@ -12,9 +12,11 @@ import { AdminAccessFeature } from './features/AdminAccessFeature';
 import { OfflineRedundancyFeature } from './features/OfflineRedundancyFeature';
 import { ThemeSelectorFeature } from './features/ThemeSelectorFeature';
 import { LivenessCheckFeature } from './features/LivenessCheckFeature';
+import { AutoSyncFeature } from './features/AutoSyncFeature';
 import { SettingRow } from './components/SettingRow';
 
 const TOUCHLESS_SETTING_KEY = 'settings_touchless_enabled';
+const AUTO_SYNC_SETTING_KEY = 'settings_auto_sync_enabled';
 
 type Props = {
   onBack: () => void;
@@ -70,6 +72,7 @@ export default function Settings({ onBack }: Props) {
 
   const [isLoading, setIsLoading] = useState(!settingsHasLoadedOnce);
   const [touchlessEnabled, setTouchlessEnabled] = useState(false);
+  const [autoSyncEnabled, setAutoSyncEnabled] = useState(true);
   const [isOnline, setIsOnline] = useState(true);
 
   // Shimmer animation for loading skeletons
@@ -133,7 +136,7 @@ export default function Settings({ onBack }: Props) {
   const loadSettings = useCallback(async () => {
     try {
       const [settingsEntries, response] = await Promise.all([
-        AsyncStorage.multiGet([TOUCHLESS_SETTING_KEY, 'settings_liveness_enabled']),
+        AsyncStorage.multiGet([TOUCHLESS_SETTING_KEY, 'settings_liveness_enabled', AUTO_SYNC_SETTING_KEY]),
         fetch(`${BACKEND_URL}/settings.php`, {
           headers: {
             Accept: 'application/json',
@@ -145,6 +148,7 @@ export default function Settings({ onBack }: Props) {
       const localSettings = Object.fromEntries(settingsEntries);
       setTouchlessEnabled(localSettings[TOUCHLESS_SETTING_KEY] === 'true');
       setLivenessEnabled(localSettings['settings_liveness_enabled'] !== 'false');
+      setAutoSyncEnabled(localSettings[AUTO_SYNC_SETTING_KEY] !== 'false');
 
       calculateStorageSize();
 
@@ -204,6 +208,15 @@ export default function Settings({ onBack }: Props) {
       await AsyncStorage.setItem('settings_liveness_enabled', value ? 'true' : 'false');
     } catch {
       setLivenessEnabled(!value);
+    }
+  }, []);
+
+  const handleAutoSyncChange = useCallback(async (value: boolean) => {
+    setAutoSyncEnabled(value);
+    try {
+      await AsyncStorage.setItem(AUTO_SYNC_SETTING_KEY, value ? 'true' : 'false');
+    } catch {
+      setAutoSyncEnabled(!value);
     }
   }, []);
 
@@ -323,7 +336,7 @@ export default function Settings({ onBack }: Props) {
             </View>
 
             <View style={styles.featureGrid}>
-              {[1, 2, 3, 4].map((i) => <SettingRowSkeleton key={i} />)}
+              {[1, 2, 3, 4, 5].map((i) => <SettingRowSkeleton key={i} />)}
             </View>
 
             {/* Visual Style Title Skeleton */}
@@ -409,6 +422,7 @@ export default function Settings({ onBack }: Props) {
           </View>
 
           <View style={styles.featureGrid}>
+            <AutoSyncFeature enabled={autoSyncEnabled} onToggle={handleAutoSyncChange} />
             <TouchlessModeFeature enabled={touchlessEnabled} onToggle={handleTouchlessChange} />
             <LivenessCheckFeature enabled={livenessEnabled} onToggle={handleLivenessChange} />
             <SyncLocationFeature

@@ -34,6 +34,7 @@ type Props = {
   isClockingOut: boolean;
   touchlessEnabled: boolean;
   offlineModeEnabled: boolean;
+  isOnline: boolean;
   livenessEnabled: boolean;
   scanStage: FaceScanStage;
   cameraVisionFaceDetected: boolean;
@@ -69,6 +70,7 @@ export default function FaceScanView({
   isClockingOut,
   touchlessEnabled,
   offlineModeEnabled,
+  isOnline,
   livenessEnabled,
   scanStage,
   cameraVisionFaceDetected,
@@ -501,9 +503,9 @@ export default function FaceScanView({
         <Text style={styles.topDate}>{formattedDate}</Text>
       </View>
       <View style={styles.headerRight}>
-        <View style={[styles.miniOfflineBadge, offlineModeEnabled && styles.miniOfflineBadgeActive]}>
-          <MaterialCommunityIcons name={offlineModeEnabled ? 'cloud-off' : 'cloud-check'} size={18} color="#fff" />
-          <Text style={styles.miniOfflineText}>{offlineModeEnabled ? 'OFFLINE' : 'ONLINE'}</Text>
+        <View style={[styles.miniOfflineBadge, !isOnline && styles.miniOfflineBadgeActive]}>
+          <MaterialCommunityIcons name={!isOnline ? 'cloud-off' : 'cloud-check'} size={18} color="#fff" />
+          <Text style={styles.miniOfflineText}>{!isOnline ? 'OFFLINE' : 'ONLINE'}</Text>
         </View>
       </View>
     </View>
@@ -629,7 +631,7 @@ export default function FaceScanView({
         <SafeAreaView style={styles.cameraSafeArea} edges={['top', 'right', 'bottom']}>
           <View style={styles.cameraPanelHeader}>
             <View style={styles.headerCenterRight}><Text style={styles.topTimeRight}>{formattedTime}</Text><Text style={styles.topDateRight}>{formattedDate}</Text></View>
-            <View style={[styles.miniOfflineBadge, offlineModeEnabled && styles.miniOfflineBadgeActive]}><MaterialCommunityIcons name={offlineModeEnabled ? 'cloud-off' : 'cloud-check'} size={18} color="#fff" /><Text style={styles.miniOfflineText}>{offlineModeEnabled ? 'OFFLINE' : 'ONLINE'}</Text></View>
+            <View style={[styles.miniOfflineBadge, !isOnline && styles.miniOfflineBadgeActive]}><MaterialCommunityIcons name={!isOnline ? 'cloud-off' : 'cloud-check'} size={18} color="#fff" /><Text style={styles.miniOfflineText}>{!isOnline ? 'OFFLINE' : 'ONLINE'}</Text></View>
           </View>
           <View style={styles.faceScannerAreaRight}>
             {renderScannerArea(true)}
