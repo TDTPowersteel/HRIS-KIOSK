@@ -9,9 +9,10 @@ import { Worklets, useSharedValue } from 'react-native-worklets-core';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Alert, Animated, Image as RNImage, Platform, ToastAndroid, useWindowDimensions } from 'react-native';
 import { BACKEND_URL } from '../../config/backend';
-import { enqueueOfflineAttendance, getOfflineAttendanceQueue } from '../../utils/offlineAttendance';
+import { enqueueOfflineAttendance, getOfflineAttendanceQueue, syncOfflineQueue } from '../../utils/offlineAttendance';
 import { resolveOfflineUserFromQr, upsertOfflineUserCacheUser } from '../../utils/offlineUsers';
 import { useTheme } from '../../config/theme';
+import { useNetworkStatus } from '../../hooks/useNetworkStatus';
 import { compareEmbeddings, compareMultiAngleEmbeddings, isMatch, MODEL_CONFIG } from '../../utils/face-embedding';
 import { loadFaceModel, getEmbedding, isModelLoaded } from '../../faceEngine/model';
 import { rgbaBufferToCHWTensor, prepareEmbeddingInput } from '../../faceEngine/preprocess';
@@ -261,6 +262,7 @@ const sanitizeForLog = (obj: any) => {
 
 export function useAttendance() {
   const { colors } = useTheme();
+  const { isConnected, hasGoodInternet } = useNetworkStatus();
   const NETWORK_TIMEOUT_MS = 1500;
   const NETWORK_TOAST_COOLDOWN_MS = 15000;
     const CAMERA_VISION_STABLE_FACE_FRAMES = 8;
@@ -569,6 +571,7 @@ export function useAttendance() {
     identityStatusRef.current = 'idle';
     livenessStatusRef.current = 'idle';
     livenessScoreRef.current = null;
+    setOfflineModeEnabled(false);
 
     // Reset liveness state machine
     consecutiveNoFaceFrames.value = 0;
@@ -1062,60 +1065,44 @@ export function useAttendance() {
         console.log('[Attendance] Could not capture location', e);
       }
 
-      let data: any = null;
-      let capturedOffline = offlineModeEnabled;
+      // HYPER-FAST: Always queue locally first
+      await enqueueOfflineAttendance({ 
+          userId: selectedUserRef.current!.userId, 
+          username: selectedUserRef.current!.username, 
+          name: selectedUserRef.current!.name ?? null, 
+          action, 
+          date: localDate, 
+          time: localTime,
+          ...locationData
+      });
+      await refreshPendingSyncCount();
 
-      if (capturedOffline) {
-        await enqueueOfflineAttendance({ 
-            userId: selectedUserRef.current!.userId, 
-            username: selectedUserRef.current!.username, 
-            name: selectedUserRef.current!.name ?? null, 
-            action, 
-            date: localDate, 
-            time: localTime,
-            ...locationData
-        });
-        await refreshPendingSyncCount();
-      } else {
-        try {
-          console.log(`[Attendance] Recording finalized. Identity Passed. Active Liveness Passed (Score: ${livenessScoreRef.current?.toFixed(3) ?? 'N/A'})`);
-          data = await recordAttendance(action, locationData);
-        } catch (error) {
-          if (!isLikelyConnectivityError(error)) throw error;
-          capturedOffline = true;
-          setOfflineModeEnabled(true);
-          showOfflineToast();
-          await enqueueOfflineAttendance({ 
-              userId: selectedUserRef.current!.userId, 
-              username: selectedUserRef.current!.username, 
-              name: selectedUserRef.current!.name ?? null, 
-              action, 
-              date: localDate, 
-              time: localTime,
-              ...locationData
-          });
-          await refreshPendingSyncCount();
-        }
-      }
-
+      // Optimistically update local session state
       if (action === 'clock_in') {
-        await storeClockInNotification({ date: data?.date || localDate, timein: data?.timein || localTime });
-        await saveStoredSession({ userId: selectedUserRef.current!.userId, username: selectedUserRef.current!.username, name: selectedUserRef.current!.name ?? null, clockInTime: data?.timein || localTime, clockInDate: data?.date || localDate });
-        if (!capturedOffline && data?.emp_id != null) await AsyncStorage.setItem('emp_id', String(data.emp_id));
+        await storeClockInNotification({ date: localDate, timein: localTime });
+        await saveStoredSession({ userId: selectedUserRef.current!.userId, username: selectedUserRef.current!.username, name: selectedUserRef.current!.name ?? null, clockInTime: localTime, clockInDate: localDate });
       } else {
         await clearStoredSession(selectedUserRef.current!.userId);
       }
+
+      // Determine true offline status for UI message
+      const isActuallyOffline = !isConnected || !hasGoodInternet || offlineModeEnabled;
       
       setScanStage('success');
       setSuccessAnimationTick((prev) => prev + 1);
       await new Promise((resolve) => setTimeout(resolve, 500));
       await resetAttendanceFlow();
       workletPhase.value = 0; // Reset worklet phase
+      
       showModal('success',
         action === 'clock_in'
-          ? (capturedOffline ? 'Clocked In — Saved Offline' : "You're Clocked In!")
-          : (capturedOffline ? 'Clocked Out — Saved Offline' : "You're Clocked Out!"),
-        capturedOffline ? 'Will sync automatically when connected.' : '', 2000);
+          ? (isActuallyOffline ? 'Clocked In — Saved Offline' : "You're Clocked In!")
+          : (isActuallyOffline ? 'Clocked Out — Saved Offline' : "You're Clocked Out!"),
+        isActuallyOffline ? 'Will sync automatically when connected.' : '', 2000);
+
+      // FIRE AND FORGET: Trigger sync in background
+      syncOfflineQueue().catch(e => console.log('[Attendance] Background sync error (safe to ignore)', e));
+
     } catch (e: any) {
       faceProcessingRef.current = false;
       livenessTriggeredRef.current = false;
@@ -1123,7 +1110,7 @@ export function useAttendance() {
     } finally {
       setIsVerifying(false);
     }
-  }, [attendanceAction, clearStoredSession, enqueueOfflineAttendance, isLikelyConnectivityError, offlineModeEnabled, recordAttendance, refreshPendingSyncCount, resetAttendanceFlow, saveStoredSession, showModal, showOfflineToast, storeClockInNotification, workletPhase]);
+  }, [attendanceAction, clearStoredSession, enqueueOfflineAttendance, isConnected, hasGoodInternet, offlineModeEnabled, refreshPendingSyncCount, resetAttendanceFlow, saveStoredSession, showModal, storeClockInNotification, workletPhase]);
 
   // Main attendance handler (Concurrent Phase 1 & 2)
   const executeFaceVerification = useCallback(async () => {
