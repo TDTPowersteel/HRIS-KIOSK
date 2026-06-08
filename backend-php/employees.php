@@ -53,9 +53,9 @@ if ($detailId) {
             if (is_array($imgRows) && count($imgRows) > 0) {
                 $rawImg = $imgRows[0]['profile_picture'] ?? null;
                 if ($rawImg && !empty($rawImg)) {
-                    // Hyper-optimized for Modal stability: 240px width at 60% quality
-                    // This ensures the response is small enough to fit in any buffer (~20KB)
-                    $compressedImg = compress_base64_image($rawImg, 240, 60);
+                    // Hyper-optimized for Modal stability: 500px width at 70% quality
+                    // This ensures the response is small enough to fit in any buffer
+                    $compressedImg = compress_base64_image($rawImg, 500, 70);
                     
                     if (strpos($compressedImg, 'data:image') !== 0) {
                         $profile_picture_hq = 'data:image/jpeg;base64,' . $compressedImg;
@@ -85,8 +85,15 @@ $page = isset($_GET['page']) ? (int)$_GET['page'] : 0;
 $limit = isset($_GET['limit']) ? (int)$_GET['limit'] : 1000;
 $offset = $page * $limit;
 
-$select = 'emp_id,name,role,dept_id,log_id,accounts(log_id,username,qr_code,profile_picture),departments(name)';
+$search = isset($_GET['search']) ? trim($_GET['search']) : null;
+
+$select = 'emp_id,name,role,dept_id,log_id,accounts!log_id(log_id,username,qr_code,profile_picture),departments(name)';
 $path = "rest/v1/employees?select={$select}&order=emp_id&limit={$limit}&offset={$offset}";
+
+if (!empty($search)) {
+    $searchEscaped = urlencode('%' . $search . '%');
+    $path .= "&or=(name.ilike.{$searchEscaped},role.ilike.{$searchEscaped},accounts!log_id.username.ilike.{$searchEscaped})";
+}
 
 [$status, $data, $err] = supabase_request('GET', $path);
 
@@ -97,16 +104,15 @@ if (is_array($data)) {
             if (isset($employee['accounts']['profile_picture'])) {
                 $img = $employee['accounts']['profile_picture'];
                 if ($img && strlen($img) > 100) {
-                    // Extreme compression for list view: 80px width, 15% quality
-                    // This keeps each entry ~1.5KB, allowing 10k+ employees in 20MB cache.
-                    $employee['accounts']['profile_picture'] = compress_base64_image($img, 80, 15);
+                    // 500px width, 70% quality for direct use in modals without re-fetching
+                    $employee['accounts']['profile_picture'] = compress_base64_image($img, 500, 70);
                 }
             } else if (is_array($employee['accounts'])) {
                 foreach ($employee['accounts'] as &$account) {
                     if (isset($account['profile_picture'])) {
                         $img = $account['profile_picture'];
                         if ($img && strlen($img) > 100) {
-                            $account['profile_picture'] = compress_base64_image($img, 80, 15);
+                            $account['profile_picture'] = compress_base64_image($img, 500, 70);
                         }
                     }
                 }

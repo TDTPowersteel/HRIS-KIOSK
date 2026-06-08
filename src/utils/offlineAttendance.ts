@@ -105,6 +105,8 @@ export async function syncOfflineItem(item: OfflineAttendanceItem): Promise<void
     body: JSON.stringify({
       user_id: item.userId,
       action: item.action,
+      date: item.date,
+      time: item.time,
       latitude: item.latitude,
       longitude: item.longitude,
       address: item.address,

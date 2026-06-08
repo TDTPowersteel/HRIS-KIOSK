@@ -28,3 +28,100 @@ jest.mock('expo-location', () => {
 });
 
 global.fetch = jest.fn();
+
+// Mock react-native-mmkv for Jest
+jest.mock('react-native-mmkv', () => {
+  const storage = new Map();
+  const mockInstance = {
+    set: jest.fn((key, value) => {
+      storage.set(key, value);
+    }),
+    getString: jest.fn((key) => {
+      const val = storage.get(key);
+      return typeof val === 'string' ? val : undefined;
+    }),
+    getNumber: jest.fn((key) => {
+      const val = storage.get(key);
+      return typeof val === 'number' ? val : undefined;
+    }),
+    getBoolean: jest.fn((key) => {
+      const val = storage.get(key);
+      return typeof val === 'boolean' ? val : undefined;
+    }),
+    delete: jest.fn((key) => {
+      storage.delete(key);
+    }),
+    clearAll: jest.fn(() => {
+      storage.clear();
+    }),
+    getAllKeys: jest.fn(() => {
+      return Array.from(storage.keys());
+    }),
+  };
+
+  return {
+    createMMKV: jest.fn().mockReturnValue(mockInstance),
+    MMKV: jest.fn().mockImplementation(() => mockInstance),
+  };
+});
+
+
+// Mock expo-file-system for Jest (SDK 54+ compatible object-oriented File & Paths mock)
+jest.mock('expo-file-system', () => {
+  const downloadAsyncMock = jest.fn().mockImplementation((url, path) => Promise.resolve({ uri: path }));
+  const deleteAsyncMock = jest.fn().mockResolvedValue(undefined);
+  const getInfoAsyncMock = jest.fn().mockResolvedValue({ exists: true });
+
+  let syncExistsValue = { exists: true };
+  let syncExistsFn = null;
+
+  const originalMockResolvedValue = getInfoAsyncMock.mockResolvedValue;
+  getInfoAsyncMock.mockResolvedValue = (value) => {
+    syncExistsValue = value;
+    syncExistsFn = null;
+    return originalMockResolvedValue.call(getInfoAsyncMock, value);
+  };
+
+  const originalMockImplementation = getInfoAsyncMock.mockImplementation;
+  getInfoAsyncMock.mockImplementation = (fn) => {
+    syncExistsFn = (uri) => uri.endsWith('.jpg');
+    return originalMockImplementation.call(getInfoAsyncMock, fn);
+  };
+
+  class MockFile {
+    constructor(directory, filename) {
+      this.directory = directory;
+      this.filename = filename;
+      this.uri = `${directory}${filename}`;
+    }
+    get exists() {
+      if (syncExistsFn) {
+        return syncExistsFn(this.uri);
+      }
+      return syncExistsValue ? syncExistsValue.exists : true;
+    }
+    async delete() {
+      await deleteAsyncMock(this.uri, { idempotent: true });
+    }
+    static async downloadFileAsync(url, file) {
+      const res = await downloadAsyncMock(url, file.uri);
+      if (res && typeof res.status === 'number' && res.status !== 200) {
+        throw new Error('Download failed with status ' + res.status);
+      }
+      return { uri: (res && res.uri) || file.uri };
+    }
+  }
+
+  return {
+    documentDirectory: 'file:///mock/documentDirectory/',
+    cacheDirectory: 'file:///mock/cacheDirectory/',
+    downloadAsync: downloadAsyncMock,
+    deleteAsync: deleteAsyncMock,
+    getInfoAsync: getInfoAsyncMock,
+    File: MockFile,
+    Paths: {
+      cache: 'file:///mock/cacheDirectory/',
+      document: 'file:///mock/documentDirectory/',
+    }
+  };
+});

@@ -58,6 +58,7 @@ function updateBackendConfig(ip) {
     
     if (content.includes('const IP_ADDRESS =')) {
       content = content.replace(/const IP_ADDRESS = ['"].*?['"];/, `const IP_ADDRESS = '${ip}';`);
+      content = content.replace(/export const BACKEND_URL = [`'"].*?[`'"];/, `export const BACKEND_URL = \`http://\${IP_ADDRESS}:${port}\`;`);
     } else {
       const lines = content.split('\n');
       const newLines = [];

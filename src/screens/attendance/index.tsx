@@ -58,6 +58,7 @@ export default function AttendanceScanner({ onBack, onOpenOffline }: AttendanceP
           device={state.device}
           codeScanner={state.codeScanner}
           flashAnim={state.flashAnim}
+          scanLineAnim={state.scanLineAnim}
           formattedTime={state.formattedTime}
           formattedDate={state.formattedDate}
           isQrLoading={state.isQrLoading}
@@ -65,6 +66,7 @@ export default function AttendanceScanner({ onBack, onOpenOffline }: AttendanceP
           touchlessEnabled={state.touchlessEnabled}
           offlineModeEnabled={state.offlineModeEnabled}
           pendingSyncCount={state.pendingSyncCount}
+          isOnline={state.isOnline}
           onBack={onBack}
           onOpenOffline={onOpenOffline}
         />
@@ -75,7 +77,6 @@ export default function AttendanceScanner({ onBack, onOpenOffline }: AttendanceP
           cameraRef={state.cameraRef}
           frameProcessor={state.frameProcessor}
           flashAnim={state.flashAnim}
-          scanLineAnim={state.scanLineAnim}
           formattedTime={state.formattedTime}
           formattedDate={state.formattedDate}
           isVerifying={state.isVerifying}
@@ -84,21 +85,23 @@ export default function AttendanceScanner({ onBack, onOpenOffline }: AttendanceP
           touchlessEnabled={state.touchlessEnabled}
           offlineModeEnabled={state.offlineModeEnabled}
           livenessEnabled={state.livenessEnabled}
-          faceEngine={state.faceEngine}
           scanStage={state.scanStage}
           cameraVisionFaceDetected={state.cameraVisionFaceDetected}
           cameraVisionReadiness={state.cameraVisionReadiness}
+          backgroundLivenessPassed={state.backgroundLivenessPassed}
           cameraVisionFaceBox={state.cameraVisionFaceBox}
           cameraVisionAllFaces={state.cameraVisionAllFaces}
           cameraVisionFaceTelemetry={state.cameraVisionFaceTelemetry}
           successAnimationTick={state.successAnimationTick}
           pendingSyncCount={state.pendingSyncCount}
+          isOnline={state.isOnline}
           faceCountdown={state.faceCountdown}
           clockInTime={state.clockInTime}
           selectedUser={state.selectedUser}
           accentColor={state.colors.accent}
           livenessMessage={state.livenessMessage}
-          onBack={onBack}
+          showResultModal={state.showResultModal}
+          onBack={state.resetAttendanceFlow}
           onOpenOffline={onOpenOffline}
           onAttendance={state.handleAttendance}
         />
@@ -108,7 +111,6 @@ export default function AttendanceScanner({ onBack, onOpenOffline }: AttendanceP
         visible={state.showResultModal}
         type={state.modalType}
         title={state.modalTitle}
-        message={state.modalMessage}
         hint={state.modalHint}
         scaleAnim={state.scaleAnim}
         onClose={state.closeModal}

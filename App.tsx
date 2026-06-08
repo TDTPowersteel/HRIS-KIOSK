@@ -1,7 +1,7 @@
 import { StatusBar } from 'expo-status-bar';
 import * as ScreenOrientation from 'expo-screen-orientation';
 import { useEffect, useMemo, useState, useCallback } from 'react';
-import { Image, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import { Image, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import ShowQRScan from './src/screens/ShowQRScan';
 import EmployeeProfileData from './src/screens/EmployeeProfileData';
@@ -12,8 +12,34 @@ import { ThemeContext, Theme, getStoredTheme, saveTheme, ThemeType, Colors } fro
 import { useAutoSync } from './src/utils/useAutoSync';
 
 export default function App() {
-  const { width: windowWidth } = useWindowDimensions();
-  const isTablet = windowWidth > 600;
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
+  const isTablet = windowWidth > 600 && windowHeight > 550;
+
+  const isSmallScreen = windowWidth < 380 || windowHeight < 550;
+  const isShortScreen = windowHeight < 550;
+
+  const cardPaddingHorizontal = isTablet ? 56 : (isSmallScreen ? 24 : 32);
+  const cardPaddingVertical = isTablet ? 72 : (isShortScreen ? 25 : (isSmallScreen ? 32 : 48));
+  const brandBlockMargin = isTablet ? 56 : (isShortScreen ? 20 : (isSmallScreen ? 24 : 32));
+  
+  const maxAvailableLogoWidth = windowWidth - (cardPaddingHorizontal * 2) - (isTablet ? 96 : 48);
+  const targetLogoWidth = isTablet ? 420 : (isSmallScreen ? 220 : 280);
+  const logoWidth = Math.min(targetLogoWidth, maxAvailableLogoWidth);
+  const logoHeight = logoWidth * (isTablet ? 130 / 420 : 85 / 280);
+  
+  const logoMarginBottom = isTablet ? 8 : (isShortScreen ? 4 : 8);
+  const brandSubcopyFontSize = isTablet ? 15 : (isSmallScreen ? 11 : 12);
+  
+  const buttonGap = isTablet ? 20 : (isShortScreen ? 12 : (isSmallScreen ? 12 : 16));
+  const scannerBtnHeight = isTablet ? 96 : (isShortScreen ? 56 : (isSmallScreen ? 60 : 72));
+  const directoryBtnHeight = isTablet ? 80 : (isShortScreen ? 48 : (isSmallScreen ? 54 : 64));
+  
+  const scannerBtnFontSize = isTablet ? 20 : (isShortScreen ? 14 : (isSmallScreen ? 14 : 16));
+  const directoryBtnFontSize = isTablet ? 17 : (isShortScreen ? 13 : (isSmallScreen ? 13 : 14));
+  
+  const settingsIconSize = isTablet ? 20 : (isShortScreen ? 14 : (isSmallScreen ? 14 : 16));
+  const settingsTextSize = isTablet ? 14 : (isShortScreen ? 11 : (isSmallScreen ? 11 : 12));
+  const settingsMarginTop = isShortScreen ? 4 : 8;
 
   useAutoSync();
 
@@ -54,78 +80,104 @@ export default function App() {
     return (
       <View style={[styles.fullScreenContainer, { backgroundColor: currentTheme.background }]}>
         <View style={[styles.backgroundGlowTop, { 
-          backgroundColor: theme === 'light' ? 'rgba(230, 112, 38, 0.08)' : 'rgba(230, 112, 38, 0.12)',
+          backgroundColor: theme === 'light' ? 'rgba(230, 112, 38, 0.05)' : 'rgba(230, 112, 38, 0.08)',
           shadowColor: Colors.powerOrange,
-          shadowRadius: isTablet ? 180 : 120,
-          width: isTablet ? 600 : 400,
-          height: isTablet ? 450 : 300,
+          shadowRadius: isTablet ? 200 : 150,
+          width: isTablet ? 700 : 500,
+          height: isTablet ? 500 : 350,
         } as any]} />
         <View style={[styles.backgroundGlowBottom, { 
-          backgroundColor: theme === 'light' ? 'rgba(113, 112, 116, 0.08)' : 'rgba(113, 112, 116, 0.12)',
+          backgroundColor: theme === 'light' ? 'rgba(113, 112, 116, 0.05)' : 'rgba(113, 112, 116, 0.08)',
           shadowColor: Colors.steelGray,
-          shadowRadius: isTablet ? 160 : 100,
-          width: isTablet ? 500 : 350,
-          height: isTablet ? 400 : 280,
+          shadowRadius: isTablet ? 180 : 120,
+          width: isTablet ? 600 : 400,
+          height: isTablet ? 450 : 320,
         } as any]} />
 
-        <SafeAreaView style={[styles.container, { paddingHorizontal: isTablet ? 40 : 20 }]}>
-          <View style={[styles.homeCard, { 
-            backgroundColor: theme === 'light' ? 'rgba(255, 255, 255, 1)' : 'rgba(36, 36, 35, 1)', 
-            paddingHorizontal: isTablet ? 40 : 24,
-            paddingVertical: isTablet ? 60 : 40,
-            shadowColor: '#000',
-            shadowOpacity: 0.1,
-            shadowRadius: 10,
-            shadowOffset: { width: 0, height: 10 },
-            elevation: 10,
-          }]}>
+        <SafeAreaView style={styles.container}>
+          <ScrollView
+            contentContainerStyle={[
+              styles.scrollContainer,
+              { 
+                paddingHorizontal: isTablet ? 48 : (isSmallScreen ? 12 : 24),
+                paddingVertical: isShortScreen ? 0 : 24
+              }
+            ]}
+            bounces={false}
+            showsVerticalScrollIndicator={false}
+          >
+            <View style={[styles.homeCard, { 
+              backgroundColor: theme === 'light' ? '#FFFFFF' : '#242423', 
+              paddingHorizontal: cardPaddingHorizontal,
+              paddingVertical: cardPaddingVertical,
+              maxWidth: isTablet ? 650 : (isShortScreen ? 460 : 540),
+              shadowColor: '#000',
+              shadowOpacity: 0.12,
+              shadowRadius: 16,
+              shadowOffset: { width: 0, height: 8 },
+              elevation: 12,
+            }]}>
 
-            <View style={[styles.brandBlock, { marginBottom: isTablet ? 50 : 30 }]}>
-              <Image 
-                source={require('./assets/tdt-logo.png')} 
-                style={{ width: isTablet ? 380 : 240, height: isTablet ? 120 : 80, marginBottom: 20 }} 
-                resizeMode="contain" 
-              />
-              <Text style={[styles.brandSubcopy, { color: currentTheme.textSecondary, fontSize: isTablet ? 18 : 14 }]}>Attendance Monitoring System</Text>
+              <View style={[styles.brandBlock, { marginBottom: brandBlockMargin }]}>
+                <Image 
+                  source={require('./assets/tdt-logo.png')} 
+                  style={{ width: logoWidth, height: logoHeight, marginBottom: logoMarginBottom }} 
+                  resizeMode="contain" 
+                />
+                <Text style={[styles.brandSubcopy, { color: currentTheme.textSecondary, fontSize: brandSubcopyFontSize, marginTop: 0 }]}>
+                  Attendance Monitoring System
+                </Text>
+              </View>
+
+              <View style={[styles.buttonStack, { gap: buttonGap }]}>
+                <Pressable 
+                  style={({ pressed }) => [
+                    styles.largeButton, 
+                    { 
+                      backgroundColor: Colors.powerOrange, 
+                      height: scannerBtnHeight 
+                    },
+                    pressed && { backgroundColor: Colors.deepOrange, transform: [{ scale: 0.985 }] }
+                  ]} 
+                  onPress={() => setScreen('qr')}
+                >
+                  <Text style={[styles.largeButtonText, { fontSize: scannerBtnFontSize }]}>ATTENDANCE SCANNER</Text>
+                </Pressable>
+
+                <Pressable 
+                  style={({ pressed }) => [
+                    styles.secondaryButton, 
+                    { 
+                      backgroundColor: theme === 'light' ? '#F5F5F5' : '#2D2D2C', 
+                      borderColor: theme === 'light' ? '#E0E0E0' : 'rgba(255,255,255,0.1)',
+                      height: directoryBtnHeight 
+                    },
+                    pressed && { backgroundColor: theme === 'light' ? '#EEEEEE' : '#353534', transform: [{ scale: 0.985 }] }
+                  ]} 
+                  onPress={() => setScreen('profile')}
+                >
+                  <Text style={[styles.secondaryButtonText, { color: currentTheme.text, fontSize: directoryBtnFontSize }]}>EMPLOYEE DIRECTORY</Text>
+                </Pressable>
+
+                <Pressable 
+                  style={({ pressed }) => [
+                    styles.minimalButton, 
+                    { 
+                      marginTop: settingsMarginTop,
+                      backgroundColor: pressed ? (theme === 'light' ? 'rgba(0,0,0,0.03)' : 'rgba(255,255,255,0.03)') : 'transparent',
+                      borderRadius: 12,
+                    }
+                  ]} 
+                  onPress={() => setScreen('settings')}
+                >
+                  <View style={styles.settingsRow}>
+                    <Text style={[styles.settingsIcon, { color: Colors.steelGray, fontSize: settingsIconSize }]}>{'\u2699'}</Text>
+                    <Text style={[styles.minimalButtonText, { color: Colors.steelGray, fontSize: settingsTextSize }]}>SETTINGS</Text>
+                  </View>
+                </Pressable>
+              </View>
             </View>
-
-            <View style={[styles.buttonStack, { gap: isTablet ? 24 : 16 }]}>
-              <Pressable 
-                style={({ pressed }) => [
-                  styles.largeButton, 
-                  { backgroundColor: Colors.powerOrange, height: isTablet ? 90 : 70 },
-                  pressed && { backgroundColor: Colors.deepOrange, transform: [{ scale: 0.98 }] }
-                ]} 
-                onPress={() => setScreen('qr')}
-              >
-                <Text style={[styles.largeButtonText, { fontSize: isTablet ? 18 : 15 }]}>ATTENDANCE SCANNER</Text>
-              </Pressable>
-
-              <Pressable 
-                style={({ pressed }) => [
-                  styles.secondaryButton, 
-                  { backgroundColor: currentTheme.surface, borderColor: Colors.steelGray, height: isTablet ? 80 : 65 },
-                  pressed && { backgroundColor: theme === 'light' ? '#f0f0f0' : '#2a2a29', transform: [{ scale: 0.98 }] }
-                ]} 
-                onPress={() => setScreen('profile')}
-              >
-                <Text style={[styles.secondaryButtonText, { color: currentTheme.text, fontSize: isTablet ? 16 : 14 }]}>EMPLOYEE DIRECTORY</Text>
-              </Pressable>
-
-              <Pressable 
-                style={({ pressed }) => [
-                  styles.minimalButton, 
-                  pressed && { opacity: 0.7 }
-                ]} 
-                onPress={() => setScreen('settings')}
-              >
-                <View style={styles.settingsRow}>
-                  <Text style={[styles.settingsIcon, { color: Colors.steelGray, fontSize: isTablet ? 20 : 16 }]}>{'\u2699'}</Text>
-                  <Text style={[styles.minimalButtonText, { color: Colors.steelGray, fontSize: isTablet ? 15 : 13 }]}>SETTINGS</Text>
-                </View>
-              </Pressable>
-            </View>
-          </View>
+          </ScrollView>
         </SafeAreaView>
 
         <StatusBar style={theme === 'light' ? 'dark' : 'light'} />
@@ -149,7 +201,11 @@ const styles = StyleSheet.create({
   },
   container: {
     flex: 1,
+  },
+  scrollContainer: {
+    flexGrow: 1,
     justifyContent: 'center',
+    alignItems: 'center',
   },
   backgroundGlowTop: {
     position: 'absolute',

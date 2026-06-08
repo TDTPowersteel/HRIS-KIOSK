@@ -17,8 +17,8 @@ import { Camera, CameraProps } from 'react-native-vision-camera';
 import * as ScreenOrientation from 'expo-screen-orientation';
 import AnimatedReanimated, { useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
 import { styles } from './style/FaceScanViewStyle';
+import { useTheme } from '../../config/theme';
 import type { ResolvedUser } from './types';
-import type { FaceEngine } from '../settings/features/FaceRecogEngineFeature';
 import type { CameraVisionFaceTelemetry, FaceScanStage } from './types';
 
 type Props = {
@@ -27,7 +27,6 @@ type Props = {
   cameraRef: React.RefObject<Camera | null>;
   frameProcessor: any;
   flashAnim: Animated.Value;
-  scanLineAnim: Animated.Value;
   formattedTime: string;
   formattedDate: string;
   isVerifying: boolean;
@@ -35,11 +34,12 @@ type Props = {
   isClockingOut: boolean;
   touchlessEnabled: boolean;
   offlineModeEnabled: boolean;
+  isOnline: boolean;
   livenessEnabled: boolean;
-  faceEngine: FaceEngine;
   scanStage: FaceScanStage;
   cameraVisionFaceDetected: boolean;
   cameraVisionReadiness: number;
+  backgroundLivenessPassed: boolean;
   cameraVisionFaceBox: { left: number; top: number; width: number; height: number; frameWidth?: number; frameHeight?: number } | null;
   cameraVisionAllFaces?: Array<{ id: string; left: number; top: number; width: number; height: number; isTarget: boolean; frameWidth?: number; frameHeight?: number }> | null;
   cameraVisionFaceTelemetry: CameraVisionFaceTelemetry | null;
@@ -51,6 +51,7 @@ type Props = {
   accentColor: string;
   livenessMessage: string;
   showTelemetry?: boolean;
+  showResultModal?: boolean;
   onBack: () => void;
   onOpenOffline: () => void;
   onAttendance: () => void;
@@ -62,7 +63,6 @@ export default function FaceScanView({
   cameraRef,
   frameProcessor,
   flashAnim,
-  scanLineAnim,
   formattedTime,
   formattedDate,
   isVerifying,
@@ -70,11 +70,12 @@ export default function FaceScanView({
   isClockingOut,
   touchlessEnabled,
   offlineModeEnabled,
+  isOnline,
   livenessEnabled,
-  faceEngine,
   scanStage,
   cameraVisionFaceDetected,
   cameraVisionReadiness,
+  backgroundLivenessPassed,
   cameraVisionFaceBox,
   cameraVisionAllFaces = [],
   cameraVisionFaceTelemetry,
@@ -86,10 +87,21 @@ export default function FaceScanView({
   accentColor,
   livenessMessage,
   showTelemetry = false,
+  showResultModal = false,
   onBack,
   onOpenOffline,
   onAttendance,
 }: Props) {
+  const { theme, colors } = useTheme();
+
+  const isThemeLight = theme === 'light';
+  const profileBgColor = isThemeLight ? '#F4EFE6' : colors.surface;
+  const nameTextColor = isThemeLight ? colors.text : '#fff';
+  const roleTextColor = isThemeLight ? colors.textSecondary : 'rgba(255,255,255,0.7)';
+  const iconColor = isThemeLight ? colors.text : '#fff';
+  const placeholderBg = isThemeLight ? 'rgba(0,0,0,0.05)' : 'rgba(255,255,255,0.2)';
+  const portraitBorderColor = isThemeLight ? colors.border : '#fff';
+
   const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
 
   const { width, height } = useWindowDimensions();
@@ -121,13 +133,13 @@ export default function FaceScanView({
     ]).start();
   }, [scanStage, successAnimationTick, successScale]);
 
-  const isCameraVisionMode = faceEngine === 'camera_vision';
+  const isCameraVisionMode = true;
   const isFrontCamera = device?.position === 'front';
   const detectionPercent = Math.max(0, Math.min(100, Math.round(cameraVisionReadiness)));
   const overlayWidth = overlaySize.width > 0 ? overlaySize.width : (isLandscape ? Math.round(width * 0.6) : width);
   const overlayHeight = overlaySize.height > 0 ? overlaySize.height : height;
 
-  const requiresAndroidRotationFix = Platform.OS === 'android' && (livenessEnabled || faceEngine === 'camera_vision');
+  const requiresAndroidRotationFix = Platform.OS === 'android';
 
   const getDynamicCameraStyle = () => {
     if (!requiresAndroidRotationFix) return styles.fullScreenCamera;
@@ -139,7 +151,8 @@ export default function FaceScanView({
         height: overlayWidth,
         top: (overlayHeight - overlayWidth) / 2,
         left: (overlayWidth - overlayHeight) / 2,
-        transform: [{ rotate: '90deg' }]
+        transform: [{ rotate: '90deg' }],
+        overflow: 'hidden' as const
       };
     } else if (orientation === ScreenOrientation.Orientation.LANDSCAPE_RIGHT) {
       return {
@@ -148,10 +161,11 @@ export default function FaceScanView({
         height: overlayWidth,
         top: (overlayHeight - overlayWidth) / 2,
         left: (overlayWidth - overlayHeight) / 2,
-        transform: [{ rotate: '-90deg' }]
+        transform: [{ rotate: '-90deg' }],
+        overflow: 'hidden' as const
       };
     } else if (orientation === ScreenOrientation.Orientation.PORTRAIT_DOWN) {
-      return [styles.fullScreenCamera, { transform: [{ rotate: '180deg' }] }];
+      return [styles.fullScreenCamera, { transform: [{ rotate: '180deg' }], overflow: 'hidden' as const }];
     }
     return styles.fullScreenCamera;
   };
@@ -187,17 +201,13 @@ export default function FaceScanView({
       const isRotated = (sourceFrameWidth > sourceFrameHeight && overlayWidth < overlayHeight) ||
         (sourceFrameWidth < sourceFrameHeight && overlayWidth > overlayHeight);
 
-      // 1. Native front camera preview is horizontally mirrored BEFORE CSS rotation
+      // 1. Raw face coordinates from detector
       let rawX = box.left;
       let rawY = box.top;
       let rawW = box.width;
       let rawH = box.height;
 
-      if (isFrontCamera) {
-        rawX = 1 - (rawX + rawW);
-      }
-
-      // 2. Apply math rotation to perfectly match the CSS rotation
+      // 2. Map coordinates to screen space
       let nx = rawX;
       let ny = rawY;
       let nw = rawW;
@@ -215,30 +225,25 @@ export default function FaceScanView({
           nw = rawH;
           nh = rawW;
         } else if (orientation === ScreenOrientation.Orientation.PORTRAIT_DOWN) {
-          if (isFrontCamera) {
-            nx = rawY;
-            ny = 1 - rawX;
-          } else {
-            nx = 1 - (rawY + rawH);
-            ny = 1 - rawX;
-          }
+          nx = 1 - (rawY + rawH);
+          ny = 1 - rawX;
           nw = rawH;
           nh = rawW;
         } else {
-          // PORTRAIT_UP / DEFAULT PORTRAIT
-          if (isFrontCamera) {
-            nx = 1 - (rawY + rawH);
-            ny = rawX;
-          } else {
-            nx = rawY;
-            ny = rawX;
-          }
+          // PORTRAIT_UP: 90° CW rotation from landscape sensor to portrait screen
+          nx = rawY;
+          ny = rawX;
           nw = rawH;
           nh = rawW;
         }
       } else if (orientation === ScreenOrientation.Orientation.PORTRAIT_DOWN) {
         nx = 1 - (rawX + rawW);
         ny = 1 - (rawY + rawH);
+      }
+
+      // 3. Apply horizontal mirroring in screen space for front camera
+      if (isFrontCamera) {
+        nx = 1 - (nx + nw);
       }
 
       const orientedFrameWidth = isRotated ? sourceFrameHeight : sourceFrameWidth;
@@ -309,23 +314,17 @@ export default function FaceScanView({
   }, [cameraVisionFaceBox, overlayWidth, overlayHeight, isFrontCamera, fallbackFaceBoxPx]);
 
   const animatedFaceBoxStyle = useAnimatedStyle(() => {
-    const isQualityPassed = cameraVisionReadiness >= 100;
     return {
       left: animatedFaceBoxLeft.value,
       top: animatedFaceBoxTop.value,
       width: animatedFaceBoxWidth.value,
       height: animatedFaceBoxHeight.value,
-      position: 'absolute',
-      borderWidth: 1.5,
-      borderRadius: 0,
-      borderColor: isQualityPassed ? '#2ecc71' : '#F27121',
-      borderStyle: 'solid',
-      backgroundColor: isQualityPassed ? 'rgba(46, 204, 113, 0.15)' : 'transparent',
     };
   });
 
   const showProcessingSpinner = isCapturingHardware || isVerifying || scanStage === 'capturing' || scanStage === 'verifying' || scanStage === 'recording';
-  const showDetectionOverlay = isCameraVisionMode && cameraVisionFaceDetected && !!cameraVisionFaceBox && !showProcessingSpinner && scanStage !== 'success';
+  const showDetectionOverlay = isCameraVisionMode && cameraVisionFaceDetected && !!cameraVisionFaceBox && !showProcessingSpinner && scanStage !== 'success' && !showResultModal;
+  const isLivenessPending = livenessEnabled && !backgroundLivenessPassed;
 
   const animatedStatusCardStyle = useAnimatedStyle(() => {
     const cardHeight = 74;
@@ -334,6 +333,17 @@ export default function FaceScanView({
       left: animatedFaceBoxLeft.value + margin,
       top: animatedFaceBoxTop.value + animatedFaceBoxHeight.value - cardHeight - margin,
       opacity: (showDetectionOverlay && showTelemetry) ? 1 : 0,
+    };
+  });
+
+  const animatedInstructionCardStyle = useAnimatedStyle(() => {
+    return {
+      left: animatedFaceBoxLeft.value - 40,
+      top: animatedFaceBoxTop.value - 50,
+      width: animatedFaceBoxWidth.value + 80,
+      opacity: (showDetectionOverlay && livenessEnabled) ? 1 : 0,
+      alignItems: 'center',
+      justifyContent: 'center',
     };
   });
 
@@ -377,10 +387,27 @@ export default function FaceScanView({
   const yawLabel = getYawLabel(cameraVisionFaceTelemetry?.yaw);
   const pitchLabel = getPitchLabel(cameraVisionFaceTelemetry?.pitch);
 
+  const isFaceStraight = (() => {
+    if (!cameraVisionFaceTelemetry) return true;
+    const yaw = cameraVisionFaceTelemetry.yaw;
+    const pitch = cameraVisionFaceTelemetry.pitch;
+    if (typeof yaw === 'number' && (yaw > 12 || yaw < -12)) return false;
+    if (typeof pitch === 'number' && (pitch > 12 || pitch < -12)) return false;
+    return true;
+  })();
+
   const instructionText = (() => {
     if (scanStage === 'success') return 'FACE VERIFIED';
     if (showProcessingSpinner) return isClockingOut ? 'PROCESSING LOGOUT...' : 'VERIFYING IDENTITY...';
-    if (isCameraVisionMode && scanStage === 'detecting') return cameraVisionFaceDetected ? `FACE READY ${detectionPercent}%` : 'SEARCHING FOR FACE...';
+    if (isCameraVisionMode && scanStage === 'detecting') {
+      if (!cameraVisionFaceDetected) return 'SEARCHING FOR FACE...';
+      if (!isFaceStraight) return 'PLEASE LOOK STRAIGHT TO THE CAMERA';
+      if (livenessEnabled) {
+        if (!backgroundLivenessPassed) return livenessMessage.toUpperCase();
+        return 'LIVENESS VERIFIED • SCAN NOW';
+      }
+      return `FACE READY ${detectionPercent}%`;
+    }
     if (faceCountdown > 0 && touchlessEnabled) return `GET READY... ${faceCountdown}`;
     return 'LOOK AT THE CAMERA';
   })();
@@ -388,7 +415,19 @@ export default function FaceScanView({
   const hintText = (() => {
     if (scanStage === 'success') return 'Success';
     if (showProcessingSpinner) return 'Please wait...';
-    if (isCameraVisionMode && scanStage === 'detecting') return cameraVisionFaceDetected ? `Hold steady for automatic capture • Eyes: ${eyeStatusLabel}` : 'Center your face in the frame';
+    if (isCameraVisionMode && scanStage === 'detecting') {
+      if (!cameraVisionFaceDetected) return 'Center your face in the frame';
+      if (!isFaceStraight) {
+        const yaw = cameraVisionFaceTelemetry?.yaw;
+        const pitch = cameraVisionFaceTelemetry?.pitch;
+        if (typeof yaw === 'number' && yaw > 12) return 'Turn your face slightly to the right';
+        if (typeof yaw === 'number' && yaw < -12) return 'Turn your face slightly to the left';
+        if (typeof pitch === 'number' && pitch > 12) return 'Lower your chin slightly';
+        if (typeof pitch === 'number' && pitch < -12) return 'Raise your chin slightly';
+        return 'Look directly at the camera';
+      }
+      return 'Hold steady for automatic capture';
+    }
     if (faceCountdown > 0) return 'Position your face';
     return livenessMessage;
   })();
@@ -423,12 +462,25 @@ export default function FaceScanView({
             />
           );
         })}
-        <AnimatedReanimated.View style={[styles.detectionFaceBox, cameraVisionFaceDetected && styles.detectionFaceBoxActive, animatedFaceBoxStyle]} />
+        {(() => {
+          const isFaceReady = livenessEnabled ? backgroundLivenessPassed : (detectionPercent === 100);
+          return (
+            <AnimatedReanimated.View style={[styles.detectionFaceBox, (cameraVisionFaceDetected && isFaceReady) && styles.detectionFaceBoxActive, animatedFaceBoxStyle]} />
+          );
+        })()}
+        
+        <AnimatedReanimated.View style={[{ position: 'absolute' }, animatedInstructionCardStyle]}>
+          <View style={{ backgroundColor: 'rgba(0,0,0,0.6)', paddingHorizontal: 16, paddingVertical: 8, borderRadius: 20, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.3, shadowRadius: 3, elevation: 4 }}>
+            <Text style={{ color: '#fff', fontSize: 13, fontWeight: 'bold', textAlign: 'center', letterSpacing: 0.5 }}>
+              {instructionText}
+            </Text>
+          </View>
+        </AnimatedReanimated.View>
+
         {showTelemetry && (
           <AnimatedReanimated.View style={[styles.detectionStatusCard, animatedStatusCardStyle]}>
             <Text style={styles.detectionStatusText}>Horizontal: {yawLabel}</Text>
             <Text style={styles.detectionStatusText}>Vertical: {pitchLabel}</Text>
-            <Text style={styles.detectionStatusText}>Eyes: {eyeStatusLabel}</Text>
           </AnimatedReanimated.View>
         )}
       </View>
@@ -438,10 +490,10 @@ export default function FaceScanView({
   const renderHeader = () => (
     <View style={styles.newHeader}>
       <View style={styles.headerLeft}>
-        <TouchableOpacity onPress={onBack} style={styles.headerIconButton}>
+        <TouchableOpacity onPress={onBack} style={[styles.headerIconButton, showProcessingSpinner && { opacity: 0.5 }]} disabled={showProcessingSpinner}>
           <MaterialCommunityIcons name="chevron-left" size={28} color="#fff" />
         </TouchableOpacity>
-        <TouchableOpacity onPress={onOpenOffline} style={[styles.headerIconButton, styles.marginLeft10]}>
+        <TouchableOpacity onPress={onOpenOffline} style={[styles.headerIconButton, styles.marginLeft10, showProcessingSpinner && { opacity: 0.5 }]} disabled={showProcessingSpinner}>
           <MaterialCommunityIcons name="history" size={22} color="#fff" />
           {pendingSyncCount > 0 && <View style={styles.headerSyncBadge} />}
         </TouchableOpacity>
@@ -451,31 +503,31 @@ export default function FaceScanView({
         <Text style={styles.topDate}>{formattedDate}</Text>
       </View>
       <View style={styles.headerRight}>
-        <View style={[styles.miniOfflineBadge, offlineModeEnabled && styles.miniOfflineBadgeActive]}>
-          <MaterialCommunityIcons name={offlineModeEnabled ? 'cloud-off' : 'cloud-check'} size={18} color="#fff" />
-          <Text style={styles.miniOfflineText}>{offlineModeEnabled ? 'OFFLINE' : 'ONLINE'}</Text>
+        <View style={[styles.miniOfflineBadge, !isOnline && styles.miniOfflineBadgeActive]}>
+          <MaterialCommunityIcons name={!isOnline ? 'cloud-off' : 'cloud-check'} size={18} color="#fff" />
+          <Text style={styles.miniOfflineText}>{!isOnline ? 'OFFLINE' : 'ONLINE'}</Text>
         </View>
       </View>
     </View>
   );
 
   const renderProfileBar = () => (
-    <View style={[styles.portraitProfileBar, { backgroundColor: accentColor }]}>
+    <View style={[styles.portraitProfileBar, { backgroundColor: profileBgColor }]}>
       {selectedUser?.profile_picture ? (
-        <Image source={{ uri: selectedUser.profile_picture }} style={styles.portraitProfileImage} />
+        <Image source={{ uri: selectedUser.profile_picture }} style={[styles.portraitProfileImage, { borderColor: portraitBorderColor }]} />
       ) : (
-        <View style={styles.portraitProfilePlaceholder}>
-          <MaterialCommunityIcons name="account" size={28} color="#fff" />
+        <View style={[styles.portraitProfilePlaceholder, { backgroundColor: placeholderBg, borderColor: portraitBorderColor }]}>
+          <MaterialCommunityIcons name="account" size={28} color={iconColor} />
         </View>
       )}
       <View style={styles.portraitProfileInfo}>
-        <Text style={styles.portraitProfileName} numberOfLines={1}>{selectedUser?.name || selectedUser?.username || 'Employee'}</Text>
-        <Text style={styles.portraitProfileRole} numberOfLines={1}>{selectedUser?.role || 'Staff'} • {selectedUser?.department || 'Dept'}</Text>
+        <Text style={[styles.portraitProfileName, { color: nameTextColor }]} numberOfLines={1}>{selectedUser?.name || selectedUser?.username || 'Employee'}</Text>
+        <Text style={[styles.portraitProfileRole, { color: roleTextColor }]} numberOfLines={1}>{selectedUser?.role || 'Staff'} • {selectedUser?.department || 'Dept'}</Text>
       </View>
       {isClockingOut && clockInTime ? (
-        <View style={styles.clockInTimeContainer}>
-          <MaterialCommunityIcons name="clock-outline" size={14} color="rgba(255,255,255,0.8)" />
-          <Text style={styles.clockInTimeTextMini}>{clockInTime}</Text>
+        <View style={[styles.clockInTimeContainer, { backgroundColor: isThemeLight ? 'rgba(0,0,0,0.05)' : 'rgba(0,0,0,0.2)', marginTop: 0 }]}>
+          <MaterialCommunityIcons name="clock-outline" size={14} color={roleTextColor} />
+          <Text style={[styles.clockInTimeTextMini, { color: roleTextColor }]}>{clockInTime}</Text>
         </View>
       ) : null}
     </View>
@@ -488,9 +540,6 @@ export default function FaceScanView({
         <View style={[styles.corner, styles.cornerTopRight]} />
         <View style={[styles.corner, styles.cornerBottomLeft]} />
         <View style={[styles.corner, styles.cornerBottomRight]} />
-        {!isVerifying && !isCapturingHardware && (
-          <Animated.View style={[styles.scanLine, { transform: [{ translateY: scanLineAnim.interpolate({ inputRange: [0, 1], outputRange: [0, 240] }) }] }]} />
-        )}
         {scanStage === 'success' ? (
           <Animated.View style={[styles.successIconWrap, { transform: [{ scale: successScale }] }]}>
             <MaterialCommunityIcons name="check-circle" size={118} color="#4ade80" />
@@ -499,11 +548,11 @@ export default function FaceScanView({
           <ActivityIndicator size={80} color="#F27121" style={styles.faceIconBackground} />
         ) : (faceCountdown > 0 && touchlessEnabled) ? (
           <Text style={styles.countdownText}>{faceCountdown}</Text>
-        ) : (
-          <MaterialCommunityIcons name="face-recognition" size={120} color="rgba(255,255,255,0.2)" style={styles.faceIconBackground} />
-        )}
+        ) : null}
       </View>
-      <Text style={isRight ? styles.scanInstructionTextRight : styles.scanInstructionText}>{instructionText}</Text>
+      {(!showDetectionOverlay || !livenessEnabled) && (
+        <Text style={isRight ? styles.scanInstructionTextRight : styles.scanInstructionText}>{instructionText}</Text>
+      )}
       <Text style={isRight ? styles.faceHintTextRight : styles.faceHintText}>{hintText}</Text>
     </View>
   );
@@ -511,7 +560,9 @@ export default function FaceScanView({
   if (!isLandscape) {
     return (
       <View style={styles.portraitFaceContainer} onLayout={handleOverlayLayout}>
-        <Camera ref={cameraRef} style={getDynamicCameraStyle()} device={device} format={cameraFormat} isActive={true} photo={true} pixelFormat="yuv" frameProcessor={frameProcessor} androidPreviewViewType="texture-view" outputOrientation="device" resizeMode="cover" />
+        <View style={getDynamicCameraStyle()}>
+          <Camera ref={cameraRef} style={styles.fullScreenCamera} device={device} format={cameraFormat} isActive={true} photo={true} pixelFormat="yuv" frameProcessor={frameProcessor} androidPreviewViewType="texture-view" outputOrientation="device" resizeMode="cover" />
+        </View>
         <Animated.View style={[styles.snapFlash, { opacity: flashAnim }]} pointerEvents="none" />
         <View style={styles.cameraTintLight} pointerEvents="none" />
         {renderDetectionOverlay()}
@@ -531,7 +582,7 @@ export default function FaceScanView({
               </View>
             ) : (!touchlessEnabled && (
               <View style={styles.footerButtons}>
-                <TouchableOpacity style={[styles.mainActionButton, isClockingOut ? styles.mainActionButtonClockOut : { backgroundColor: accentColor }]} onPress={onAttendance} disabled={isVerifying || isCapturingHardware}>
+                <TouchableOpacity style={[styles.mainActionButton, isClockingOut ? styles.mainActionButtonClockOut : { backgroundColor: accentColor }, (isVerifying || isCapturingHardware || isLivenessPending) && { opacity: 0.5, backgroundColor: '#9CA3AF' }]} onPress={onAttendance} disabled={isVerifying || isCapturingHardware || isLivenessPending}>
                   <Text style={styles.mainActionButtonText}>{isClockingOut ? 'CONFIRM CLOCK OUT' : 'CONFIRM CLOCK IN'}</Text>
                 </TouchableOpacity>
               </View>
@@ -544,42 +595,43 @@ export default function FaceScanView({
 
   return (
     <View style={styles.splitScreenContainer}>
-      <View style={[styles.leftPanel, { backgroundColor: accentColor }]}>
+      <View style={[styles.employeeDetailPanel, { backgroundColor: profileBgColor }]}>
         <SafeAreaView style={styles.panelSafeArea} edges={['top', 'left', 'bottom']}>
           <ScrollView contentContainerStyle={{ flexGrow: 1, justifyContent: 'space-between' }} showsVerticalScrollIndicator={false}>
             <View>
-              <View style={styles.leftPanelHeader}>
-                <TouchableOpacity onPress={onBack} style={styles.headerIconButtonLight}><MaterialCommunityIcons name="chevron-left" size={28} color={accentColor} /></TouchableOpacity>
-                <TouchableOpacity onPress={onOpenOffline} style={[styles.headerIconButtonLight, styles.marginLeft10]}><MaterialCommunityIcons name="history" size={22} color={accentColor} />{pendingSyncCount > 0 && <View style={styles.headerSyncBadge} />}</TouchableOpacity>
+              <View style={styles.employeeDetailPanelHeader}>
+                <TouchableOpacity onPress={onBack} style={[styles.headerIconButtonLight, { backgroundColor: isThemeLight ? '#fff' : colors.background }, showProcessingSpinner && { opacity: 0.5 }]} disabled={showProcessingSpinner}><MaterialCommunityIcons name="chevron-left" size={28} color={iconColor} /></TouchableOpacity>
+                <TouchableOpacity onPress={onOpenOffline} style={[styles.headerIconButtonLight, styles.marginLeft10, { backgroundColor: isThemeLight ? '#fff' : colors.background }, showProcessingSpinner && { opacity: 0.5 }]} disabled={showProcessingSpinner}><MaterialCommunityIcons name="history" size={22} color={iconColor} />{pendingSyncCount > 0 && <View style={styles.headerSyncBadge} />}</TouchableOpacity>
               </View>
               <View style={styles.profileInfoContainer}>
                 <View style={styles.profileImageContainer}>
-                  {selectedUser?.profile_picture ? <Image source={{ uri: selectedUser.profile_picture }} style={styles.profileImage} /> : <View style={styles.profileImagePlaceholder}><MaterialCommunityIcons name="account" size={100} color={accentColor} /></View>}
-                  {!isVerifying && !isCapturingHardware && <View style={styles.verifiedBadge}><MaterialCommunityIcons name="check-circle" size={32} color="#4ade80" /></View>}
+                  {selectedUser?.profile_picture ? <Image source={{ uri: selectedUser.profile_picture }} style={[styles.profileImage, { borderColor: portraitBorderColor }]} /> : <View style={[styles.profileImagePlaceholder, { backgroundColor: placeholderBg, borderColor: portraitBorderColor }]}><MaterialCommunityIcons name="account" size={100} color={iconColor} /></View>}
                 </View>
-                <Text style={styles.profileName}>{selectedUser?.name || selectedUser?.username || 'Employee'}</Text>
-                <Text style={styles.profileRole}>{selectedUser?.role || 'Staff Member'}</Text>
-                <Text style={styles.profileDept}>{selectedUser?.department || 'Department'}</Text>
-                {isClockingOut && clockInTime ? <View style={styles.clockInTimeContainer}><MaterialCommunityIcons name="clock-outline" size={18} color="rgba(255,255,255,0.8)" /><Text style={styles.clockInTimeText}>Clocked In at: {clockInTime}</Text></View> : null}
+                <Text style={[styles.profileName, { color: nameTextColor }]}>{selectedUser?.name || selectedUser?.username || 'Employee'}</Text>
+                <Text style={[styles.profileRole, { color: roleTextColor }]}>{selectedUser?.role || 'Staff Member'}</Text>
+                <Text style={[styles.profileDept, { color: roleTextColor }]}>{selectedUser?.department || 'Department'}</Text>
+                {isClockingOut && clockInTime ? <View style={[styles.clockInTimeContainer, { backgroundColor: isThemeLight ? 'rgba(0,0,0,0.05)' : 'rgba(0,0,0,0.2)' }]}><MaterialCommunityIcons name="clock-outline" size={18} color={roleTextColor} /><Text style={[styles.clockInTimeText, { color: roleTextColor }]}>Clocked In at: {clockInTime}</Text></View> : null}
               </View>
             </View>
-            <View style={styles.leftPanelFooter}>
+            <View style={styles.employeeDetailPanelFooter}>
               {showProcessingSpinner ? (
-                <View style={styles.verifyingPillLeft}><ActivityIndicator size="small" color={accentColor} /><Text style={[styles.verifyingPillTextLeft, { color: accentColor }]}>{scanStage === 'capturing' ? 'Capturing...' : isClockingOut ? 'Processing Logout...' : 'Verifying Identity...'}</Text></View>
-              ) : (!touchlessEnabled && <TouchableOpacity style={[styles.mainActionButtonLeft, isClockingOut ? styles.mainActionButtonLeftClockOut : styles.mainActionButtonLeftClockIn]} onPress={onAttendance} disabled={isVerifying || isCapturingHardware}><Text style={[styles.mainActionButtonTextLeft, isClockingOut ? styles.mainActionButtonTextLeftClockOut : { color: accentColor }]}>{isClockingOut ? 'CONFIRM CLOCK OUT' : 'CONFIRM CLOCK IN'}</Text></TouchableOpacity>)}
+                <View style={[styles.verifyingPillLeft, { backgroundColor: isThemeLight ? '#fff' : colors.background }]}><ActivityIndicator size="small" color={accentColor} /><Text style={[styles.verifyingPillTextLeft, { color: accentColor }]}>{scanStage === 'capturing' ? 'Capturing...' : isClockingOut ? 'Processing Logout...' : 'Verifying Identity...'}</Text></View>
+              ) : (!touchlessEnabled && <TouchableOpacity style={[styles.mainActionButtonLeft, isClockingOut ? styles.mainActionButtonLeftClockOut : [styles.mainActionButtonLeftClockIn, { backgroundColor: colors.accent }], (isVerifying || isCapturingHardware || isLivenessPending) && { opacity: 0.5, backgroundColor: '#9CA3AF' }]} onPress={onAttendance} disabled={isVerifying || isCapturingHardware || isLivenessPending}><Text style={[styles.mainActionButtonTextLeft, isClockingOut ? styles.mainActionButtonTextLeftClockOut : { color: '#fff' }]}>{isClockingOut ? 'CONFIRM CLOCK OUT' : 'CONFIRM CLOCK IN'}</Text></TouchableOpacity>)}
             </View>
           </ScrollView>
         </SafeAreaView>
       </View>
-      <View style={styles.rightPanel} onLayout={handleOverlayLayout}>
-        <Camera ref={cameraRef} style={getDynamicCameraStyle()} device={device} format={cameraFormat} isActive={true} photo={true} pixelFormat="yuv" frameProcessor={frameProcessor} androidPreviewViewType="texture-view" outputOrientation="device" resizeMode="cover" />
+      <View style={styles.cameraPanel} onLayout={handleOverlayLayout}>
+        <View style={getDynamicCameraStyle()}>
+          <Camera ref={cameraRef} style={styles.fullScreenCamera} device={device} format={cameraFormat} isActive={true} photo={true} pixelFormat="yuv" frameProcessor={frameProcessor} androidPreviewViewType="texture-view" outputOrientation="device" resizeMode="cover" />
+        </View>
         <Animated.View style={[styles.snapFlash, { opacity: flashAnim }]} pointerEvents="none" />
         <View style={styles.cameraTintLight} pointerEvents="none" />
         {renderDetectionOverlay()}
         <SafeAreaView style={styles.cameraSafeArea} edges={['top', 'right', 'bottom']}>
-          <View style={styles.rightPanelHeader}>
+          <View style={styles.cameraPanelHeader}>
             <View style={styles.headerCenterRight}><Text style={styles.topTimeRight}>{formattedTime}</Text><Text style={styles.topDateRight}>{formattedDate}</Text></View>
-            <View style={[styles.miniOfflineBadge, offlineModeEnabled && styles.miniOfflineBadgeActive]}><MaterialCommunityIcons name={offlineModeEnabled ? 'cloud-off' : 'cloud-check'} size={18} color="#fff" /><Text style={styles.miniOfflineText}>{offlineModeEnabled ? 'OFFLINE' : 'ONLINE'}</Text></View>
+            <View style={[styles.miniOfflineBadge, !isOnline && styles.miniOfflineBadgeActive]}><MaterialCommunityIcons name={!isOnline ? 'cloud-off' : 'cloud-check'} size={18} color="#fff" /><Text style={styles.miniOfflineText}>{!isOnline ? 'OFFLINE' : 'ONLINE'}</Text></View>
           </View>
           <View style={styles.faceScannerAreaRight}>
             {renderScannerArea(true)}

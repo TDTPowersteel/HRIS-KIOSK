@@ -41,10 +41,6 @@ if ($_SERVER['REQUEST_METHOD'] !== 'GET') {
 
 require_once __DIR__ . '/connect.php';
 
-if (file_exists(__DIR__ . '/facepp_api.php')) {
-    require_once __DIR__ . '/facepp_api.php';
-}
-
 $qr = isset($_GET['qr']) ? trim((string) $_GET['qr']) : '';
 if ($qr === '') {
     http_response_code(400);
@@ -134,7 +130,6 @@ function normalize_value($value)
 
 $displayName = null;
 $profilePicture = null;
-$face = null;
 $faceEmbedding = null;
 $role = null;
 $gender = null;
@@ -146,9 +141,9 @@ $department = null;
 $openSession = null;
 
 if ($resolvedLogId) {
-    // Fetch profile picture, face (for Face++) and face_embedding (for Camera Vision)
+    // Fetch profile picture and face_embedding (for Camera Vision)
     // We fetch these from accounts table FIRST to ensure availability regardless of employees record state.
-    $selectCols = "profile_picture,face,face_embedding";
+    $selectCols = "profile_picture,face_embedding";
 
     [$s4, $accountRows, $e4] = supabase_request(
         'GET',
@@ -157,7 +152,6 @@ if ($resolvedLogId) {
     if (!$e4 && is_array($accountRows) && count($accountRows) > 0) {
         $account = $accountRows[0];
         $profilePicture = normalize_value($account['profile_picture'] ?? null);
-        $face = normalize_value($account['face'] ?? null);
         
         $rawEmbedding = $account['face_embedding'] ?? null;
         if ($rawEmbedding !== null) {
@@ -230,7 +224,6 @@ $jsonResponse = json_encode([
         'username' => $resolvedUsername,
         'name' => $displayName,
         'profile_picture' => $profilePicture,
-        'face' => $face,
         'face_embedding' => $faceEmbedding,
         'role' => $role,
         'department' => $department,

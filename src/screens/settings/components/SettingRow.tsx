@@ -1,5 +1,5 @@
 import { type ReactNode } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { useTheme, Colors } from '../../../config/theme';
 
 export type SettingRowProps = {
@@ -14,27 +14,39 @@ export type SettingRowProps = {
 
 export function SettingRow({ title, description, extraText = [], action, danger = false, onPress, disabled = false }: SettingRowProps) {
   const { colors } = useTheme();
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
+  const shortDimension = Math.min(windowWidth, windowHeight);
+  const isTablet = shortDimension >= 768;
+  const isSmallTablet = shortDimension >= 480 && shortDimension < 768;
+  const isPhone = shortDimension < 480;
+
+  const titleFontSize = isTablet ? 22 : isSmallTablet ? 18 : 15;
+  const descriptionFontSize = isTablet ? 15 : isSmallTablet ? 13 : 11;
+  const metaFontSize = isTablet ? 14 : isSmallTablet ? 12 : 10;
   
-  const content = (
+  const renderContent = (pressed = false) => (
     <View style={[
       styles.row, 
-      { backgroundColor: colors.surface, borderColor: colors.border },
+      { 
+        backgroundColor: (pressed && onPress) ? colors.background : colors.surface, 
+        borderColor: colors.border 
+      },
       disabled && styles.rowDisabled
     ]}>
       <View style={styles.rowTextBlock}>
         <Text style={[
           styles.rowTitle, 
-          { color: danger ? '#ef4444' : Colors.powerOrange }
+          { color: danger ? '#ef4444' : Colors.powerOrange, fontSize: titleFontSize }
         ]}>
           {title}
         </Text>
         {description ? (
-          <Text style={[styles.rowDescription, { color: colors.textSecondary }]}>
+          <Text style={[styles.rowDescription, { color: colors.textSecondary, fontSize: descriptionFontSize }]}>
             {description}
           </Text>
         ) : null}
         {extraText.map((item) => (
-          <Text key={item} style={[styles.rowMeta, { color: Colors.steelGray }]}>
+          <Text key={item} style={[styles.rowMeta, { color: Colors.steelGray, fontSize: metaFontSize }]}>
             {item}
           </Text>
         ))}
@@ -45,15 +57,13 @@ export function SettingRow({ title, description, extraText = [], action, danger 
 
   if (onPress) {
     return (
-      <Pressable onPress={onPress} disabled={disabled} style={({ pressed }) => [
-        { opacity: pressed ? 0.7 : 1 }
-      ]}>
-        {content}
+      <Pressable onPress={onPress} disabled={disabled}>
+        {({ pressed }) => renderContent(pressed)}
       </Pressable>
     );
   }
 
-  return content;
+  return renderContent(false);
 }
 
 const styles = StyleSheet.create({
@@ -73,7 +83,7 @@ const styles = StyleSheet.create({
     elevation: 2,
   },
   rowDisabled: {
-    opacity: 0.5,
+    opacity: 1,
   },
   rowTextBlock: {
     flex: 1,

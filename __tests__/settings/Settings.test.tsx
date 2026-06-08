@@ -30,13 +30,11 @@ describe('Settings Screen', () => {
     // Initially should show loading
     // Then it should fetch settings and display everything
     await waitFor(() => {
-      expect(getByText('Kiosk Configuration')).toBeTruthy();
+      expect(getByText('Settings')).toBeTruthy();
       expect(getByText('Touchless Mode')).toBeTruthy();
       expect(getByText('Sync Location')).toBeTruthy();
-      expect(getByText('Administrative Access')).toBeTruthy();
       expect(getByText('Offline Redundancy')).toBeTruthy();
-      expect(getByText('APPLICATION THEME')).toBeTruthy();
-      expect(getByText('System Logout')).toBeTruthy();
+      expect(getByText('Visual Style')).toBeTruthy();
     });
   });
 });

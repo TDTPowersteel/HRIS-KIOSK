@@ -100,19 +100,29 @@ foreach ($angleEmbeddings as $idx => $angleEmb) {
 $matchThreshold = 0.52;
 $subThreshold = 0.45;
 
-// top2_agree: for multi-angle embeddings, require at least 2 angles to agree above sub-threshold
+// top2_agree: require at least 2 angles to agree above sub-threshold
 $agreeingAngles = count(array_filter($perAngleScores, fn($s) => $s >= $subThreshold));
 $top2Agrees = count($angleEmbeddings) < 3 || $agreeingAngles >= 2;
 
 $isMatch = $maxSimilarity >= $matchThreshold && $top2Agrees;
 
+$message = null;
+$hint = null;
+if (!$isMatch) {
+    $message = "Verification failed.";
+    $hint = "Please try again.";
+}
+
 echo json_encode([
-    'ok' => true,
+    'ok' => $isMatch,
     'log_id' => $userId,
     'username' => $faceData['username'],
     'similarity' => $maxSimilarity,
     'threshold' => $matchThreshold,
     'is_match' => $isMatch,
+    'verified' => $isMatch,
+    'message' => $message,
+    'hint' => $hint,
     'decision' => $isMatch ? 'PASS' : 'FAIL',
     'angle_count' => count($angleEmbeddings),
     'best_angle_index' => $bestAngleIndex,

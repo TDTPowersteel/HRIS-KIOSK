@@ -117,6 +117,7 @@ export const styles = StyleSheet.create({
   },
   portraitProfileInfo: {
     marginLeft: 12,
+    marginRight: 12,
     flex: 1,
   },
   portraitProfileName: {
@@ -328,34 +329,29 @@ export const styles = StyleSheet.create({
     flex: 1,
     flexDirection: 'row-reverse',
   },
-  leftPanel: {
+  employeeDetailPanel: {
     flex: 4,
-    borderTopLeftRadius: 30,
-    borderBottomLeftRadius: 30,
-    shadowColor: '#000',
-    shadowOffset: { width: -5, height: 0 },
-    shadowOpacity: 0.3,
-    shadowRadius: 20,
-    elevation: 20,
     zIndex: 10,
     overflow: 'hidden',
   },
-  rightPanel: {
+  cameraPanel: {
     flex: 6,
     backgroundColor: '#000',
   },
   panelSafeArea: {
     flex: 1,
-    padding: 20,
     justifyContent: 'space-between',
   },
   cameraSafeArea: {
     flex: 1,
     justifyContent: 'space-between',
   },
-  leftPanelHeader: {
+  employeeDetailPanelHeader: {
     flexDirection: 'row',
     alignItems: 'center',
+    paddingTop: 20,
+    paddingLeft: -10,
+    paddingRight: 20,
   },
   headerIconButtonLight: {
     width: 42,
@@ -373,6 +369,7 @@ export const styles = StyleSheet.create({
   profileInfoContainer: {
     alignItems: 'center',
     justifyContent: 'center',
+    paddingHorizontal: 20,
   },
   profileImageContainer: {
     position: 'relative',
@@ -394,14 +391,6 @@ export const styles = StyleSheet.create({
     justifyContent: 'center',
     borderWidth: 5,
     borderColor: '#fff',
-  },
-  verifiedBadge: {
-    position: 'absolute',
-    bottom: 5,
-    right: 15,
-    backgroundColor: '#fff',
-    borderRadius: 20,
-    padding: 2,
   },
   profileName: {
     color: '#fff',
@@ -427,11 +416,12 @@ export const styles = StyleSheet.create({
     textAlign: 'center',
     marginBottom: 20,
   },
-  leftPanelFooter: {
+  employeeDetailPanelFooter: {
     alignItems: 'center',
     paddingHorizontal: 20,
     paddingBottom: 20,
     width: '100%',
+    marginTop: 20,
   },
   mainActionButtonLeft: {
     width: '100%',
@@ -468,7 +458,7 @@ export const styles = StyleSheet.create({
     fontWeight: '800',
     marginLeft: 10,
   },
-  rightPanelHeader: {
+  cameraPanelHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'flex-start',
@@ -506,8 +496,9 @@ export const styles = StyleSheet.create({
     width: 165,
     height: 200,
     borderRadius: 0,
-    borderWidth: 2,
-    borderColor: 'rgba(68, 68, 68, 0.93)',
+    borderWidth: 1.0,
+    borderColor: '#ffffff',
+    borderStyle: 'solid',
     backgroundColor: 'transparent',
     zIndex: 2,
     elevation: 2,
@@ -520,8 +511,8 @@ export const styles = StyleSheet.create({
     backgroundColor: 'rgba(255, 255, 255, 0.05)',
   },
   detectionFaceBoxActive: {
-    borderColor: '#00782c',
-    backgroundColor: 'rgba(74,222,128,0.15)',
+    borderColor: '#4ade80',
+    backgroundColor: 'transparent',
   },
   detectionStatusCard: {
     position: 'absolute',
