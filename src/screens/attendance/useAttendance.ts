@@ -606,11 +606,56 @@ export function useAttendance() {
     return { touchless, liveness };
   }, [sharedTouchlessEnabled, sharedLivenessEnabled]);
 
+  const getImsUrl = useCallback(() => {
+    try {
+      const parts = BACKEND_URL.split(':');
+      if (parts.length >= 2) {
+        return `${parts[0]}:${parts[1]}/ims`;
+      }
+    } catch (e) {}
+    return BACKEND_URL;
+  }, []);
+
   // QR resolve
   const resolveUserFromQr = useCallback(async (qrData: string): Promise<ResolvedUser> => {
     try {
-      // FORCE SYNC: Add timestamp to URL to bypass any server/proxy cache
+      const isIntern = qrData.startsWith('TDTINTRN');
       const timestamp = Date.now();
+
+      if (isIntern) {
+        const internId = qrData.replace('TDTINTRN', '');
+        const imsUrl = getImsUrl();
+        const response = await fetch(`${imsUrl}/api/verify_intern_qr.php?id=${internId}&_t=${timestamp}`, {
+          headers: { 
+            'Accept': 'application/json', 
+            'ngrok-skip-browser-warning': 'true',
+            'Cache-Control': 'no-cache, no-store, must-revalidate',
+            'Pragma': 'no-cache',
+            'Expires': '0'
+          },
+        });
+        const responseText = await response.text();
+        console.log('[QR] Intern Raw response', response.status, responseText?.slice?.(0, 200));
+        let payload: any = {};
+        try { payload = responseText ? JSON.parse(responseText) : {}; }
+        catch { throw new Error(`Server returned invalid response. Status: ${response.status}`); }
+        if (!response.ok || !payload?.ok) throw new Error(payload?.message || `Intern QR validation failed. Status: ${response.status}`);
+        
+        return {
+          userId: String(payload.id),
+          username: `intern_${payload.id}`,
+          name: payload.name,
+          profile_picture: payload.profile_photo,
+          face: null,
+          face_embedding: payload.face_embedding,
+          role: 'intern',
+          department: 'Internship',
+          open_session: null,
+          isIntern: true,
+        };
+      }
+
+      // FORCE SYNC: Add timestamp to URL to bypass any server/proxy cache
       const response = await fetch(`${BACKEND_URL}/resolve_qr.php?qr=${encodeURIComponent(qrData)}&engine=camera_vision&_t=${timestamp}`, {
         headers: { 
           'Accept': 'application/json', 
@@ -690,7 +735,7 @@ export function useAttendance() {
       if (!cachedUser) throw new Error('Offline mode needs cached QR/user data for this code. Connect online and open Employee Directory or scan once online to cache it.');
       return { userId: cachedUser.userId, username: cachedUser.username, name: cachedUser.name ?? null, profile_picture: cachedUser.profile_picture ?? null, role: cachedUser.role ?? null, department: cachedUser.department ?? null, face_embedding: cachedUser.face_embedding ?? null };
     }
-  }, [offlineModeEnabled, isLikelyConnectivityError, showOfflineToast]);
+  }, [offlineModeEnabled, isLikelyConnectivityError, showOfflineToast, getImsUrl]);
 
 
   // Helper to run ONNX inference and normalize the output
@@ -1064,6 +1109,42 @@ export function useAttendance() {
         console.log('[Attendance] Could not capture location', e);
       }
 
+      if (selectedUserRef.current?.isIntern) {
+        const imsUrl = getImsUrl();
+        const payload = {
+          intern_id: parseInt(selectedUserRef.current.userId),
+          action,
+          date: localDate,
+          time: localTime
+        };
+        
+        const res = await fetch(`${imsUrl}/api/record_intern_attendance.php`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        
+        const responseText = await res.text();
+        let resData: any = {};
+        try { resData = responseText ? JSON.parse(responseText) : {}; } catch {}
+        
+        if (!res.ok || !resData?.ok) {
+          throw new Error(resData?.message || 'Failed to record attendance');
+        }
+        
+        setScanStage('success');
+        setSuccessAnimationTick((prev) => prev + 1);
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        await resetAttendanceFlow();
+        workletPhase.value = 0;
+        
+        showModal('success', 
+          action === 'clock_in' ? "You're Clocked In!" : "You're Clocked Out!",
+          resData.rendered_hours !== undefined ? `Hours today: ${resData.rendered_hours} hrs` : '', 2000
+        );
+        return;
+      }
+
       // HYPER-FAST: Always queue locally first
       await enqueueOfflineAttendance({ 
           userId: selectedUserRef.current!.userId, 
@@ -1122,7 +1203,7 @@ export function useAttendance() {
     } finally {
       setIsVerifying(false);
     }
-  }, [attendanceAction, clearStoredSession, enqueueOfflineAttendance, isConnected, hasGoodInternet, offlineModeEnabled, refreshPendingSyncCount, resetAttendanceFlow, saveStoredSession, showModal, storeClockInNotification, workletPhase, recordAttendance]);
+  }, [attendanceAction, clearStoredSession, enqueueOfflineAttendance, isConnected, hasGoodInternet, offlineModeEnabled, refreshPendingSyncCount, resetAttendanceFlow, saveStoredSession, showModal, storeClockInNotification, workletPhase, recordAttendance, getImsUrl]);
 
   // Main attendance handler (Concurrent Phase 1 & 2)
   const executeFaceVerification = useCallback(async () => {

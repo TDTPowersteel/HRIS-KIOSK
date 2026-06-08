@@ -28,18 +28,30 @@ This document details the architectural design to connect the existing `HRIS-KIO
 
 ---
 
-## 2. Database Changes (DTR MySQL)
+## 2. Database & Config Changes (DTR System)
 
+### 2.1 Database Schema Alterations
 We will modify the `interns` table in the MySQL database (`tdt_ims`) of the DTR system.
 
 ```sql
 ALTER TABLE interns 
 ADD COLUMN qr_code VARCHAR(255) NULL UNIQUE,
-ADD COLUMN face_embedding LONGTEXT NULL;
+ADD COLUMN face_embedding LONGTEXT NULL,
+ADD COLUMN registered_at DATETIME NULL;
 ```
 
 - **`qr_code`**: Stores the unique QR code payload. Format: `INTERN:<id>|HASH:<hash>|TIME:<ts>`.
+  - **`<hash>`**: A reproducible, tamper-proof signature verifying that the QR code was officially generated. It is calculated by taking the first 8 characters of an HMAC-SHA256 hash using the Intern ID, the timestamp, and a secret server salt/pepper:
+    `$hash = substr(hash_hmac('sha256', "INTERN:{$id}|TIME:{$timestamp}", 'TDRPowersteelInternSalt2026!'), 0, 8);`
 - **`face_embedding`**: Stored as a JSON string array of arrays (shape: `[[512 floats], [512 floats], [512 floats], [512 floats], [512 floats]]`).
+- **`registered_at`**: Logs the exact date and time the intern completed their Face ID registration (differentiated from `created_at` which is when their profile was first seeded/created).
+
+### 2.2 Timezone Setup (Philippine Standard Time)
+Since the server might be hosted in a different cloud timezone, we must set the PHP default timezone globally in the DTR configuration file `config/db.php`:
+```php
+date_default_timezone_set('Asia/Manila');
+```
+This ensures that `date('Y-m-d')` and `date('H:i:s')` always output the correct Philippine Standard Time (UTC+8) when recording clock-ins and clock-outs.
 
 ---
 
@@ -79,39 +91,29 @@ We will add two new endpoints to the DTR system's backend to service the kiosk r
 
 ---
 
-## 5. Phone-Based Face Registration Web App
+## 5. Intern Account Linking & Face Registration Workflow (Web App)
 
-Interns will register their face using their phone browser (cross-platform, zero app install).
+Since intern profiles are pre-seeded by HR in the DTR system without emails, but not all interns are pre-seeded, the web app uses a **Hybrid Search-and-Link** flow. This matches existing records by Name (preventing duplication of teammates' existing logs) and creates new records only for new interns.
 
-```
-┌────────────────┐     Capture 5 angles      ┌───────────────┐
-│ Intern Phone   │ ────────────────────────→ │ Python Flask  │
-│ (HTML5 Camera) │ ←──────────────────────── │ (ONNX Server) │
-└────────────────┘      JSON Embeddings      └───────┬───────┘
-                                                     │
-                                                     ▼
-                                             ┌───────────────┐
-                                             │ MySQL DB      │
-                                             └───────────────┘
-```
+### 5.1 Registration Flow Steps
 
-### Flow:
-1. **Guided Capture Web UI**:
-   - Intern logs into their intern portal or accesses a secure registration page.
-   - Camera opens in the browser. Guided outline prompts the user:
-     - Close Center (Looking straight)
-     - Far Center (Farther back)
-     - Left (Slight horizontal turn)
-     - Right (Slight horizontal turn)
-     - Up (Slight chin up)
-2. **Server-side ONNX Embedding Generation**:
-   - The phone browser uploads the 5 raw images as base64 to a Python Flask/FastAPI service running on the DTR server.
-   - Python loads the `w600k_mbf.onnx` model (matching the kiosk).
-   - Preprocesses images (resizes to 112x112, normalizes to `[-1, 1]` range, shapes as `[1, 3, 112, 112]`).
-   - Runs inference to extract 512-dimensional vectors.
-   - L2-normalizes the vectors.
-   - Saves them as a JSON array of arrays in MySQL `interns.face_embedding`.
-   - Generates and saves a unique QR code in `interns.qr_code`.
+- **Step 1: Profile Selection or Name Input**:
+  - Intern can select their name from a dropdown of active, unregistered interns:
+    `SELECT id, first_name, last_name FROM interns WHERE face_embedding IS NULL AND status = 'Active' ORDER BY first_name ASC`
+  - If their name is not on the list, they can select "Register New Profile" and type in their **First Name**, **Last Name**, **Middle Name**, and select their **Department** (loaded from the `departments` table).
+  - Intern inputs/verifies their **Email Address**.
+- **Step 2: Profile Picture Upload**:
+  - Intern uploads or captures a headshot photo for the directory profile.
+- **Step 3: Face Capture (5 Angles)**:
+  - Phone camera opens. Guided UI captures 5 angles (Center-Close, Center-Far, Left, Right, Up).
+- **Step 4: Submission, Matching & Activation**:
+  - Web page submits the photos, email, names, department, and selected Intern ID (if selected from list).
+  - Python service generates 512-dim embeddings.
+  - The PHP script checks for name duplicates if a new profile was typed:
+    `SELECT id FROM interns WHERE first_name = ? AND last_name = ?`
+  - **Match Found (Linking):** If matched (either chosen via dropdown or resolved by name match in backend), the PHP script **updates** the existing record (saving `email`, `profile_photo`, `face_embedding`, and generating `qr_code`) to preserve their historical DTR hours.
+  - **No Match Found (Create New):** The PHP script runs an `INSERT` statement to create a new intern profile.
+  - Web page displays the generated QR code for download.
 
 ---
 

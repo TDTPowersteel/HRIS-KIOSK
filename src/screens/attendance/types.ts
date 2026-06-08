@@ -20,6 +20,7 @@ export type ResolvedUser = {
     timein: string;
     date: string;
   } | null;
+  isIntern?: boolean;
 };
 
 export type StoredAttendanceSession = {
