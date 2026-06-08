@@ -81,7 +81,29 @@ This public, standalone page handles the camera capture:
 ## 5. Kiosk App Integration (`HRIS-KIOSK`)
 
 ### 5.1 QR Parsing
-The kiosk app will scan the QR code and validate the prefix:
+The kiosk app will scan the QR code and validate the prefix to perform dynamic prefix-based routing:
+
+```
+                  ┌──────────────────────────────┐
+                  │      Scanned QR Payload      │
+                  └──────────────┬───────────────┘
+                                 │
+                     Checks Prefix in Payload
+                                 │
+                 ┌───────────────┴───────────────┐
+                 │                               │
+       Starts with "LOGID:"            Starts with "TDTINTRN"
+                 │                               │
+                 ▼                               ▼
+       ┌───────────────────┐           ┌───────────────────┐
+       │   Employee Flow   │           │    Intern Flow    │
+       │                   │           │                   │
+       │  - Connects to    │           │  - Connects to    │
+       │    Employee DB    │           │    Intern MySQL   │
+       │    (Supabase)     │           │    DB (IMS API)   │
+       └───────────────────┘           └───────────────────┘
+```
+
 - If the scanned text starts with **`TDTINTRN`**, it is recognized as an intern.
 - The app extracts the numeric ID: `const id = scannedText.replace('TDTINTRN', '');`.
 - The kiosk calls the backend API endpoint `verify_intern_qr.php?id=<id>` to fetch the face embedding and verification data.
