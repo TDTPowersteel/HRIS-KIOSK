@@ -108,12 +108,22 @@ if ((defined('KIOSK_MODE') && KIOSK_MODE === 'intern') || strpos($logId ?? '', '
     $host = $_SERVER['HTTP_HOST'] ?? 'localhost';
     $profilePhotoUrl = null;
     if (!empty($row['profile_photo'])) {
-        $profilePhotoUrl = "{$scheme}://{$host}/ims/uploads/photos/" . $row['profile_photo'];
+        $imsUrl = getenv('IMS_URL') ?: null;
+        if (!empty($imsUrl)) {
+            $profilePhotoUrl = rtrim($imsUrl, '/') . "/uploads/photos/" . $row['profile_photo'];
+        } else {
+            if (preg_match('/:80\d\d$/', $host)) {
+                $imsHost = preg_replace('/:80\d\d$/', ':8002', $host);
+                $profilePhotoUrl = "{$scheme}://{$imsHost}/uploads/photos/" . $row['profile_photo'];
+            } else {
+                $profilePhotoUrl = "{$scheme}://{$host}/ims/uploads/photos/" . $row['profile_photo'];
+            }
+        }
     }
 
     $faceEmbedding = null;
     if (!empty($row['face_embedding'])) {
-        $faceEmbedding = trim((string)$row['face_embedding']);
+        $faceEmbedding = json_decode($row['face_embedding'], true);
     }
 
     // Check for open attendance session in MySQL

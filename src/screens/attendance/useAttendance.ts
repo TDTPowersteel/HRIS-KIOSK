@@ -640,73 +640,7 @@ export function useAttendance() {
   // QR resolve
   const resolveUserFromQr = useCallback(async (qrData: string): Promise<ResolvedUser> => {
     try {
-      const isIntern = qrData.startsWith('TDTINTRN');
       const timestamp = Date.now();
-
-      if (isIntern) {
-        const internId = qrData.replace('TDTINTRN', '');
-        const imsUrl = getImsUrl();
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 8000);
-        let response: Response;
-        try {
-          response = await fetch(`${imsUrl}/api/verify_intern_qr.php?id=${internId}&_t=${timestamp}`, {
-            signal: controller.signal,
-            headers: {
-              'Accept': 'application/json',
-              'ngrok-skip-browser-warning': 'true',
-              'Cache-Control': 'no-cache, no-store, must-revalidate',
-              'Pragma': 'no-cache',
-              'Expires': '0',
-            },
-          });
-        } finally {
-          clearTimeout(timeoutId);
-        }
-        const responseText = await response.text();
-        console.log('[QR] Intern Raw response', response.status, responseText?.slice?.(0, 200));
-        let payload: any = {};
-        try { payload = responseText ? JSON.parse(responseText) : {}; }
-        catch { throw new Error(`Server returned invalid response. Status: ${response.status}`); }
-        if (!response.ok || !payload?.ok) throw new Error(payload?.message || `Intern QR validation failed. Status: ${response.status}`);
-        
-        const user = {
-          userId: `intern_${payload.id}`,
-          username: `intern_${payload.id}`,
-          name: payload.name,
-          profile_picture: payload.profile_photo,
-          face: null,
-          face_embedding: payload.face_embedding,
-          role: 'intern',
-          department: 'Internship',
-          open_session: null,
-          isIntern: true,
-        };
-
-        try {
-          const cachedUser = await resolveOfflineUserFromQr(qrData);
-          if (cachedUser && cachedUser.profile_picture?.startsWith('file://') && cachedUser.profile_picture_remote === user.profile_picture) {
-            user.profile_picture = cachedUser.profile_picture;
-          }
-        } catch {}
-
-        setOfflineModeEnabled(false);
-        await upsertOfflineUserCacheUser({
-          userId: user.userId,
-          empId: user.userId,
-          username: user.username,
-          name: user.name ?? null,
-          qrCode: qrData,
-          profile_picture: user.profile_picture ?? null,
-          profile_picture_remote: payload.profile_photo ?? null,
-          role: user.role ?? null,
-          department: user.department ?? null,
-          face_embedding: user.face_embedding ?? null,
-          isIntern: true,
-        });
-
-        return user;
-      }
 
       // FORCE SYNC: Add timestamp to URL to bypass any server/proxy cache
       const response = await fetch(`${BACKEND_URL}/resolve_qr.php?qr=${encodeURIComponent(qrData)}&engine=camera_vision&_t=${timestamp}`, {
