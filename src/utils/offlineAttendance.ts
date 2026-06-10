@@ -96,41 +96,6 @@ export async function removeOfflineAttendanceItem(id: string): Promise<void> {
 export async function syncOfflineItem(item: OfflineAttendanceItem): Promise<void> {
   await markOfflineAttendancePending(item.id);
 
-  if (item.isIntern) {
-    const rawId = item.userId;
-    const numericId = rawId.startsWith('intern_') ? rawId.replace('intern_', '') : rawId;
-    
-    let imsUrl = BACKEND_URL;
-    try {
-      const parts = BACKEND_URL.split(':');
-      if (parts.length >= 2) {
-        imsUrl = `${parts[0]}:${parts[1]}/ims`;
-      }
-    } catch (e) {}
-
-    const response = await fetch(`${imsUrl}/api/record_intern_attendance.php`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Accept: 'application/json',
-      },
-      body: JSON.stringify({
-        intern_id: parseInt(numericId, 10),
-        action: item.action,
-        date: item.date,
-        time: item.time,
-      }),
-    });
-
-    const payload = await response.json();
-    if (!response.ok || !payload?.ok) {
-      throw new Error(payload?.message || `Sync failed (${response.status})`);
-    }
-
-    await removeOfflineAttendanceItem(item.id);
-    return;
-  }
-
   const response = await fetch(`${BACKEND_URL}/record_attendance.php`, {
     method: 'POST',
     headers: {
@@ -146,6 +111,7 @@ export async function syncOfflineItem(item: OfflineAttendanceItem): Promise<void
       latitude: item.latitude,
       longitude: item.longitude,
       address: item.address,
+      isIntern: item.isIntern,
     }),
   });
 
