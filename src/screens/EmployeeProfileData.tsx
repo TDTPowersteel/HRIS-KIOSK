@@ -72,7 +72,7 @@ function enrichEmployeesWithCache(data: EmployeeRow[]): EmployeeRow[] {
             const acc = normalizeAccount(emp.accounts);
             const isArr = Array.isArray(emp.accounts);
             const enrichedAcc = {
-              log_id: emp.log_id || acc?.log_id || parseInt(cached.userId) || 0,
+              log_id: emp.log_id || acc?.log_id || Number(cached.userId) || 0,
               username: acc?.username ?? cached.username ?? null,
               qr_code: acc?.qr_code ?? cached.qrCode ?? null,
               profile_picture: cached.profile_picture
@@ -101,25 +101,25 @@ export default function EmployeeProfileData({ onBack }: Props) {
   const ITEMS_PER_PAGE = 50;
   
   const setUniqueEmployees = useCallback((data: EmployeeRow[], append: boolean = false) => {
-    const seen = new Set<number>();
+    const seen = new Set<string>();
     
     let sourceData: EmployeeRow[] = [];
     if (append) {
       sourceData = [...employeesRef.current, ...data];
     } else {
-      const existingMap = new Map<number, EmployeeRow>();
+      const existingMap = new Map<string, EmployeeRow>();
       employeesRef.current.forEach(emp => {
-        if (emp && emp.emp_id != null) existingMap.set(Number(emp.emp_id), emp);
+        if (emp && emp.emp_id != null) existingMap.set(String(emp.emp_id), emp);
       });
       data.forEach(emp => {
-        if (emp && emp.emp_id != null) existingMap.set(Number(emp.emp_id), emp);
+        if (emp && emp.emp_id != null) existingMap.set(String(emp.emp_id), emp);
       });
       sourceData = Array.from(existingMap.values());
     }
 
     const unique = sourceData.filter(emp => {
       if (!emp || emp.emp_id == null) return false;
-      const id = Number(emp.emp_id);
+      const id = String(emp.emp_id);
       if (seen.has(id)) return false;
       seen.add(id);
       return true;
@@ -229,7 +229,7 @@ export default function EmployeeProfileData({ onBack }: Props) {
           const isArr = Array.isArray(emp.accounts);
           const enrichedAcc: Account = {
             ...(acc ?? {}),
-            log_id: logId || parseInt(userId) || 0,
+            log_id: logId || Number(userId) || 0,
             username: acc?.username ?? null,
             profile_picture: localUri
           };
@@ -469,13 +469,13 @@ export default function EmployeeProfileData({ onBack }: Props) {
           const mapped: EmployeeRow[] = cached
             .filter(u => u !== null && typeof u === 'object')
             .map(u => ({
-              emp_id: parseInt(u.empId) || 0,
+              emp_id: Number(u.empId) || 0,
               name: u.name || '',
               role: u.role || null,
               dept_id: null,
-              log_id: parseInt(u.userId) || null,
+              log_id: Number(u.userId) || null,
               accounts: {
-                log_id: parseInt(u.userId) || 0,
+                log_id: Number(u.userId) || 0,
                 username: u.username,
                 qr_code: u.qrCode,
                 profile_picture: u.profile_picture
