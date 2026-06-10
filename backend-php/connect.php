@@ -50,6 +50,30 @@ $supabaseServiceKey = getenv('SUPABASE_SERVICE_ROLE_KEY');
 define('SUPABASE_URL', $supabaseUrl);
 define('SUPABASE_API_KEY', $supabaseServiceKey ?: $supabaseAnonKey);
 
+define('KIOSK_MODE', 'intern'); // 'employee' or 'intern'
+
+/**
+ * Connect to MySQL database 'tdt_ims' using mysqli
+ */
+function getImsConnection(): mysqli
+{
+    static $conn = null;
+    if ($conn === null) {
+        $host = getenv('IMS_DB_HOST') ?: 'localhost';
+        $user = getenv('IMS_DB_USER') ?: 'root';
+        $pass = getenv('IMS_DB_PASS') !== false ? getenv('IMS_DB_PASS') : '';
+        $name = getenv('IMS_DB_NAME') ?: 'tdt_ims';
+
+        $conn = new mysqli($host, $user, $pass, $name);
+        if ($conn->connect_error) {
+            die(json_encode(['error' => 'Database connection failed: ' . $conn->connect_error]));
+        }
+        $conn->set_charset('utf8mb4');
+    }
+    return $conn;
+}
+
+
 /**
  * Supabase helper function for making REST API requests
  */
