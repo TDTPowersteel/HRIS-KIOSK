@@ -48,10 +48,12 @@ if ($qr === '') {
     exit;
 }
 
-// Expected format: LOG_ID:<id>, LOGID:<id>, or USER:<username>|HASH:<...>|TIME:<...>
+// Expected format: LOG_ID:<id>, LOGID:<id>, USER:<username>, or TDTINTRN<id>
 $logId = null;
 $username = null;
-if (preg_match('/(?:LOG_?ID|USER):([^|]+)/i', $qr, $m)) {
+if (preg_match('/TDTINTRN([0-9]+)/i', $qr, $m)) {
+    $logId = 'intern_' . (int)$m[1];
+} else if (preg_match('/(?:LOG_?ID|USER):([^|]+)/i', $qr, $m)) {
     $value = trim($m[1]);
     if (preg_match('/LOG_?ID:/i', $qr)) {
         $logId = $value;
@@ -63,6 +65,95 @@ if (preg_match('/(?:LOG_?ID|USER):([^|]+)/i', $qr, $m)) {
 if (!$logId && !$username) {
     http_response_code(400);
     echo json_encode(['ok' => false, 'message' => 'Invalid QR!']);
+    exit;
+}
+
+if ((defined('KIOSK_MODE') && KIOSK_MODE === 'intern') || strpos($logId ?? '', 'intern_') === 0 || strpos($username ?? '', 'intern_') === 0) {
+    $internId = 0;
+    if ($logId && strpos($logId, 'intern_') === 0) {
+        $internId = (int)str_replace('intern_', '', $logId);
+    } else if ($username && strpos($username, 'intern_') === 0) {
+        $internId = (int)str_replace('intern_', '', $username);
+    } else {
+        $internId = (int)($logId ?: $username);
+    }
+
+    $db = getImsConnection();
+    $stmt = $db->prepare("SELECT i.id, i.first_name, i.last_name, i.email, i.profile_photo, i.face_embedding, d.name AS dept_name
+                          FROM interns i
+                          LEFT JOIN departments d ON i.department_id = d.id
+                          WHERE i.id = ? AND i.status = 'Active'");
+    if ($stmt === false) {
+        http_response_code(500);
+        echo json_encode(['ok' => false, 'message' => 'Database error: ' . $db->error]);
+        exit;
+    }
+    $stmt->bind_param('i', $internId);
+    if (!$stmt->execute()) {
+        $stmt->close();
+        http_response_code(500);
+        echo json_encode(['ok' => false, 'message' => 'Database query execution error']);
+        exit;
+    }
+    $row = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+
+    if (!$row) {
+        http_response_code(404);
+        echo json_encode(['ok' => false, 'message' => 'Intern not found']);
+        exit;
+    }
+
+    $scheme = (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on' ? 'https' : 'http');
+    $host = $_SERVER['HTTP_HOST'] ?? 'localhost';
+    $profilePhotoUrl = null;
+    if (!empty($row['profile_photo'])) {
+        $profilePhotoUrl = "{$scheme}://{$host}/ims/uploads/photos/" . $row['profile_photo'];
+    }
+
+    $faceEmbedding = null;
+    if (!empty($row['face_embedding'])) {
+        $faceEmbedding = trim((string)$row['face_embedding']);
+    }
+
+    // Check for open attendance session in MySQL
+    $openSession = null;
+    $todayDate = date('Y-m-d');
+    $attStmt = $db->prepare("SELECT id, entry_date, time_in, time_out 
+                             FROM dtr_entries 
+                             WHERE intern_id = ? AND time_out IS NULL AND is_archived = 0 
+                             ORDER BY id DESC LIMIT 1");
+    if ($attStmt !== false) {
+        $attStmt->bind_param('i', $internId);
+        if ($attStmt->execute()) {
+            $attRow = $attStmt->get_result()->fetch_assoc();
+            if ($attRow) {
+                $openSession = [
+                    'att_id' => $attRow['id'],
+                    'timein' => $attRow['time_in'],
+                    'date' => $attRow['entry_date']
+                ];
+            }
+        }
+        $attStmt->close();
+    }
+
+    $jsonResponse = json_encode([
+        'ok' => true,
+        'user' => [
+            'log_id' => 'intern_' . $row['id'],
+            'username' => 'intern_' . $row['id'],
+            'name' => $row['first_name'] . ' ' . $row['last_name'],
+            'profile_picture' => $profilePhotoUrl,
+            'face_embedding' => $faceEmbedding,
+            'role' => 'Intern',
+            'department' => $row['dept_name'] ?? 'Internship',
+            'open_session' => $openSession
+        ]
+    ]);
+    header('Content-Length: ' . strlen($jsonResponse));
+    echo $jsonResponse;
+    if (ob_get_level()) ob_end_flush();
     exit;
 }
 
