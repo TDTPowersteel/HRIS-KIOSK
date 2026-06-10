@@ -11,6 +11,7 @@ import * as Location from 'expo-location';
 import { ThemeContext, Theme, getStoredTheme, saveTheme, ThemeType, Colors } from './src/config/theme';
 import { useAutoSync } from './src/utils/useAutoSync';
 import { mmkv } from './src/utils/offlineUsers';
+import { BACKEND_URL } from './src/config/backend';
 
 export default function App() {
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
@@ -61,6 +62,23 @@ export default function App() {
     ScreenOrientation.unlockAsync().catch(() => {});
     getStoredTheme().then(setThemeState);
     Location.requestForegroundPermissionsAsync().catch(() => {});
+    fetch(`${BACKEND_URL}/settings.php`, {
+      headers: {
+        Accept: 'application/json',
+        'ngrok-skip-browser-warning': 'true',
+      },
+    })
+      .then((res) => res.json())
+      .then((payload) => {
+        if (payload?.ok && payload?.kiosk_mode) {
+          const mode = payload.kiosk_mode as 'employee' | 'intern';
+          mmkv.set('kiosk_mode', mode);
+          setKioskMode(mode);
+        }
+      })
+      .catch((err) => {
+        console.log('Failed to fetch settings:', err);
+      });
   }, []);
 
   useEffect(() => {
