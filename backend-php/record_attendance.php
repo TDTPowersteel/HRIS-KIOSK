@@ -218,8 +218,15 @@ if ($userId === '' || !in_array($action, ['clock_in', 'clock_out'], true)) {
 
 if (strpos($userId, 'intern_') === 0 || (defined('KIOSK_MODE') && KIOSK_MODE === 'intern')) {
     $numericId = (int)str_replace('intern_', '', $userId);
+    $scheme = (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on') ? 'https' : 'http';
     $httpHost = $_SERVER['HTTP_HOST'] ?? 'localhost';
-    $imsUrl = (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on' ? 'https' : 'http') . "://" . $httpHost . "/ims";
+    
+    if (preg_match('/:80\d\d$/', $httpHost)) {
+        $imsHost = preg_replace('/:80\d\d$/', ':8002', $httpHost);
+        $imsUrl = "{$scheme}://{$imsHost}";
+    } else {
+        $imsUrl = "{$scheme}://{$httpHost}/ims";
+    }
     
     $ch = curl_init();
     curl_setopt($ch, CURLOPT_URL, "{$imsUrl}/api/record_intern_attendance.php");
