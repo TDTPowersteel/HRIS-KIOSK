@@ -641,8 +641,8 @@ export function useAttendance() {
         catch { throw new Error(`Server returned invalid response. Status: ${response.status}`); }
         if (!response.ok || !payload?.ok) throw new Error(payload?.message || `Intern QR validation failed. Status: ${response.status}`);
         
-        return {
-          userId: String(payload.id),
+        const user = {
+          userId: `intern_${payload.id}`,
           username: `intern_${payload.id}`,
           name: payload.name,
           profile_picture: payload.profile_photo,
@@ -653,6 +653,29 @@ export function useAttendance() {
           open_session: null,
           isIntern: true,
         };
+
+        try {
+          const cachedUser = await resolveOfflineUserFromQr(qrData);
+          if (cachedUser && cachedUser.profile_picture?.startsWith('file://') && cachedUser.profile_picture_remote === user.profile_picture) {
+            user.profile_picture = cachedUser.profile_picture;
+          }
+        } catch {}
+
+        setOfflineModeEnabled(false);
+        await upsertOfflineUserCacheUser({
+          userId: user.userId,
+          empId: user.userId,
+          username: user.username,
+          name: user.name ?? null,
+          qrCode: qrData,
+          profile_picture: user.profile_picture ?? null,
+          role: user.role ?? null,
+          department: user.department ?? null,
+          face_embedding: user.face_embedding ?? null,
+          isIntern: true,
+        });
+
+        return user;
       }
 
       // FORCE SYNC: Add timestamp to URL to bypass any server/proxy cache
@@ -733,7 +756,7 @@ export function useAttendance() {
       showOfflineToast();
       const cachedUser = await resolveOfflineUserFromQr(qrData);
       if (!cachedUser) throw new Error('Offline mode needs cached QR/user data for this code. Connect online and open Employee Directory or scan once online to cache it.');
-      return { userId: cachedUser.userId, username: cachedUser.username, name: cachedUser.name ?? null, profile_picture: cachedUser.profile_picture ?? null, role: cachedUser.role ?? null, department: cachedUser.department ?? null, face_embedding: cachedUser.face_embedding ?? null };
+      return { userId: cachedUser.userId, username: cachedUser.username, name: cachedUser.name ?? null, profile_picture: cachedUser.profile_picture ?? null, role: cachedUser.role ?? null, department: cachedUser.department ?? null, face_embedding: cachedUser.face_embedding ?? null, isIntern: cachedUser.isIntern };
     }
   }, [offlineModeEnabled, isLikelyConnectivityError, showOfflineToast, getImsUrl]);
 
@@ -1109,42 +1132,6 @@ export function useAttendance() {
         console.log('[Attendance] Could not capture location', e);
       }
 
-      if (selectedUserRef.current?.isIntern) {
-        const imsUrl = getImsUrl();
-        const payload = {
-          intern_id: parseInt(selectedUserRef.current.userId),
-          action,
-          date: localDate,
-          time: localTime
-        };
-        
-        const res = await fetch(`${imsUrl}/api/record_intern_attendance.php`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-          body: JSON.stringify(payload)
-        });
-        
-        const responseText = await res.text();
-        let resData: any = {};
-        try { resData = responseText ? JSON.parse(responseText) : {}; } catch {}
-        
-        if (!res.ok || !resData?.ok) {
-          throw new Error(resData?.message || 'Failed to record attendance');
-        }
-        
-        setScanStage('success');
-        setSuccessAnimationTick((prev) => prev + 1);
-        await new Promise((resolve) => setTimeout(resolve, 500));
-        await resetAttendanceFlow();
-        workletPhase.value = 0;
-        
-        showModal('success', 
-          action === 'clock_in' ? "You're Clocked In!" : "You're Clocked Out!",
-          resData.rendered_hours !== undefined ? `Hours today: ${resData.rendered_hours} hrs` : '', 2000
-        );
-        return;
-      }
-
       // HYPER-FAST: Always queue locally first
       await enqueueOfflineAttendance({ 
           userId: selectedUserRef.current!.userId, 
@@ -1153,6 +1140,7 @@ export function useAttendance() {
           action, 
           date: localDate, 
           time: localTime,
+          isIntern: selectedUserRef.current!.isIntern,
           ...locationData
       });
       await refreshPendingSyncCount();
@@ -2115,7 +2103,7 @@ export function useAttendance() {
   const formattedDate = currentTime.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
   const isClockingOut = attendanceAction === 'clock_out';
   const displayClockInTime = formatTo12Hour(clockInTime);
-  const isOnline = isConnected && hasGoodInternet;
+  const isOnline = !!(isConnected && hasGoodInternet);
 
   return {
     colors, device, hasPermission, requestPermission,

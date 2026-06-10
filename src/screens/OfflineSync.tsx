@@ -227,7 +227,7 @@ export default function OfflineSync({ onBack, onOpenScanner }: Props) {
     } catch (e) {
       clearTimeout(timeoutId);
       // Only log if it's not a standard connectivity error
-      const message = String(e?.message || '').toLowerCase();
+      const message = String((e as any)?.message || '').toLowerCase();
       const isConnectivity = message.includes('network request failed') || message.includes('aborted');
       if (!isConnectivity) {
         console.error('[OfflineSync] Failed to fetch history', e);

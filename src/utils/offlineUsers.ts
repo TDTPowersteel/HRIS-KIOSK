@@ -19,6 +19,7 @@ export type CachedOfflineUser = {
   role?: string | null;
   department?: string | null;
   face_embedding?: string | number[] | number[][] | null;
+  isIntern?: boolean;
 };
 
 export type EmployeePayloadRow = {
