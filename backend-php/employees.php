@@ -34,7 +34,7 @@ if ($detailId) {
     if (defined('KIOSK_MODE') && KIOSK_MODE === 'intern') {
         $internId = (int)preg_replace('/^intern_/', '', $detailId);
         $db = getImsConnection();
-        $stmt = $db->prepare("SELECT i.id, i.first_name, i.last_name, i.email, i.profile_photo, i.face_embedding, d.name AS dept_name
+        $stmt = $db->prepare("SELECT i.id, i.first_name, i.last_name, i.email, i.profile_photo, i.face_embedding, i.qr_code, d.name AS dept_name
                               FROM interns i
                               LEFT JOIN departments d ON i.department_id = d.id
                               WHERE i.id = ? AND i.status = 'Active'");
@@ -85,7 +85,7 @@ if ($detailId) {
                         'accounts' => [
                             'log_id' => 'intern_' . $row['id'],
                             'username' => 'intern_' . $row['id'],
-                            'qr_code' => 'TDTINTRN' . $row['id'],
+                            'qr_code' => !empty($row['qr_code']) ? $row['qr_code'] : 'TDTINTRN' . $row['id'],
                             'profile_picture' => $profilePhotoUrl,
                             'face_embedding' => $faceEmbedding,
                             'has_face_registered' => $hasFaceRegistered
@@ -180,7 +180,7 @@ $search = isset($_GET['search']) ? trim($_GET['search']) : null;
 if (defined('KIOSK_MODE') && KIOSK_MODE === 'intern') {
     $db = getImsConnection();
     
-    $sql = "SELECT i.id, i.first_name, i.last_name, i.email, i.profile_photo, i.face_embedding, d.name AS dept_name
+    $sql = "SELECT i.id, i.first_name, i.last_name, i.email, i.profile_photo, i.face_embedding, i.qr_code, d.name AS dept_name
             FROM interns i
             LEFT JOIN departments d ON i.department_id = d.id
             WHERE i.status = 'Active'";
@@ -236,7 +236,7 @@ if (defined('KIOSK_MODE') && KIOSK_MODE === 'intern') {
                     'accounts' => [
                         'log_id' => 'intern_' . $row['id'],
                         'username' => 'intern_' . $row['id'],
-                        'qr_code' => 'TDTINTRN' . $row['id'],
+                        'qr_code' => !empty($row['qr_code']) ? $row['qr_code'] : 'TDTINTRN' . $row['id'],
                         'profile_picture' => $profilePhotoUrl,
                         'face_embedding' => $faceEmbedding,
                         'has_face_registered' => $hasFaceRegistered

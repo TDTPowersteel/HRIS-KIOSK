@@ -9,7 +9,7 @@ import { Worklets, useSharedValue } from 'react-native-worklets-core';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Alert, Animated, Image as RNImage, Platform, ToastAndroid, useWindowDimensions } from 'react-native';
 import { BACKEND_URL } from '../../config/backend';
-import { enqueueOfflineAttendance, getOfflineAttendanceQueue, syncOfflineQueue } from '../../utils/offlineAttendance';
+import { enqueueOfflineAttendance, getOfflineAttendanceQueue, syncOfflineQueue, syncOfflineItem } from '../../utils/offlineAttendance';
 import { resolveOfflineUserFromQr, upsertOfflineUserCacheUser, updateOfflineUserCacheFromEmployees, mmkv } from '../../utils/offlineUsers';
 import { useTheme } from '../../config/theme';
 import { useNetworkStatus } from '../../hooks/useNetworkStatus';
@@ -568,6 +568,7 @@ export function useAttendance() {
   }, []);
 
   const resetAttendanceFlow = useCallback(async () => {
+    const wasIntern = selectedUserRef.current?.isIntern;
     setQrVerified(false);
     setClockInTime('');
     setWelcomeName(null);
@@ -577,9 +578,13 @@ export function useAttendance() {
     countdownRef.current = 0;
     setCountdownActive(false);
     modalContextRef.current = 'other';
-    lastScanRef.current = { data: null, ts: 0 };
+
+    // Clear lastScanRef for employees to preserve original behavior, but keep it for interns to prevent double-scans
+    if (!wasIntern) {
+      lastScanRef.current = { data: null, ts: 0 };
+    }
     touchlessTriggeredRef.current = false;
-        cameraVisionAutoTriggeredRef.current = false;
+    cameraVisionAutoTriggeredRef.current = false;
     stableFaceFrames.value = 0;
     setCameraVisionFaceDetected(false);
     setCameraVisionReadiness(0);
@@ -1099,62 +1104,60 @@ export function useAttendance() {
         console.log('[Attendance] Could not capture location', e);
       }
 
-      const isActuallyOffline = !isConnected || !hasGoodInternet || offlineModeEnabled;
-      let recordedOnline = false;
+      // 1. Save to local offline queue first (Instant queueing)
+      const offlineItem = await enqueueOfflineAttendance({ 
+          userId: selectedUserRef.current!.userId, 
+          username: selectedUserRef.current!.username, 
+          name: selectedUserRef.current!.name ?? null, 
+          action, 
+          date: localDate, 
+          time: localTime,
+          isIntern: selectedUserRef.current!.isIntern,
+          ...(selectedUserRef.current!.isIntern ? {} : locationData)
+      });
+      await refreshPendingSyncCount();
 
-      // 1. Attempt real-time recording if we think we are online
-      if (!isActuallyOffline) {
-        try {
-          console.log('[Attendance] Online: Attempting real-time recording...');
-          await recordAttendance(selectedUserRef.current!.userId, action, {
-            ...(selectedUserRef.current!.isIntern ? {} : locationData),
-            isIntern: selectedUserRef.current!.isIntern,
-          });
-          recordedOnline = true;
-          console.log('[Attendance] Real-time recording successful!');
-        } catch (err) {
-          console.log('[Attendance] Real-time recording failed, falling back to offline queue:', err);
-        }
-      }
-
-      // 2. Fallback to offline queue if offline or real-time failed
-      if (!recordedOnline) {
-        await enqueueOfflineAttendance({ 
-            userId: selectedUserRef.current!.userId, 
-            username: selectedUserRef.current!.username, 
-            name: selectedUserRef.current!.name ?? null, 
-            action, 
-            date: localDate, 
-            time: localTime,
-            isIntern: selectedUserRef.current!.isIntern,
-            ...(selectedUserRef.current!.isIntern ? {} : locationData)
-        });
-        await refreshPendingSyncCount();
-      }
-
-      // Optimistically update local session state
+      // 2. Optimistically update local session state immediately
       if (action === 'clock_in') {
         await storeClockInNotification({ date: localDate, timein: localTime });
-        await saveStoredSession({ userId: selectedUserRef.current!.userId, username: selectedUserRef.current!.username, name: selectedUserRef.current!.name ?? null, clockInTime: localTime, clockInDate: localDate });
+        await saveStoredSession({ 
+          userId: selectedUserRef.current!.userId, 
+          username: selectedUserRef.current!.username, 
+          name: selectedUserRef.current!.name ?? null, 
+          clockInTime: localTime, 
+          clockInDate: localDate 
+        });
       } else {
         await clearStoredSession(selectedUserRef.current!.userId);
       }
 
+      // 3. Immediately transition UI to success and reset flow (non-blocking)
       setScanStage('success');
       setSuccessAnimationTick((prev) => prev + 1);
-      await new Promise((resolve) => setTimeout(resolve, 500));
-      await resetAttendanceFlow();
-      workletPhase.value = 0; // Reset worklet phase
       
-      showModal('success',
-        action === 'clock_in'
-          ? (!recordedOnline ? 'Clocked In — Saved Offline' : "You're Clocked In!")
-          : (!recordedOnline ? 'Clocked Out — Saved Offline' : "You're Clocked Out!"),
-        !recordedOnline ? 'Will sync automatically when connected.' : '', 2000);
+      setTimeout(async () => {
+        await resetAttendanceFlow();
+        workletPhase.value = 0; // Reset worklet phase
+        
+        showModal('success',
+          action === 'clock_in' ? "You're Clocked In!" : "You're Clocked Out!",
+          'Attendance processed.', 2000);
+      }, 500);
 
-      // Trigger background sync if there's anything else in the queue
+      // 4. In the background (asynchronously), attempt to sync with backend if online
+      const isActuallyOffline = !isConnected || !hasGoodInternet || offlineModeEnabled;
       if (!isActuallyOffline) {
-        syncOfflineQueue().catch(e => console.log('[Attendance] Background sync error', e));
+        (async () => {
+          try {
+            console.log(`[Attendance] Background Syncing item ${offlineItem.id}...`);
+            await syncOfflineItem(offlineItem);
+            console.log(`[Attendance] Background Syncing item ${offlineItem.id} successful!`);
+            await refreshPendingSyncCount();
+          } catch (err) {
+            console.log(`[Attendance] Background Syncing item ${offlineItem.id} failed:`, err);
+            await refreshPendingSyncCount();
+          }
+        })();
       }
 
     } catch (e: any) {
@@ -1164,7 +1167,7 @@ export function useAttendance() {
     } finally {
       setIsVerifying(false);
     }
-  }, [attendanceAction, clearStoredSession, enqueueOfflineAttendance, isConnected, hasGoodInternet, offlineModeEnabled, refreshPendingSyncCount, resetAttendanceFlow, saveStoredSession, showModal, storeClockInNotification, workletPhase, recordAttendance]);
+  }, [attendanceAction, clearStoredSession, enqueueOfflineAttendance, isConnected, hasGoodInternet, offlineModeEnabled, refreshPendingSyncCount, resetAttendanceFlow, saveStoredSession, showModal, storeClockInNotification, workletPhase, syncOfflineItem]);
 
   // Main attendance handler (Concurrent Phase 1 & 2)
   const executeFaceVerification = useCallback(async () => {
@@ -1690,7 +1693,7 @@ export function useAttendance() {
     const data: string | undefined = event?.data;
     if (!data) return;
     const now = Date.now();
-    if (lastScanRef.current.data === data && now - lastScanRef.current.ts < 1500) return;
+    if (lastScanRef.current.data === data && now - lastScanRef.current.ts < 5000) return;
     qrProcessingRef.current = true;
     lastScanRef.current = { data, ts: now };
     touchlessTriggeredRef.current = false;

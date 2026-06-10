@@ -1,4 +1,5 @@
 <?php
+date_default_timezone_set('Asia/Manila');
 // Resolve QR data to an account (username -> log_id)
 
 ini_set('display_errors', '0');
