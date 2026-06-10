@@ -415,7 +415,7 @@ export default function OfflineSync({ onBack, onOpenScanner }: Props) {
           )
         } : {})}
       >
-        {/* LEFT PANEL: OFFLINE SYNC (The "Front" panel) */}
+        {/*--------- LEFT PANEL: OFFLINE SYNC (The "Front" panel) -----------*/}
         <View style={[
           styles.syncPanel, 
           isTablet ? { 
@@ -562,7 +562,7 @@ export default function OfflineSync({ onBack, onOpenScanner }: Props) {
           </View>
         </View>
 
-        {/* RIGHT PANEL: TODAY'S HISTORY (The "Back" panel) */}
+        {/*--------- RIGHT PANEL: TODAY'S HISTORY (The "Back" panel) --------*/}
         <View style={[
           styles.historyPanel, 
           isTablet ? { 
@@ -676,7 +676,7 @@ export default function OfflineSync({ onBack, onOpenScanner }: Props) {
             {filteredHistory.length > 0 ? (
               <View style={{backgroundColor: theme === 'light' ? '#fff' : colors.surface, borderRadius: 12, overflow: 'hidden', borderWidth: 1, borderColor: colors.border}}>
                 <View style={{flexDirection: 'row', paddingVertical: 12, paddingHorizontal: 16, backgroundColor: withAlpha(colors.border, 0.3), borderBottomWidth: 1, borderBottomColor: colors.border}}>
-                  <Text style={{flex: 1.5, fontSize: tableHeaderFontSize, fontWeight: '900', color: colors.textSecondary, textAlign: 'left'}}>ID & NAME</Text>
+                  <Text style={{flex: 1.5, fontSize: tableHeaderFontSize, fontWeight: '900', color: colors.textSecondary, textAlign: 'left'}}>NAME</Text>
                   <Text style={{flex: 1, fontSize: tableHeaderFontSize, fontWeight: '900', color: colors.textSecondary, textAlign: 'left'}}>TIME IN</Text>
                   <Text style={{flex: 1, fontSize: tableHeaderFontSize, fontWeight: '900', color: colors.textSecondary, textAlign: 'left'}}>TIME OUT</Text>
                 </View>
