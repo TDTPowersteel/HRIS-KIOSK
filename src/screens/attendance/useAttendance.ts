@@ -660,7 +660,7 @@ export function useAttendance() {
       if (!response.ok) throw new Error(payload?.message || `QR validation failed. Status: ${response.status}`);
       if (!payload?.ok || !payload?.user?.log_id) throw new Error(payload?.message || 'QR not recognized');
       
-      const user = {
+      const user: ResolvedUser = {
         userId: String(payload.user.log_id),
         username: String(payload.user.username || ''),
         name: payload.user.name ?? null,
@@ -670,6 +670,7 @@ export function useAttendance() {
         role: payload.user.role ?? null,
         department: payload.user.department ?? null,
         open_session: payload.user.open_session ?? null,
+        isIntern: payload.user.role?.toLowerCase() === 'intern' || String(payload.user.log_id).startsWith('intern_'),
       };
 
       try {
@@ -713,6 +714,7 @@ export function useAttendance() {
         role: user.role ?? null,
         department: user.department ?? null,
         face_embedding: user.face_embedding ?? null,
+        isIntern: user.isIntern,
       });
       return user;
     } catch (error) {

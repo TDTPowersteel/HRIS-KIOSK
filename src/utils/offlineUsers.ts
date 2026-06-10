@@ -244,6 +244,7 @@ export function mapEmployeesToOfflineUsers(data: EmployeePayloadRow[]): CachedOf
         profile_picture_remote: remoteUrl,
         qrCode: account?.qr_code ?? null,
         face_embedding: (account as any)?.face_embedding ?? (employee as any).face_embedding ?? null,
+        isIntern: employee.role?.toLowerCase() === 'intern' || userId.startsWith('intern_'),
       };
     })
     .filter((u): u is CachedOfflineUser => u !== null);
