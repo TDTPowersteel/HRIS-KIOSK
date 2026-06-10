@@ -1,4 +1,5 @@
 <?php
+date_default_timezone_set('Asia/Manila');
 /**
  * Record attendance (clock-in / clock-out) into Supabase `attendance` table.
  *
@@ -28,8 +29,6 @@ require_once __DIR__ . '/connect.php';
 $method = $_SERVER['REQUEST_METHOD'];
 
 if ($method === 'GET') {
-    date_default_timezone_set('Asia/Manila');
-
     $emp_id = null;
     $rawEmpId = isset($_GET['emp_id']) ? trim((string)$_GET['emp_id']) : '';
     $rawUserId = isset($_GET['user_id']) ? trim((string)$_GET['user_id']) : '';
@@ -242,7 +241,12 @@ if (strpos($userId, 'intern_') === 0 || (defined('KIOSK_MODE') && KIOSK_MODE ===
         'time' => $providedTime ?: date('H:i:s')
     ]));
     curl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type: application/json']);
-    curl_setopt($ch, CURLOPT_TIMEOUT, 15);
+    $proxy = getenv('HTTP_PROXY') ?: getenv('http_proxy') ?: null;
+    if ($proxy) {
+        curl_setopt($ch, CURLOPT_PROXY, $proxy);
+    }
+    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 3);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 5);
     curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
     curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, false);
     
@@ -285,7 +289,6 @@ if ($status !== 200 || !is_array($empData) || count($empData) === 0) {
 }
 $emp_id = (int)$empData[0]['emp_id'];
 $nowTime = null;
-date_default_timezone_set('Asia/Manila');
 
 // Use provided date/time for offline sync, otherwise use current
 if ($providedDate !== '' && $providedTime !== '') {

@@ -66,7 +66,8 @@ if ($detailId) {
                     }
                     
                     $faceEmbedding = null;
-                    if (!empty($row['face_embedding'])) {
+                    $hasFaceRegistered = !empty($row['face_embedding']);
+                    if ($hasFaceRegistered) {
                         $faceEmbedding = json_decode($row['face_embedding'], true);
                     }
                     
@@ -77,6 +78,7 @@ if ($detailId) {
                         'dept_id' => null,
                         'log_id' => 'intern_' . $row['id'],
                         'face_embedding' => $faceEmbedding,
+                        'has_face_registered' => $hasFaceRegistered,
                         'departments' => [
                             'name' => $row['dept_name'] ?? 'Internship'
                         ],
@@ -85,7 +87,8 @@ if ($detailId) {
                             'username' => 'intern_' . $row['id'],
                             'qr_code' => 'TDTINTRN' . $row['id'],
                             'profile_picture' => $profilePhotoUrl,
-                            'face_embedding' => $faceEmbedding
+                            'face_embedding' => $faceEmbedding,
+                            'has_face_registered' => $hasFaceRegistered
                         ]
                     ];
                     $profile_picture_hq = $profilePhotoUrl;
@@ -130,14 +133,16 @@ if ($detailId) {
 
         // 2. Fetch Image separately ONLY if user was found
         if ($logId) {
-            $imgPath = "rest/v1/accounts?select=profile_picture&log_id=eq." . urlencode((string)$logId);
+            $imgPath = "rest/v1/accounts?select=profile_picture,face_embedding&log_id=eq." . urlencode((string)$logId);
             [$imgStatus, $imgRows, $imgErr] = supabase_request('GET', $imgPath);
             
+            $hasFace = false;
             if (is_array($imgRows) && count($imgRows) > 0) {
                 $rawImg = $imgRows[0]['profile_picture'] ?? null;
+                $rawFace = $imgRows[0]['face_embedding'] ?? null;
+                $hasFace = !empty($rawFace);
                 if ($rawImg && !empty($rawImg)) {
                     // Hyper-optimized for Modal stability: 500px width at 70% quality
-                    // This ensures the response is small enough to fit in any buffer
                     $compressedImg = compress_base64_image($rawImg, 500, 70);
                     
                     if (strpos($compressedImg, 'data:image') !== 0) {
@@ -148,6 +153,7 @@ if ($detailId) {
                 }
                 unset($imgRows);
             }
+            $user['has_face_registered'] = $hasFace;
         }
     }
 
@@ -211,7 +217,8 @@ if (defined('KIOSK_MODE') && KIOSK_MODE === 'intern') {
                 }
                 
                 $faceEmbedding = null;
-                if (!empty($row['face_embedding'])) {
+                $hasFaceRegistered = !empty($row['face_embedding']);
+                if ($hasFaceRegistered) {
                     $faceEmbedding = json_decode($row['face_embedding'], true);
                 }
                 
@@ -222,6 +229,7 @@ if (defined('KIOSK_MODE') && KIOSK_MODE === 'intern') {
                     'dept_id' => null,
                     'log_id' => 'intern_' . $row['id'],
                     'face_embedding' => $faceEmbedding,
+                    'has_face_registered' => $hasFaceRegistered,
                     'departments' => [
                         'name' => $row['dept_name'] ?? 'Internship'
                     ],
@@ -230,7 +238,8 @@ if (defined('KIOSK_MODE') && KIOSK_MODE === 'intern') {
                         'username' => 'intern_' . $row['id'],
                         'qr_code' => 'TDTINTRN' . $row['id'],
                         'profile_picture' => $profilePhotoUrl,
-                        'face_embedding' => $faceEmbedding
+                        'face_embedding' => $faceEmbedding,
+                        'has_face_registered' => $hasFaceRegistered
                     ]
                 ];
             }
@@ -244,7 +253,7 @@ if (defined('KIOSK_MODE') && KIOSK_MODE === 'intern') {
         $stmt->close();
     }
 } else {
-    $select = 'emp_id,name,role,dept_id,log_id,accounts!log_id(log_id,username,qr_code,profile_picture),departments(name)';
+    $select = 'emp_id,name,role,dept_id,log_id,accounts!log_id(log_id,username,qr_code,profile_picture,face_embedding),departments(name)';
     $path = "rest/v1/employees?select={$select}&order=emp_id&limit={$limit}&offset={$offset}";
 
     if (!empty($search)) {
@@ -257,12 +266,15 @@ if (defined('KIOSK_MODE') && KIOSK_MODE === 'intern') {
     // Compress profile pictures to save mobile storage
     if (is_array($data)) {
         foreach ($data as &$employee) {
+            $hasFace = false;
             if (isset($employee['accounts'])) {
                 if (isset($employee['accounts']['profile_picture'])) {
                     $img = $employee['accounts']['profile_picture'];
                     if ($img && strlen($img) > 100) {
                         $employee['accounts']['profile_picture'] = compress_base64_image($img, 500, 70);
                     }
+                    $hasFace = !empty($employee['accounts']['face_embedding']);
+                    $employee['accounts']['has_face_registered'] = $hasFace;
                 } else if (is_array($employee['accounts'])) {
                     foreach ($employee['accounts'] as &$account) {
                         if (isset($account['profile_picture'])) {
@@ -271,9 +283,15 @@ if (defined('KIOSK_MODE') && KIOSK_MODE === 'intern') {
                                 $account['profile_picture'] = compress_base64_image($img, 500, 70);
                             }
                         }
+                        $accountHasFace = !empty($account['face_embedding']);
+                        $account['has_face_registered'] = $accountHasFace;
+                        if ($accountHasFace) {
+                            $hasFace = true;
+                        }
                     }
                 }
             }
+            $employee['has_face_registered'] = $hasFace;
         }
     }
 }

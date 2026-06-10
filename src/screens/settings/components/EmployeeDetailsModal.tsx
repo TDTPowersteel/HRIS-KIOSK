@@ -252,6 +252,12 @@ export default function EmployeeDetailsModal({ visible, onClose, employee }: Pro
       accounts: localEmployee?.accounts || employee.accounts
     };
   }, [employee, localEmployee]);
+
+  const hasFaceId = useMemo(() => {
+    if (!activeEmployee) return false;
+    const acc = Array.isArray(activeEmployee.accounts) ? activeEmployee.accounts[0] : activeEmployee.accounts;
+    return !!(activeEmployee.face_embedding || acc?.face_embedding);
+  }, [activeEmployee]);
   const activeControllerRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
@@ -509,6 +515,28 @@ export default function EmployeeDetailsModal({ visible, onClose, employee }: Pro
               <Text style={[styles.name, { color: colors.text, fontSize: nameFontSize }]} numberOfLines={2}>{activeEmployee?.name || 'No Name'}</Text>
               <Text style={[styles.role, { color: colors.textSecondary, fontSize: roleFontSize }]}>{activeEmployee?.role || 'No Role'}</Text>
               
+              <View style={[
+                styles.faceIdBadge, 
+                { 
+                  backgroundColor: theme === 'light' 
+                    ? (hasFaceId ? '#e8f5e9' : '#ffebee') 
+                    : (hasFaceId ? 'rgba(34, 197, 94, 0.15)' : 'rgba(239, 68, 68, 0.15)'), 
+                  borderColor: hasFaceId ? '#22c55e' : '#ef4444',
+                }
+              ]}>
+                <MaterialCommunityIcons 
+                  name="face-recognition" 
+                  size={14} 
+                  color={hasFaceId ? '#22c55e' : '#ef4444'} 
+                />
+                <Text style={[
+                  styles.faceIdBadgeText, 
+                  { color: hasFaceId ? '#22c55e' : '#ef4444', fontSize: 11 }
+                ]}>
+                  {hasFaceId ? 'Face ID Active' : 'Face ID Not Registered'}
+                </Text>
+              </View>
+
               <View style={[styles.deptTag, { backgroundColor: theme === 'light' ? '#f3f4f6' : '#333' }]}>
                 <Text style={[styles.deptText, { color: colors.textSecondary, fontSize: deptTextFontSize }]}>
                   {activeEmployee?.departments?.name || 'General'}
@@ -847,5 +875,18 @@ const styles = StyleSheet.create({
   },
   centered: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   loadingText: { marginTop: 15, fontWeight: '700', fontSize: 16 },
-  noData: { textAlign: 'center', marginTop: 15, fontWeight: '600', fontSize: 18 }
+  noData: { textAlign: 'center', marginTop: 15, fontWeight: '600', fontSize: 18 },
+  faceIdBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  faceIdBadgeText: {
+    fontWeight: '700',
+  },
 });

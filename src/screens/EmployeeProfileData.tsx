@@ -262,6 +262,12 @@ export default function EmployeeProfileData({ onBack }: Props) {
         const text = await response.text();
         const payload = JSON.parse(text);
         if (payload?.ok && Array.isArray(payload?.data)) {
+          if (payload.kiosk_mode) {
+            mmkv.set('kiosk_mode', payload.kiosk_mode);
+            if (kioskMode !== payload.kiosk_mode) {
+              setKioskMode(payload.kiosk_mode);
+            }
+          }
           const rows = payload.data as EmployeeRow[];
           if (rows.length === 0) {
             keepFetching = false;
@@ -287,7 +293,7 @@ export default function EmployeeProfileData({ onBack }: Props) {
     } finally {
       isBackgroundSyncingRef.current = false;
     }
-  }, [setUniqueEmployees, handleProfileCached]);
+  }, [setUniqueEmployees, handleProfileCached, kioskMode, setKioskMode]);
 
   const fetchEmployees = useCallback(async (options?: { showLoading?: boolean; manual?: boolean; page?: number }) => {
     if (isFetchingRef.current) return;
