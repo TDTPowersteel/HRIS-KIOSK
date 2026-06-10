@@ -142,6 +142,9 @@ export default function OfflineSync({ onBack, onOpenScanner }: Props) {
   const [searchQuery, setSearchQuery] = useState('');
   const [timeFilter, setTimeFilter] = useState('ALL');
   const [isActionHubOpen, setIsActionHubOpen] = useState(false);
+  const [kioskMode, setKioskMode] = useState<'employee' | 'intern'>(() => {
+    return (mmkv.getString('kiosk_mode') as 'employee' | 'intern') || 'employee';
+  });
 
   const { hasGoodInternet, isChecking, checkStatus } = useNetworkStatus();
   const prevHasGoodInternetRef = useRef<boolean>(true);
@@ -687,7 +690,9 @@ export default function OfflineSync({ onBack, onOpenScanner }: Props) {
                     <View key={item.id} style={{flexDirection: 'row', paddingVertical: 12, paddingHorizontal: 16, backgroundColor: isEven ? 'transparent' : withAlpha(colors.border, 0.1), borderBottomWidth: index === filteredHistory.length - 1 ? 0 : 1, borderBottomColor: withAlpha(colors.border, 0.4), alignItems: 'center'}}>
                       <View style={{flex: 1.5, alignItems: 'flex-start'}}>
                         <Text style={{fontSize: rowNameFontSize, fontWeight: '800', color: colors.text, textAlign: 'left'}} numberOfLines={1}>{displayName}</Text>
-                        <Text style={{fontSize: rowIdFontSize, color: colors.textSecondary, marginTop: 2, textAlign: 'left'}} numberOfLines={1}>{displayId}</Text>
+                        {kioskMode !== 'intern' && (
+                          <Text style={{fontSize: rowIdFontSize, color: colors.textSecondary, marginTop: 2, textAlign: 'left'}} numberOfLines={1}>{displayId}</Text>
+                        )}
                       </View>
                       <Text style={{flex: 1, fontSize: rowTimeFontSize, fontWeight: '700', color: '#22c55e', textAlign: 'left'}}>
                         {timeinVal ? formatTimeDisplay(timeinVal) : '--:--'}
