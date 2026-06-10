@@ -1099,18 +1099,37 @@ export function useAttendance() {
         console.log('[Attendance] Could not capture location', e);
       }
 
-      // HYPER-FAST: Always queue locally first
-      await enqueueOfflineAttendance({ 
-          userId: selectedUserRef.current!.userId, 
-          username: selectedUserRef.current!.username, 
-          name: selectedUserRef.current!.name ?? null, 
-          action, 
-          date: localDate, 
-          time: localTime,
-          isIntern: selectedUserRef.current!.isIntern,
-          ...locationData
-      });
-      await refreshPendingSyncCount();
+      const isActuallyOffline = !isConnected || !hasGoodInternet || offlineModeEnabled;
+      let recordedOnline = false;
+
+      // 1. Attempt real-time recording if we think we are online
+      if (!isActuallyOffline) {
+        try {
+          console.log('[Attendance] Online: Attempting real-time recording...');
+          await recordAttendance(selectedUserRef.current!.userId, action, {
+            ...locationData,
+          });
+          recordedOnline = true;
+          console.log('[Attendance] Real-time recording successful!');
+        } catch (err) {
+          console.log('[Attendance] Real-time recording failed, falling back to offline queue:', err);
+        }
+      }
+
+      // 2. Fallback to offline queue if offline or real-time failed
+      if (!recordedOnline) {
+        await enqueueOfflineAttendance({ 
+            userId: selectedUserRef.current!.userId, 
+            username: selectedUserRef.current!.username, 
+            name: selectedUserRef.current!.name ?? null, 
+            action, 
+            date: localDate, 
+            time: localTime,
+            isIntern: selectedUserRef.current!.isIntern,
+            ...locationData
+        });
+        await refreshPendingSyncCount();
+      }
 
       // Optimistically update local session state
       if (action === 'clock_in') {
@@ -1120,9 +1139,6 @@ export function useAttendance() {
         await clearStoredSession(selectedUserRef.current!.userId);
       }
 
-      // Determine true offline status for UI message
-      const isActuallyOffline = !isConnected || !hasGoodInternet || offlineModeEnabled;
-
       setScanStage('success');
       setSuccessAnimationTick((prev) => prev + 1);
       await new Promise((resolve) => setTimeout(resolve, 500));
@@ -1131,24 +1147,13 @@ export function useAttendance() {
       
       showModal('success',
         action === 'clock_in'
-          ? (isActuallyOffline ? 'Clocked In — Saved Offline' : "You're Clocked In!")
-          : (isActuallyOffline ? 'Clocked Out — Saved Offline' : "You're Clocked Out!"),
-        isActuallyOffline ? 'Will sync automatically when connected.' : '', 2000);
+          ? (!recordedOnline ? 'Clocked In — Saved Offline' : "You're Clocked In!")
+          : (!recordedOnline ? 'Clocked Out — Saved Offline' : "You're Clocked Out!"),
+        !recordedOnline ? 'Will sync automatically when connected.' : '', 2000);
 
-      // Sync trigger logic:
+      // Trigger background sync if there's anything else in the queue
       if (!isActuallyOffline) {
-        // If we are online, ALWAYS auto-sync the queue immediately
-        console.log('[Attendance] Online: Triggering automatic sync in background...');
         syncOfflineQueue().catch(e => console.log('[Attendance] Background sync error', e));
-      } else {
-        // If offline, check settings for auto-sync
-        const autoSyncRaw = await AsyncStorage.getItem('settings_auto_sync_enabled');
-        if (autoSyncRaw !== 'false') {
-          console.log('[Attendance] Offline but auto-sync is enabled. Background sync will retry when connection is back.');
-          syncOfflineQueue().catch(e => console.log('[Attendance] Background sync error (safe to ignore)', e));
-        } else {
-          console.log('[Attendance] Offline and auto-sync is disabled. Record remains pending in offline queue.');
-        }
       }
 
     } catch (e: any) {
@@ -1158,7 +1163,7 @@ export function useAttendance() {
     } finally {
       setIsVerifying(false);
     }
-  }, [attendanceAction, clearStoredSession, enqueueOfflineAttendance, isConnected, hasGoodInternet, offlineModeEnabled, refreshPendingSyncCount, resetAttendanceFlow, saveStoredSession, showModal, storeClockInNotification, workletPhase, recordAttendance, getImsUrl]);
+  }, [attendanceAction, clearStoredSession, enqueueOfflineAttendance, isConnected, hasGoodInternet, offlineModeEnabled, refreshPendingSyncCount, resetAttendanceFlow, saveStoredSession, showModal, storeClockInNotification, workletPhase, recordAttendance]);
 
   // Main attendance handler (Concurrent Phase 1 & 2)
   const executeFaceVerification = useCallback(async () => {

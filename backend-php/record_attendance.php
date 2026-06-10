@@ -262,8 +262,9 @@ if (strpos($userId, 'intern_') === 0 || (defined('KIOSK_MODE') && KIOSK_MODE ===
     $curlErr = curl_error($ch);
     
     // FALLBACK: If connection refused on external IP, try localhost as a last resort
-    if ($curlErr && strpos($curlErr, 'Failed to connect') !== false && !getenv('IMS_URL')) {
-        error_log("[Attendance Sync] External IP connection failed. Trying localhost fallback...");
+    // (Trigger this even if IMS_URL is set, as the external IP might be unreachable from the host itself)
+    if ($curlErr && (strpos($curlErr, 'Failed to connect') !== false || strpos($curlErr, 'Couldn\'t connect') !== false)) {
+        error_log("[Attendance Sync] External connection failed ({$curlErr}). Trying localhost fallback...");
         curl_setopt($ch, CURLOPT_URL, "http://localhost:8002/api/record_intern_attendance.php");
         $response = curl_exec($ch);
         $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
