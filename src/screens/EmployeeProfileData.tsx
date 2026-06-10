@@ -149,8 +149,8 @@ export default function EmployeeProfileData({ onBack }: Props) {
   const [isBootstrapping, setIsBootstrapping] = useState(globalEmployeesCache.length === 0);
   const [lastUpdatedAt, setLastUpdatedAt] = useState<number | null>(globalLastSyncCache);
   const [selectedEmployee, setSelectedEmployee] = useState<EmployeeRow | null>(null);
-  const [kioskMode, setKioskMode] = useState<'employee' | 'intern'>(() => {
-    return (mmkv.getString('kiosk_mode') as 'employee' | 'intern') || 'employee';
+  const [kioskMode, setKioskMode] = useState<'employee' | 'intern' | null>(() => {
+    return (mmkv.getString('kiosk_mode') as 'employee' | 'intern') || null;
   });
   const localMatchCount = useMemo(() => {
     if (!searchText) return 0;
@@ -688,10 +688,10 @@ export default function EmployeeProfileData({ onBack }: Props) {
         </Pressable>
         <View style={styles.headerTitleWrap}>
           <Text style={[styles.title, { color: colors.text, fontSize: titleFontSize }]}>
-            {kioskMode === 'intern' ? 'Intern List' : 'Employee Directory'}
+            {kioskMode === null ? '...' : kioskMode === 'intern' ? 'Intern List' : 'Employee Directory'}
           </Text>
           <Text style={[styles.subtitle, { color: colors.textSecondary, fontSize: subtitleFontSize }]}>
-            {kioskMode === 'intern' ? 'Intern information and records.' : 'Employee information and records.'}
+            {kioskMode === null ? '' : kioskMode === 'intern' ? 'Intern information and records.' : 'Employee information and records.'}
           </Text>
         </View>
         <Pressable

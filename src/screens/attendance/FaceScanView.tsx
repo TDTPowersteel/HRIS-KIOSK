@@ -521,7 +521,7 @@ export default function FaceScanView({
         </View>
       )}
       <View style={styles.portraitProfileInfo}>
-        <Text style={[styles.portraitProfileName, { color: nameTextColor }]} numberOfLines={1}>{selectedUser?.name || selectedUser?.username || 'Employee'}</Text>
+        <Text style={[styles.portraitProfileName, { color: nameTextColor }]} numberOfLines={1}>{selectedUser?.name || selectedUser?.username || (selectedUser?.isIntern ? 'Intern' : 'Employee')}</Text>
         <Text style={[styles.portraitProfileRole, { color: roleTextColor }]} numberOfLines={1}>{selectedUser?.role || 'Staff'} • {selectedUser?.department || 'Dept'}</Text>
       </View>
       {isClockingOut && clockInTime ? (
@@ -607,7 +607,7 @@ export default function FaceScanView({
                 <View style={styles.profileImageContainer}>
                   {selectedUser?.profile_picture ? <Image source={{ uri: selectedUser.profile_picture }} style={[styles.profileImage, { borderColor: portraitBorderColor }]} /> : <View style={[styles.profileImagePlaceholder, { backgroundColor: placeholderBg, borderColor: portraitBorderColor }]}><MaterialCommunityIcons name="account" size={100} color={iconColor} /></View>}
                 </View>
-                <Text style={[styles.profileName, { color: nameTextColor }]}>{selectedUser?.name || selectedUser?.username || 'Employee'}</Text>
+                <Text style={[styles.profileName, { color: nameTextColor }]}>{selectedUser?.name || selectedUser?.username || (selectedUser?.isIntern ? 'Intern' : 'Employee')}</Text>
                 <Text style={[styles.profileRole, { color: roleTextColor }]}>{selectedUser?.role || 'Staff Member'}</Text>
                 <Text style={[styles.profileDept, { color: roleTextColor }]}>{selectedUser?.department || 'Department'}</Text>
                 {isClockingOut && clockInTime ? <View style={[styles.clockInTimeContainer, { backgroundColor: isThemeLight ? 'rgba(0,0,0,0.05)' : 'rgba(0,0,0,0.2)' }]}><MaterialCommunityIcons name="clock-outline" size={18} color={roleTextColor} /><Text style={[styles.clockInTimeText, { color: roleTextColor }]}>Clocked In at: {clockInTime}</Text></View> : null}

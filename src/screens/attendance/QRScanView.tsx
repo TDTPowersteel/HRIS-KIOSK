@@ -18,6 +18,7 @@ type Props = {
   offlineModeEnabled: boolean;
   isOnline: boolean;
   pendingSyncCount: number;
+  kioskMode?: 'employee' | 'intern';
   onBack: () => void;
   onOpenOffline: () => void;
 };
@@ -35,6 +36,7 @@ export default function QRScanView({
   offlineModeEnabled,
   isOnline,
   pendingSyncCount,
+  kioskMode = 'employee',
   onBack,
   onOpenOffline,
 }: Props) {
@@ -162,7 +164,9 @@ export default function QRScanView({
             </View>
           )}
           <View style={styles.welcomeContainer}>
-            <Text style={styles.waitingText}>Waiting for employee QR...</Text>
+            <Text style={styles.waitingText}>
+              {kioskMode === 'intern' ? 'Waiting for intern QR...' : 'Waiting for employee QR...'}
+            </Text>
           </View>
         </View>
       </SafeAreaView>
