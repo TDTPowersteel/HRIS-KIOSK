@@ -275,9 +275,18 @@ if (strpos($userId, 'intern_') === 0 || (defined('KIOSK_MODE') && KIOSK_MODE ===
 
     $data = json_decode($response, true);
     if ($httpCode !== 200 || !($data['ok'] ?? false)) {
+        $msg = $data['message'] ?? 'IMS record failure';
+        
+        // IDEMPOTENCY: If user is already clocked in/out, treat as success for sync purposes
+        // so the offline log can be removed from the queue.
+        if (strpos($msg, 'Already clocked') !== false) {
+            echo json_encode(['ok' => true, 'message' => $msg, 'details' => 'Handled as success for sync idempotency']);
+            exit;
+        }
+
         error_log("[Attendance Sync] IMS error response: " . ($response ?: 'Empty response'));
         http_response_code($httpCode ?: 500);
-        echo json_encode(['ok' => false, 'message' => $data['message'] ?? 'IMS record failure']);
+        echo json_encode(['ok' => false, 'message' => $msg]);
         exit;
     }
 
