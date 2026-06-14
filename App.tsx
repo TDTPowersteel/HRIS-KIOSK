@@ -10,7 +10,7 @@ import OfflineSync from './src/screens/OfflineSync';
 import * as Location from 'expo-location';
 import { ThemeContext, Theme, getStoredTheme, saveTheme, ThemeType, Colors } from './src/config/theme';
 import { useAutoSync } from './src/utils/useAutoSync';
-import { mmkv } from './src/utils/offlineUsers';
+import { mmkv, refreshOfflineUserCache } from './src/utils/offlineUsers';
 import { BACKEND_URL } from './src/config/backend';
 
 export default function App() {
@@ -79,6 +79,33 @@ export default function App() {
       .catch((err) => {
         console.log('Failed to fetch settings:', err);
       });
+  }, []);
+
+  useEffect(() => {
+    const runStartupTasks = async () => {
+      // Delay by 3 seconds to avoid blocking main UI rendering
+      await new Promise(resolve => setTimeout(resolve, 3000));
+      
+      console.log('[Startup] Executing background sync...');
+      refreshOfflineUserCache()
+        .then(users => console.log(`[Startup] Background sync complete. Mapped ${users?.length || 0} users.`))
+        .catch(err => console.log('[Startup] Background sync failed:', err));
+
+      console.log('[Startup] Triggering server warmup...');
+      fetch(`${BACKEND_URL}/verify_embedding.php`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({
+          log_id: 'warmup',
+          live_image_b64: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII='
+        })
+      })
+        .then(res => res.json())
+        .then(data => console.log('[Startup] Server warmup response:', data))
+        .catch(err => console.log('[Startup] Server warmup request failed:', err));
+    };
+
+    runStartupTasks();
   }, []);
 
   useEffect(() => {
