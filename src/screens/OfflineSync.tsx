@@ -384,7 +384,9 @@ export default function OfflineSync({ onBack, onOpenScanner }: Props) {
               Management Dashboard
             </Text>
             <Text style={[styles.headerSubtitle, { color: colors.textSecondary, fontSize: subtitleFontSize }]} numberOfLines={1}>
-              Real-time monitor and sync terminal.
+              {kioskMode === 'intern' 
+                ? 'Monitor and synchronize local Intern DTR logs.' 
+                : 'Monitor and synchronize local Employee DTR logs.'}
             </Text>
           </View>
         </View>
@@ -456,7 +458,7 @@ export default function OfflineSync({ onBack, onOpenScanner }: Props) {
           <View style={[styles.noobInfoBox, { backgroundColor: withAlpha('#f97316', 0.08) }]}>
             <Text style={[styles.noobTitle, { color: '#ea580c', fontSize: noobTitleFontSize }]}>WAITING TO SYNC</Text>
             <Text style={[styles.noobText, { color: colors.textSecondary, fontSize: noobTextFontSize }]}>
-              These logs were saved offline. Click <Text style={{fontWeight: '800'}}>SYNC NOW</Text> to send to server.
+              These logs were saved offline. Click <Text style={{fontWeight: '800', color: '#ea580c'}}>SYNC NOW</Text> to send to server.
             </Text>
           </View>
 
