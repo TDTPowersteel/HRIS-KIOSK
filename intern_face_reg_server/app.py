@@ -102,7 +102,7 @@ def get_embeddings():
             if img is None:
                 return jsonify({'success': False, 'ok': False, 'error': f'Image {idx+1} could not be decoded'}), 400
 
-            pad_amount = 2.5 if idx == 1 else 1.5
+            pad_amount = 1.5
             embedding, err = get_embedding_from_bgr(img, padding=pad_amount)
 
             if err == 'no_face':

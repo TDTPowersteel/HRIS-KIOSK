@@ -11,6 +11,7 @@ import { SyncLocationFeature } from './features/SyncLocationFeature';
 import { ThemeSelectorFeature } from './features/ThemeSelectorFeature';
 import { LivenessCheckFeature } from './features/LivenessCheckFeature';
 import { AutoSyncFeature } from './features/AutoSyncFeature';
+import { ServerVerificationFeature } from './features/ServerVerificationFeature';
 import { mmkv /*, clearOfflineUserCache */ } from '../../utils/offlineUsers';
 
 const TOUCHLESS_SETTING_KEY = 'settings_touchless_enabled';
@@ -57,6 +58,7 @@ export default function Settings({ onBack }: Props) {
     return (mmkv.getString('kiosk_mode') as 'employee' | 'intern') || 'employee';
   });
   const [livenessEnabled, setLivenessEnabled] = useState(true);
+  const [serverVerifyEnabled, setServerVerifyEnabled] = useState(true);
   const [backendSettings, setBackendSettings] = useState<BackendSettings>({
     attendance_location: {
       latitude: 14.6130261,
@@ -139,7 +141,12 @@ export default function Settings({ onBack }: Props) {
   const loadSettings = useCallback(async () => {
     try {
       const [settingsEntries, response] = await Promise.all([
-        AsyncStorage.multiGet([TOUCHLESS_SETTING_KEY, 'settings_liveness_enabled', AUTO_SYNC_SETTING_KEY]),
+        AsyncStorage.multiGet([
+          TOUCHLESS_SETTING_KEY, 
+          'settings_liveness_enabled', 
+          AUTO_SYNC_SETTING_KEY,
+          'settings_server_verification_enabled'
+        ]),
         fetch(`${BACKEND_URL}/settings.php`, {
           headers: {
             Accept: 'application/json',
@@ -152,6 +159,7 @@ export default function Settings({ onBack }: Props) {
       setTouchlessEnabled(localSettings[TOUCHLESS_SETTING_KEY] === 'true');
       setLivenessEnabled(localSettings['settings_liveness_enabled'] !== 'false');
       setAutoSyncEnabled(localSettings[AUTO_SYNC_SETTING_KEY] !== 'false');
+      setServerVerifyEnabled(localSettings['settings_server_verification_enabled'] !== 'false');
 
       // calculateStorageSize();
 
@@ -223,6 +231,15 @@ export default function Settings({ onBack }: Props) {
       await AsyncStorage.setItem(AUTO_SYNC_SETTING_KEY, value ? 'true' : 'false');
     } catch {
       setAutoSyncEnabled(!value);
+    }
+  }, []);
+
+  const handleServerVerifyChange = useCallback(async (value: boolean) => {
+    setServerVerifyEnabled(value);
+    try {
+      await AsyncStorage.setItem('settings_server_verification_enabled', value ? 'true' : 'false');
+    } catch {
+      setServerVerifyEnabled(!value);
     }
   }, []);
 
@@ -423,8 +440,10 @@ export default function Settings({ onBack }: Props) {
           </View>
 
           <View style={styles.featureGrid}>
+            <ServerVerificationFeature enabled={serverVerifyEnabled} onToggle={handleServerVerifyChange} />
             <TouchlessModeFeature enabled={touchlessEnabled} onToggle={handleTouchlessChange} />
             <LivenessCheckFeature enabled={livenessEnabled} onToggle={handleLivenessChange} />
+          
             <AutoSyncFeature enabled={autoSyncEnabled} onToggle={handleAutoSyncChange} />
 
             {kioskMode !== 'intern' && (
@@ -452,10 +471,13 @@ export default function Settings({ onBack }: Props) {
               />
               <View>
                 <Text style={{ color: colors.text, fontWeight: '800', fontSize: 13 }}>
-                  {kioskMode === 'intern' ? 'MySQL (Intern Management System)' : 'Supabase Cloud (Employee Mode)'}
+                  {kioskMode === 'intern' ? 'MySQL' : 'Supabase'}
                 </Text>
                 <Text style={{ color: colors.textSecondary, fontSize: 11, marginTop: 2 }}>
-                  {kioskMode === 'intern' ? 'Storage File: app_settings_intern.json' : 'Storage File: app_settings.json'}
+                  Connected to{' '}
+                  <Text style={{ color: Colors.powerOrange, fontWeight: 'bold' }}>
+                    {kioskMode === 'intern' ? 'Intern Management System' : 'HRIS'}
+                  </Text>
                 </Text>
               </View>
             </View>
