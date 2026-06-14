@@ -23,11 +23,11 @@ $userId = isset($input['log_id']) ? trim((string) $input['log_id']) : null;
 $liveEmbeddingRaw = $input['live_embedding'] ?? null;
 $liveImageB64 = $input['live_image_b64'] ?? null;
 $engine = isset($input['engine']) ? trim((string) $input['engine']) : '';
-$mlServerUrl = getenv('ML_SERVER_URL') ?: 'http://localhost:5001';
+$faceServerUrl = getenv('FACE_SERVER_URL') ?: 'http://localhost:5001';
 
 if ($userId === 'warmup') {
     if ($liveImageB64) {
-        $ch = curl_init($mlServerUrl . '/embed_single');
+        $ch = curl_init($faceServerUrl . '/embed_single');
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
         curl_setopt($ch, CURLOPT_POST, true);
         curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode(['image' => $liveImageB64]));
@@ -50,7 +50,7 @@ if (!$userId) {
 $liveEmbedding = null;
 if ($liveImageB64) {
     // Forward crop base64 to local Python ML server
-    $ch = curl_init($mlServerUrl . '/embed_single');
+    $ch = curl_init($faceServerUrl . '/embed_single');
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_POST, true);
     curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode(['image' => $liveImageB64]));
