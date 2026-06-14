@@ -982,7 +982,7 @@ export function useAttendance() {
     const threshold = MODEL_CONFIG.matchThreshold;
     const subThreshold = MODEL_CONFIG.subThreshold;
 
-    // top2_agree: for multi-angle registrations, require at least 2 angles above sub-threshold
+    // Require at least 2 angles above sub-threshold for multi-angle registrations
     const agreeingAngles = result.perAngleScores.filter(s => s >= subThreshold).length;
     const top2Required = result.angleCount >= 3;
     const top2Agrees = !top2Required || agreeingAngles >= 2;
@@ -1104,7 +1104,53 @@ export function useAttendance() {
         console.log('[Attendance] Could not capture location', e);
       }
 
-      // 1. Save to local offline queue first (Instant queueing)
+      const isActuallyOffline = !isConnected || !hasGoodInternet || offlineModeEnabled;
+
+      if (!isActuallyOffline) {
+        try {
+          console.log('[Attendance] Recording online directly...');
+          const result = await recordAttendance(
+            selectedUserRef.current!.userId,
+            action,
+            {
+              isIntern: selectedUserRef.current!.isIntern,
+              ...(selectedUserRef.current!.isIntern ? {} : locationData)
+            }
+          );
+
+          const serverDate = result?.date || localDate;
+          const serverTime = result?.time || localTime;
+
+          if (action === 'clock_in') {
+            await storeClockInNotification({ date: serverDate, timein: serverTime });
+            await saveStoredSession({ 
+              userId: selectedUserRef.current!.userId, 
+              username: selectedUserRef.current!.username, 
+              name: selectedUserRef.current!.name ?? null, 
+              clockInTime: serverTime, 
+              clockInDate: serverDate 
+            });
+          } else {
+            await clearStoredSession(selectedUserRef.current!.userId);
+          }
+
+          setScanStage('success');
+          setSuccessAnimationTick((prev) => prev + 1);
+          
+          setTimeout(async () => {
+            await resetAttendanceFlow();
+            workletPhase.value = 0;
+            
+            showModal('success',
+              action === 'clock_in' ? "You're Clocked In!" : "You're Clocked Out!",
+              'Attendance processed.', 2000);
+          }, 500);
+          return;
+        } catch (onlineError) {
+          console.log('[Attendance] Online record failed, falling back to offline queue:', onlineError);
+        }
+      }
+
       const offlineItem = await enqueueOfflineAttendance({ 
           userId: selectedUserRef.current!.userId, 
           username: selectedUserRef.current!.username, 
@@ -1117,7 +1163,6 @@ export function useAttendance() {
       });
       await refreshPendingSyncCount();
 
-      // 2. Optimistically update local session state immediately
       if (action === 'clock_in') {
         await storeClockInNotification({ date: localDate, timein: localTime });
         await saveStoredSession({ 
@@ -1131,34 +1176,17 @@ export function useAttendance() {
         await clearStoredSession(selectedUserRef.current!.userId);
       }
 
-      // 3. Immediately transition UI to success and reset flow (non-blocking)
       setScanStage('success');
       setSuccessAnimationTick((prev) => prev + 1);
       
       setTimeout(async () => {
         await resetAttendanceFlow();
-        workletPhase.value = 0; // Reset worklet phase
+        workletPhase.value = 0;
         
         showModal('success',
           action === 'clock_in' ? "You're Clocked In!" : "You're Clocked Out!",
           'Attendance processed.', 2000);
       }, 500);
-
-      // 4. In the background (asynchronously), attempt to sync with backend if online
-      const isActuallyOffline = !isConnected || !hasGoodInternet || offlineModeEnabled;
-      if (!isActuallyOffline) {
-        (async () => {
-          try {
-            console.log(`[Attendance] Background Syncing item ${offlineItem.id}...`);
-            await syncOfflineItem(offlineItem);
-            console.log(`[Attendance] Background Syncing item ${offlineItem.id} successful!`);
-            await refreshPendingSyncCount();
-          } catch (err) {
-            console.log(`[Attendance] Background Syncing item ${offlineItem.id} failed:`, err);
-            await refreshPendingSyncCount();
-          }
-        })();
-      }
 
     } catch (e: any) {
       faceProcessingRef.current = false;
@@ -1167,7 +1195,7 @@ export function useAttendance() {
     } finally {
       setIsVerifying(false);
     }
-  }, [attendanceAction, clearStoredSession, enqueueOfflineAttendance, isConnected, hasGoodInternet, offlineModeEnabled, refreshPendingSyncCount, resetAttendanceFlow, saveStoredSession, showModal, storeClockInNotification, workletPhase, syncOfflineItem]);
+  }, [attendanceAction, clearStoredSession, enqueueOfflineAttendance, isConnected, hasGoodInternet, offlineModeEnabled, refreshPendingSyncCount, resetAttendanceFlow, saveStoredSession, showModal, storeClockInNotification, workletPhase, recordAttendance]);
 
   // Main attendance handler (Concurrent Phase 1 & 2)
   const executeFaceVerification = useCallback(async () => {

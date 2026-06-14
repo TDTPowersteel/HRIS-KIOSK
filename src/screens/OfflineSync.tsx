@@ -21,6 +21,7 @@ import { Colors, useTheme } from '../config/theme';
 import {
   getOfflineAttendanceQueue,
   syncOfflineQueue,
+  removeOfflineAttendanceItem,
   type OfflineAttendanceItem,
 } from '../utils/offlineAttendance';
 import { useNetworkStatus } from '../hooks/useNetworkStatus';
@@ -293,6 +294,15 @@ export default function OfflineSync({ onBack, onOpenScanner }: Props) {
     }
   }, [isSyncing, reloadQueue, loadHistory, hasGoodInternet]);
 
+  const handleDeleteItem = useCallback(async (id: string) => {
+    try {
+      await removeOfflineAttendanceItem(id);
+      await reloadQueue();
+    } catch (e) {
+      console.error('[OfflineSync] Failed to delete item', e);
+    }
+  }, [reloadQueue]);
+
   const exportToCSV = async (dataToExport: any[]) => {
     try {
       const headerString = 'ID,Name,Time In,Time Out\n';
@@ -496,12 +506,13 @@ export default function OfflineSync({ onBack, onOpenScanner }: Props) {
                   <View
                     key={item.id}
                     style={[
-                      styles.standardCard,
-                      {
-                        backgroundColor: isFailedItem ? 'rgba(239, 68, 68, 0.04)' : colors.background,
-                        borderColor: isFailedItem ? '#ef4444' : colors.border,
-                        height: cardHeight,
-                      },
+                       styles.standardCard,
+                       {
+                         backgroundColor: isFailedItem ? 'rgba(239, 68, 68, 0.04)' : colors.background,
+                         borderColor: isFailedItem ? '#ef4444' : colors.border,
+                         height: isFailedItem ? undefined : cardHeight,
+                         paddingVertical: isFailedItem ? 12 : undefined,
+                       },
                     ]}
                   >
                     <View style={[
@@ -518,13 +529,28 @@ export default function OfflineSync({ onBack, onOpenScanner }: Props) {
                     <View style={styles.standardContent}>
                       <View style={styles.standardTopRow}>
                         <Text style={[styles.standardName, { color: colors.text, fontSize: standardNameFontSize }]} numberOfLines={1}>{displayName}</Text>
-                        <View style={[styles.standardBadge, { backgroundColor: isFailedItem ? withAlpha('#ef4444', 0.15) : withAlpha('#f97316', 0.15) }]}>
-                          <Text style={[styles.standardBadgeText, { color: isFailedItem ? '#ef4444' : '#ea580c', fontSize: standardBadgeTextFontSize }]}>
-                            {item.action === 'clock_in' ? 'IN' : 'OUT'}
-                          </Text>
+                        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                          <View style={[styles.standardBadge, { backgroundColor: isFailedItem ? withAlpha('#ef4444', 0.15) : withAlpha('#f97316', 0.15) }]}>
+                            <Text style={[styles.standardBadgeText, { color: isFailedItem ? '#ef4444' : '#ea580c', fontSize: standardBadgeTextFontSize }]}>
+                              {item.action === 'clock_in' ? 'IN' : 'OUT'}
+                            </Text>
+                          </View>
+                          {isFailedItem && (
+                            <Pressable
+                              onPress={() => handleDeleteItem(item.id)}
+                              style={({ pressed }) => [{ marginLeft: 12, opacity: pressed ? 0.6 : 1 }]}
+                            >
+                              <MaterialCommunityIcons name="delete-outline" size={20} color="#ef4444" />
+                            </Pressable>
+                          )}
                         </View>
                       </View>
                       <Text style={[styles.standardTime, { color: colors.textSecondary, fontSize: standardTimeFontSize }]}>{formatTimeDisplay(item.time)}</Text>
+                      {isFailedItem && item.errorMessage ? (
+                        <Text style={{ color: '#ef4444', fontSize: 11, marginTop: 4, fontWeight: '500' }}>
+                          Error: {item.errorMessage}
+                        </Text>
+                      ) : null}
                     </View>
                   </View>
                 );

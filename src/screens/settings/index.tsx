@@ -9,7 +9,7 @@ import { useTheme, Colors } from '../../config/theme';
 import { TouchlessModeFeature } from './features/TouchlessModeFeature';
 import { SyncLocationFeature } from './features/SyncLocationFeature';
 import { AdminAccessFeature } from './features/AdminAccessFeature';
-import { OfflineRedundancyFeature } from './features/OfflineRedundancyFeature';
+// import { OfflineRedundancyFeature } from './features/OfflineRedundancyFeature';
 import { ThemeSelectorFeature } from './features/ThemeSelectorFeature';
 import { LivenessCheckFeature } from './features/LivenessCheckFeature';
 import { AutoSyncFeature } from './features/AutoSyncFeature';
@@ -185,6 +185,8 @@ export default function Settings({ onBack }: Props) {
 
   const confirmWipe = async () => {
     setShowWipeConfirm(false);
+    // Commented out to prevent accidental database wipe
+    /*
     setIsLoading(true);
     try {
       await AsyncStorage.clear();
@@ -195,6 +197,8 @@ export default function Settings({ onBack }: Props) {
     } finally {
       setIsLoading(false);
     }
+    */
+    Alert.alert('Notice', 'Clear Data is temporarily disabled.');
   };
 
   const handleWipeCache = useCallback(() => {
@@ -430,9 +434,10 @@ export default function Settings({ onBack }: Props) {
           </View>
 
           <View style={styles.featureGrid}>
-            <AutoSyncFeature enabled={autoSyncEnabled} onToggle={handleAutoSyncChange} />
             <TouchlessModeFeature enabled={touchlessEnabled} onToggle={handleTouchlessChange} />
             <LivenessCheckFeature enabled={livenessEnabled} onToggle={handleLivenessChange} />
+            <AutoSyncFeature enabled={autoSyncEnabled} onToggle={handleAutoSyncChange} />
+
             {kioskMode !== 'intern' && (
               <SyncLocationFeature
                 attendance_location={backendSettings.attendance_location}
@@ -440,7 +445,7 @@ export default function Settings({ onBack }: Props) {
               />
             )}
             {/* <AdminAccessFeature saveBackendSettings={saveBackendSettings} /> */}
-            <OfflineRedundancyFeature isOnline={isOnline} />
+            {/* <OfflineRedundancyFeature isOnline={isOnline} /> */}
           </View>
 
           <View style={styles.sectionHeader}>

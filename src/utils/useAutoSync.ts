@@ -1,5 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useEffect, useRef, useState } from 'react';
+import NetInfo from '@react-native-community/netinfo';
 import { BACKEND_URL } from '../config/backend';
 import { getOfflineAttendanceQueue, syncOfflineQueue } from './offlineAttendance';
 import { mmkv } from './offlineUsers';
@@ -42,30 +43,32 @@ export function useAutoSync() {
           return;
         }
 
-        // Ping the backend to check actual connectivity
-        const response = await fetch(`${BACKEND_URL}/settings.php`, {
-          headers: { Accept: 'application/json', 'ngrok-skip-browser-warning': 'true' },
-        });
+        const state = await NetInfo.fetch();
+        const online = !!state.isConnected;
 
-        if (response.ok) {
+        if (online) {
           setIsOnline(true);
           stabilityCounterRef.current += 1;
 
           try {
-            const data = await response.json();
-            if (data && data.kiosk_mode) {
-              mmkv.set('kiosk_mode', data.kiosk_mode);
+            const response = await fetch(`${BACKEND_URL}/settings.php`, {
+              headers: { Accept: 'application/json', 'ngrok-skip-browser-warning': 'true' },
+            });
+            if (response.ok) {
+              const data = await response.json();
+              if (data && data.kiosk_mode) {
+                mmkv.set('kiosk_mode', data.kiosk_mode);
+              }
             }
           } catch (e) {}
 
-          // If stable for 2 pings (60s), trigger sync
           if (stabilityCounterRef.current >= 2) {
             isSyncingRef.current = true;
             try {
               await syncOfflineQueue();
             } finally {
               isSyncingRef.current = false;
-              stabilityCounterRef.current = 0; // Reset after attempt
+              stabilityCounterRef.current = 0;
             }
           }
         } else {
