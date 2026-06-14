@@ -86,7 +86,7 @@ export default function FaceScanView({
   selectedUser,
   accentColor,
   livenessMessage,
-  showTelemetry = false,
+  showTelemetry = true,
   showResultModal = false,
   onBack,
   onOpenOffline,
@@ -374,15 +374,17 @@ export default function FaceScanView({
 
   const getYawLabel = (yaw: number | null | undefined) => {
     if (typeof yaw !== 'number' || !Number.isFinite(yaw)) return '--';
-    if (yaw > 12) return 'Left';
-    if (yaw < -12) return 'Right';
-    return 'Center';
+    const rounded = Math.round(yaw);
+    if (yaw > 12) return `Left (${rounded}°)`;
+    if (yaw < -12) return `Right (${rounded}°)`;
+    return `Center (${rounded}°)`;
   };
   const getPitchLabel = (pitch: number | null | undefined) => {
     if (typeof pitch !== 'number' || !Number.isFinite(pitch)) return '--';
-    if (pitch > 12) return 'Up';
-    if (pitch < -12) return 'Down';
-    return 'Center';
+    const rounded = Math.round(pitch);
+    if (pitch > 12) return `Up (${rounded}°)`;
+    if (pitch < -12) return `Down (${rounded}°)`;
+    return `Center (${rounded}°)`;
   };
   const yawLabel = getYawLabel(cameraVisionFaceTelemetry?.yaw);
   const pitchLabel = getPitchLabel(cameraVisionFaceTelemetry?.pitch);
