@@ -385,8 +385,8 @@ export default function OfflineSync({ onBack, onOpenScanner }: Props) {
             </Text>
             <Text style={[styles.headerSubtitle, { color: colors.textSecondary, fontSize: subtitleFontSize }]} numberOfLines={1}>
               {kioskMode === 'intern' 
-                ? 'Monitor and synchronize local Intern DTR logs.' 
-                : 'Monitor and synchronize local Employee DTR logs.'}
+                ? 'Monitor and Synchronize Intern Logs' 
+                : 'Monitor and Synchronize Employee Logs'}
             </Text>
           </View>
         </View>
