@@ -118,6 +118,43 @@ def get_embeddings():
         return jsonify({'success': False, 'ok': False, 'error': str(e)}), 500
 
 
+@app.route('/embed_single', methods=['POST'])
+def get_single_embedding():
+    try:
+        data = request.get_json()
+        if not data or 'image' not in data:
+            return jsonify({'success': False, 'ok': False, 'error': 'Missing image parameter'}), 400
+
+        img_b64 = data['image']
+        if ',' in img_b64:
+            img_b64 = img_b64.split(',')[1]
+
+        try:
+            img_data = base64.b64decode(img_b64)
+        except Exception:
+            return jsonify({'success': False, 'ok': False, 'error': 'Invalid base64 encoding'}), 400
+
+        nparr = np.frombuffer(img_data, np.uint8)
+        img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+
+        if img is None:
+            return jsonify({'success': False, 'ok': False, 'error': 'Image could not be decoded'}), 400
+
+        # Extract face embedding with buffalo_sc
+        pad_amount = 1.5
+        embedding, err = get_embedding_from_bgr(img, padding=pad_amount)
+
+        if err == 'no_face':
+            return jsonify({'success': False, 'ok': False, 'error': 'No face detected'}), 400
+        if err == 'multiple':
+            return jsonify({'success': False, 'ok': False, 'error': 'Multiple faces detected'}), 400
+
+        return jsonify({'success': True, 'ok': True, 'embedding': embedding})
+
+    except Exception as e:
+        return jsonify({'success': False, 'ok': False, 'error': str(e)}), 500
+
+
 if __name__ == '__main__':
     try:
         from waitress import serve

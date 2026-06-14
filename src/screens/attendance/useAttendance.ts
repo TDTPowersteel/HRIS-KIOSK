@@ -298,6 +298,7 @@ export function useAttendance() {
   const livenessScoreRef = useRef<number | null>(null);
     const cameraVisionAutoTriggeredRef = useRef(false);
   const touchlessEnabledRef = useRef(false);
+  const serverVerifyEnabledRef = useRef(true);
   const lastCameraVisionGateLogRef = useRef(0);
 
   // Shared Values (moved up to avoid use-before-declaration)
@@ -368,6 +369,7 @@ export function useAttendance() {
   const [touchlessEnabled, setTouchlessEnabled] = useState(false);
   const [offlineModeEnabled, setOfflineModeEnabled] = useState(false);
   const [livenessEnabled, setLivenessEnabled] = useState(true);
+  const [serverVerifyEnabled, setServerVerifyEnabled] = useState(true);
   const [pendingSyncCount, setPendingSyncCount] = useState(0);
   const [scanStage, setScanStage] = useState<FaceScanStage>('idle');
   const [cameraVisionFaceDetected, setCameraVisionFaceDetected] = useState(false);
@@ -619,17 +621,25 @@ export function useAttendance() {
   }, []);
 
   const applyScannerSettings = useCallback(async () => {
-    const entries = await AsyncStorage.multiGet([TOUCHLESS_SETTING_KEY, 'settings_liveness_enabled', 'settings_face_engine']);
+    const entries = await AsyncStorage.multiGet([
+      TOUCHLESS_SETTING_KEY, 
+      'settings_liveness_enabled', 
+      'settings_face_engine',
+      'settings_server_verification_enabled'
+    ]);
     const mapped = Object.fromEntries(entries);
     const touchless = mapped[TOUCHLESS_SETTING_KEY] === 'true';
     const liveness = mapped['settings_liveness_enabled'] !== 'false';
+    const serverVerify = mapped['settings_server_verification_enabled'] !== 'false';
     touchlessEnabledRef.current = touchless;
     setTouchlessEnabled(touchless);
     setLivenessEnabled(liveness);
+    serverVerifyEnabledRef.current = serverVerify;
+    setServerVerifyEnabled(serverVerify);
     sharedTouchlessEnabled.value = touchless;
     sharedLivenessEnabled.value = liveness;
     sharedFaceEngineIsCameraVision.value = true;
-    return { touchless, liveness };
+    return { touchless, liveness, serverVerify };
   }, [sharedTouchlessEnabled, sharedLivenessEnabled]);
 
   const getImsUrl = useCallback(() => {
@@ -931,28 +941,163 @@ export function useAttendance() {
     return await runOnnxAndNormalize(tensor);
   }, [cameraVisionFaceBox]);
 
-  const verifyFaceViaAPI = useCallback(async (liveEmbedding: number[]): Promise<{ ok: boolean; verified: boolean; message?: string; hint?: string; similarity?: number; angle_count?: number; best_angle_index?: number; agreeing_angles?: number } | null> => {
+  const captureFaceCropB64 = useCallback(async (): Promise<string> => {
+    if (!cameraRef.current) throw new Error('Camera not ready');
+
+    console.log('[CameraVision] Taking photo for server-assisted embedding (640x480)...');
+    // @ts-ignore
+    const photo = await cameraRef.current.takePhoto({
+      flash: 'off',
+      enableShutterSound: false,
+    });
+    if (!photo?.path) throw new Error('No image captured');
+
+    const faceBox = cameraVisionFaceBox;
+    let imageToProcess = `file://${photo.path}`;
+
+    let originX = 0;
+    let originY = 0;
+    let safeSize = 0;
+    let photoW = photo.width;
+    let photoH = photo.height;
+
+    if (faceBox) {
+      try {
+        const [resolvedW, resolvedH] = await new Promise<[number, number]>((resolve, reject) => {
+          RNImage.getSize(imageToProcess, (w, h) => resolve([w, h]), reject);
+        });
+        photoW = resolvedW;
+        photoH = resolvedH;
+      } catch (err) {
+        console.warn('[CameraVision] Failed to get image dimensions, using photo metadata:', err);
+      }
+      
+      const frameW = faceBox.frameWidth || (photoW > photoH ? 1280 : 720);
+      const frameH = faceBox.frameHeight || (photoW > photoH ? 720 : 1280);
+      
+      const isFrameLandscape = frameW > frameH;
+      const isPhotoLandscape = photoW > photoH;
+      const isRotated = isFrameLandscape !== isPhotoLandscape;
+
+      const orientedFrameWidth = isRotated ? frameH : frameW;
+      const orientedFrameHeight = isRotated ? frameW : frameH;
+
+      const rawFaceX = faceBox.left * orientedFrameWidth;
+      const rawFaceY = faceBox.top * orientedFrameHeight;
+      const rawFaceW = faceBox.width * orientedFrameWidth;
+      const rawFaceH = faceBox.height * orientedFrameHeight;
+      
+      const scale = Math.min(photoW / orientedFrameWidth, photoH / orientedFrameHeight);
+      const renderedW = orientedFrameWidth * scale;
+      const renderedH = orientedFrameHeight * scale;
+      const offsetX = (photoW - renderedW) / 2;
+      const offsetY = (photoH - renderedH) / 2;
+
+      let photoFaceX = (rawFaceX * scale) + offsetX;
+      let photoFaceY = (rawFaceY * scale) + offsetY;
+      const photoFaceW = rawFaceW * scale;
+      const photoFaceH = rawFaceH * scale;
+
+      if (device?.position === 'front') {
+        photoFaceX = photoW - (photoFaceX + photoFaceW);
+      }
+
+      const pxCenterX = photoFaceX + photoFaceW / 2;
+      const pxCenterY = photoFaceY + photoFaceH / 2;
+
+      const faceRatio = Math.max(photoFaceW / photoW, photoFaceH / photoH);
+      
+      let paddingMult: number;
+      if (faceRatio >= 0.35) {
+        paddingMult = 1.6;
+      } else if (faceRatio <= 0.15) {
+        paddingMult = 2.0;
+      } else {
+        const t = (faceRatio - 0.15) / (0.35 - 0.15);
+        paddingMult = 2.0 - t * (2.0 - 1.6);
+      }
+
+      const pxSide = Math.max(photoFaceW, photoFaceH) * paddingMult;
+      
+      originX = Math.floor(pxCenterX - pxSide / 2);
+      originY = Math.floor(pxCenterY - pxSide * 0.45);
+      const size = Math.floor(pxSide);
+
+      safeSize = Math.min(size, photoW, photoH);
+      originX = Math.max(0, Math.min(photoW - safeSize, originX));
+      originY = Math.max(0, Math.min(photoH - safeSize, originY));
+    }
+
+    const actions: ImageManipulator.Action[] = [];
+    if (safeSize > 0) {
+      actions.push({ crop: { originX, originY, width: safeSize, height: safeSize } });
+    }
+    actions.push({ resize: { width: 112, height: 112 } });
+    if (device?.position === 'front') {
+      actions.push({ flip: ImageManipulator.FlipType.Horizontal });
+    }
+
+    const manipResult = await ImageManipulator.manipulateAsync(
+      imageToProcess,
+      actions,
+      { format: ImageManipulator.SaveFormat.JPEG, compress: 0.95, base64: true }
+    );
+
+    if (!manipResult.base64) throw new Error('Failed to encode image to base64');
+    return manipResult.base64;
+  }, [device, cameraVisionFaceBox]);
+
+  const verifyFaceViaAPI = useCallback(async (
+    liveEmbedding: number[] | null,
+    liveImageB64: string | null = null
+  ): Promise<{ 
+    ok: boolean; 
+    verified: boolean; 
+    message?: string; 
+    hint?: string; 
+    similarity?: number; 
+    angle_count?: number; 
+    best_angle_index?: number; 
+    agreeing_angles?: number;
+    username?: string;
+  } | null> => {
     try {
       const userId = selectedUserRef.current?.userId;
       if (!userId) return null;
 
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 5000);
+      const timeoutId = setTimeout(() => controller.abort(), 6000);
+
+      const body: any = { log_id: userId };
+      if (liveImageB64) {
+        body.live_image_b64 = liveImageB64;
+      } else if (liveEmbedding) {
+        body.live_embedding = liveEmbedding;
+      }
 
       const response = await fetch(`${BACKEND_URL}/verify_embedding.php`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'ngrok-skip-browser-warning': 'true' },
-        body: JSON.stringify({ log_id: userId, live_embedding: liveEmbedding }),
+        body: JSON.stringify(body),
         signal: controller.signal,
       });
       clearTimeout(timeoutId);
 
       const json = await response.json();
-      const isVerified = json.verified === true || json.is_match === true;
+      const isVerified = json.verified === true || json.is_match === true || json.ok === true;
       console.log(`[Face Verification API] Response:`, { verified: isVerified, similarity: json.similarity, threshold: json.threshold, angle_count: json.angle_count, best_angle: json.best_angle_index });
 
       if (json.ok === false && json.message) {
-        return { ok: false, verified: false, message: json.message, hint: json.hint, similarity: json.similarity, angle_count: json.angle_count, best_angle_index: json.best_angle_index ?? json.best_angle, agreeing_angles: json.agreeing_angles };
+        return { 
+          ok: false, 
+          verified: false, 
+          message: json.message, 
+          hint: json.hint, 
+          similarity: json.similarity, 
+          angle_count: json.angle_count, 
+          best_angle_index: json.best_angle_index ?? json.best_angle, 
+          agreeing_angles: json.agreeing_angles 
+        };
       }
 
       return {
@@ -1255,11 +1400,6 @@ export function useAttendance() {
     let result: any;
 
     try {
-      const captureStart = Date.now();
-      let liveEmbedding: number[] | null = null;
-      let bestScore = -1;
-      let lastError: any = null;
-
       // Pre-parse stored embedding for quick scoring between shots
       const storedRaw = selectedUserRef.current?.face_embedding;
       let parsedStored: number[] | number[][] | null = null;
@@ -1267,49 +1407,82 @@ export function useAttendance() {
         try { parsedStored = Array.isArray(storedRaw) ? storedRaw : JSON.parse(storedRaw as string); } catch {}
       }
 
-      for (let attempt = 1; attempt <= 2; attempt++) {
-        try {
-          const embedding = await captureEmbeddingFromPhoto();
-          if (parsedStored) {
-            const r = compareMultiAngleEmbeddings(embedding, parsedStored);
-            if (r.maxSimilarity > bestScore) {
-              bestScore = r.maxSimilarity;
-              liveEmbedding = embedding;
-            }
-            
-            // Check if this shot is already a clear pass under local verification thresholds
-            const threshold = MODEL_CONFIG.matchThreshold;
-            const subThreshold = MODEL_CONFIG.subThreshold;
-            const agreeingAngles = r.perAngleScores.filter((s: number) => s >= subThreshold).length;
-            const top2Required = r.angleCount >= 3;
-            const top2Agrees = !top2Required || agreeingAngles >= 2;
-            const isMatched = r.maxSimilarity >= threshold && top2Agrees;
+      const isActuallyOffline = !isConnected || !hasGoodInternet || offlineModeEnabled;
+      const useServerVerify = serverVerifyEnabledRef.current && !isActuallyOffline;
 
-            if (isMatched && attempt === 1) {
-              console.log(`[CameraVision] Shot 1 is a clear pass (${(r.maxSimilarity * 100).toFixed(1)}% >= ${(threshold * 100).toFixed(0)}%), skipping shot 2.`);
-              break;
-            }
-          } else {
-            if (!liveEmbedding) liveEmbedding = embedding;
-            break;
-          }
-          if (attempt < 2) await new Promise(r => setTimeout(r, 50));
+      if (useServerVerify) {
+        methodUsed = 'Server-assisted (Camera Vision)';
+        const captureStart = Date.now();
+        let base64Crop: string | null = null;
+        try {
+          base64Crop = await captureFaceCropB64();
         } catch (err) {
-          console.log(`[CameraVision] Photo capture attempt ${attempt} failed:`, err);
-          lastError = err;
-          if (attempt < 2) await new Promise(r => setTimeout(r, 50));
+          console.warn('[CameraVision] Failed to capture face crop base64 for server:', err);
+        }
+        captureDuration = Date.now() - captureStart;
+        setIsCapturingHardware(false);
+
+        if (base64Crop) {
+          const compareStart = Date.now();
+          const apiResult = await verifyFaceViaAPI(null, base64Crop);
+          compareDuration = Date.now() - compareStart;
+
+          if (apiResult && typeof apiResult.ok === 'boolean') {
+            result = apiResult;
+          } else {
+            console.warn('[CameraVision] Server face verification returned invalid response, falling back to local verification.');
+          }
         }
       }
-      if (!liveEmbedding) throw lastError || new Error('Failed to capture face embedding');
-      
-      captureDuration = Date.now() - captureStart;
-      setIsCapturingHardware(false);
 
-      const compareStart = Date.now();
-      // Perform authoritative comparison locally to eliminate network latency (<1ms)
-      result = verifyFaceLocal(liveEmbedding);
-      methodUsed = 'Local (Camera Vision)';
-      compareDuration = Date.now() - compareStart;
+      if (!result) {
+        methodUsed = 'Local (Camera Vision)';
+        const captureStart = Date.now();
+        let liveEmbedding: number[] | null = null;
+        let bestScore = -1;
+        let lastError: any = null;
+
+        for (let attempt = 1; attempt <= 2; attempt++) {
+          try {
+            const embedding = await captureEmbeddingFromPhoto();
+            if (parsedStored) {
+              const r = compareMultiAngleEmbeddings(embedding, parsedStored);
+              if (r.maxSimilarity > bestScore) {
+                bestScore = r.maxSimilarity;
+                liveEmbedding = embedding;
+              }
+              
+              const threshold = MODEL_CONFIG.matchThreshold;
+              const subThreshold = MODEL_CONFIG.subThreshold;
+              const agreeingAngles = r.perAngleScores.filter((s: number) => s >= subThreshold).length;
+              const top2Required = r.angleCount >= 3;
+              const top2Agrees = !top2Required || agreeingAngles >= 2;
+              const isMatched = r.maxSimilarity >= threshold && top2Agrees;
+
+              if (isMatched && attempt === 1) {
+                console.log(`[CameraVision] Shot 1 is a clear pass (${(r.maxSimilarity * 100).toFixed(1)}% >= ${(threshold * 100).toFixed(0)}%), skipping shot 2.`);
+                break;
+              }
+            } else {
+              if (!liveEmbedding) liveEmbedding = embedding;
+              break;
+            }
+            if (attempt < 2) await new Promise(r => setTimeout(r, 50));
+          } catch (err) {
+            console.log(`[CameraVision] Photo capture attempt ${attempt} failed:`, err);
+            lastError = err;
+            if (attempt < 2) await new Promise(r => setTimeout(r, 50));
+          }
+        }
+        if (!liveEmbedding) throw lastError || new Error('Failed to capture face embedding');
+        
+        captureDuration = Date.now() - captureStart;
+        setIsCapturingHardware(false);
+
+        const compareStart = Date.now();
+        result = verifyFaceLocal(liveEmbedding);
+        compareDuration = Date.now() - compareStart;
+      }
     } catch (e: any) {
       setIsCapturingHardware(false);
       faceProcessingRef.current = false; // reset so touchless can auto-retry
@@ -2152,7 +2325,7 @@ export function useAttendance() {
     formattedTime, formattedDate,
     isLoading, isVerifying, isQrLoading, isClockingOut, isCapturingHardware: uiCapturingHardware,
     qrVerified, qrSuccessLocal, selectedUser, clockInTime: displayClockInTime, faceCountdown,
-    touchlessEnabled, offlineModeEnabled, livenessEnabled, pendingSyncCount, isOnline, kioskMode,
+    touchlessEnabled, offlineModeEnabled, livenessEnabled, serverVerifyEnabled, pendingSyncCount, isOnline, kioskMode,
     scanStage, cameraVisionFaceDetected, cameraVisionReadiness, cameraVisionFaceBox, cameraVisionAllFaces, cameraVisionFaceTelemetry, successAnimationTick,
     showResultModal, modalType, modalTitle, modalMessage: '', modalHint, livenessMessage,
     closeModal, handleAttendance, resetAttendanceFlow, backgroundLivenessPassed,

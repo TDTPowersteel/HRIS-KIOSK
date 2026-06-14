@@ -21,19 +21,46 @@ $input = json_decode(file_get_contents('php://input'), true) ?? $_REQUEST;
 
 $userId = isset($input['log_id']) ? trim((string) $input['log_id']) : null;
 $liveEmbeddingRaw = $input['live_embedding'] ?? null;
+$liveImageB64 = $input['live_image_b64'] ?? null;
 $engine = isset($input['engine']) ? trim((string) $input['engine']) : '';
 
-if (!$userId || !$liveEmbeddingRaw) {
+if (!$userId) {
     http_response_code(400);
-    echo json_encode(['ok' => false, 'message' => 'Missing parameter (log_id and live_embedding)']);
+    echo json_encode(['ok' => false, 'message' => 'Missing parameter (log_id)']);
     exit;
 }
 
 $liveEmbedding = null;
-if (is_array($liveEmbeddingRaw)) {
-    $liveEmbedding = $liveEmbeddingRaw;
-} else if (is_string($liveEmbeddingRaw)) {
-    $liveEmbedding = json_decode($liveEmbeddingRaw, true);
+if ($liveImageB64) {
+    // Forward crop base64 to local Python ML server
+    $ch = curl_init('http://localhost:5001/embed_single');
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_POST, true);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode(['image' => $liveImageB64]));
+    curl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type: application/json']);
+    
+    $response = curl_exec($ch);
+    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+
+    if ($httpCode === 200 && $response) {
+        $resData = json_decode($response, true);
+        if (isset($resData['ok']) && $resData['ok'] && isset($resData['embedding'])) {
+            $liveEmbedding = $resData['embedding'];
+        }
+    }
+    
+    if (!$liveEmbedding) {
+        http_response_code(500);
+        echo json_encode(['ok' => false, 'message' => 'Server-side face extraction failed.']);
+        exit;
+    }
+} else if ($liveEmbeddingRaw) {
+    if (is_array($liveEmbeddingRaw)) {
+        $liveEmbedding = $liveEmbeddingRaw;
+    } else if (is_string($liveEmbeddingRaw)) {
+        $liveEmbedding = json_decode($liveEmbeddingRaw, true);
+    }
 }
 
 if (!is_array($liveEmbedding) || count($liveEmbedding) === 0) {
