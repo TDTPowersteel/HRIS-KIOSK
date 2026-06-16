@@ -501,7 +501,7 @@ export default function FaceScanView({
         </TouchableOpacity>
       </View>
       <View style={styles.headerCenter}>
-        <Text style={styles.topTime}>{formattedTime}</Text>
+        <Text style={[styles.topTime, width < 380 && { fontSize: 24 }]}>{formattedTime}</Text>
         <Text style={styles.topDate}>{formattedDate}</Text>
       </View>
       <View style={styles.headerRight}>
