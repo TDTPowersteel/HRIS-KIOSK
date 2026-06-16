@@ -1,5 +1,13 @@
 # Employee Directory System Documentation
 
+> [!WARNING]
+> **FEATURE CURRENTLY DISABLED (COMMENTED OUT)**
+> This feature has been safely commented out in `App.tsx` because TDT Powersteel Company currently does not need it, and removing it drastically improves memory and UI performance on the Samsung Galaxy Tab A7 Lite.
+> 
+> **To re-enable it, uncomment the following in `App.tsx`:**
+> *   Line 6: `import EmployeeProfileData from './src/screens/EmployeeProfileData';`
+> *   Line 116: `<Stack.Screen name="employees" component={EmployeeProfileData} />`
+> *   Line 200: The `<TouchableOpacity>` button routing to `employees` inside the `home` Screen.
 This document serves as the comprehensive guide for users, developers, and AI agents on the workflow, logic, architecture, and caching mechanisms of the **Employee Directory** and the **Employee Details Modal** inside the HRIS Kiosk application.
 
 ---

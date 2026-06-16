@@ -37,7 +37,9 @@ This is the entry point. Its primary responsibilities are:
 This custom hook holds the entire state machine and side-effects. It keeps the UI components purely presentational.
 - **QR Processing:** Configures the Vision Camera `useCodeScanner`. Validates the scanned QR via the `/resolve_qr.php` backend endpoint (or offline cache).
 - **Liveness Detection:** Configures a `useFrameProcessor` (running on UI thread via Worklets) that leverages `react-native-vision-camera-face-detector` to ensure the user is present and verified via the Active Eye Blink state machine.
-- **Face Verification:** Once stability and blink liveness pass, captures the face, applies dynamic crop padding, and runs on-device ONNX inference to generate a 512-dim embedding. Embedding comparison is executed online via `/verify_embedding.php` or offline via `verifyFaceLocal()`.
+- **Face Verification:** Once stability and blink liveness pass, captures the face and applies dynamic crop padding. 
+  - **Server Mode (Default):** Sends the cropped image directly to `/verify_embedding.php`, bypassing local ONNX execution to save CPU. The Python AI Server processes it using the highly accurate `buffalo_l` model.
+  - **Local Mode (Fallback):** Runs on-device ONNX inference (`w600k_mbf.onnx`) to generate a 512-dim embedding using the `buffalo_sc` model, which is then compared locally.
 - **Attendance Recording:** Submits verified clock-ins/outs to `/record_attendance.php`, or saves them to an Async Queue if Offline Mode is active.
 - **Touchless Mode:** Automatically triggers face capture and logs attendance without user touch once face readiness reaches $\ge 65\%$ and liveness is passed.
 
@@ -69,8 +71,8 @@ This custom hook holds the entire state machine and side-effects. It keeps the U
 4. **Verification & Liveness:**
    - The user completes the Active Eye Blink sequence (State 0 → 3) to pass liveness.
    - Once liveness is passed and stability checks are met, a high-resolution photo is captured and cropped natively.
-   - Preprocessing transforms pixels to a CHW Float32 tensor, and ONNX Runtime infers a 512-dim embedding.
-   - This embedding is compared to stored templates online via `/verify_embedding.php` or locally.
+   - **In Server Mode:** The base64 image is securely transmitted to the PHP proxy which queries the Python AI server for verification using `buffalo_l`.
+   - **In Local Mode:** Preprocessing transforms pixels to a CHW Float32 tensor, and the local ONNX Runtime infers a 512-dim embedding (`buffalo_sc`), which is compared to offline stored templates.
 5. **Completion:**
    - If successful, the attendance is recorded (Clock In or Clock Out) and the `ResultModal` displays a success message.
    - State is reset automatically, bringing the kiosk back to Step 1 (`QRScanView`) for the next employee in line.

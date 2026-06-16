@@ -84,7 +84,13 @@ Receives DTR records (Clock-In/Clock-Out logs).
 * **Intern Mode**: Intercepts requests where the user ID starts with `intern_`, strips the prefix, and forwards the payload to the local IMS record endpoint:
   `http://[host]/ims/api/record_intern_attendance.php`
 
-### 3.3. Directory Synchronization (`employees.php`)
+### 3.3. Face Verification Proxy (`verify_embedding.php`)
+Handles biometric face matching when the Kiosk is operating in **Server Mode** (designed for low-end tablets like the Samsung Tab A7 Lite).
+* **Live Inference**: Receives a base64-encoded live photo from the Kiosk.
+* **Dual-Model AI**: Forwards the image to the Python AI Server requesting the high-accuracy `buffalo_l` model to generate live vectors.
+* **Database Routing**: Queries the user's `face_embedding_large` from either Supabase (Employees) or MySQL (Interns), performs a Cosine Similarity match against the live vectors, and returns the result to the Kiosk.
+
+### 3.4. Directory Synchronization (`employees.php`)
 Used to download the offline-caching index of employees/interns.
 * **Employee Mode**: Pulls name, ID, role, and face embeddings from Supabase.
 * **Intern Mode**: Queries MySQL `interns` table and formats the output structure to match the employee schema expected by the Kiosk React Native app.

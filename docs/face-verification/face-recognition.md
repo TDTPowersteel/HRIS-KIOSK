@@ -21,13 +21,15 @@
 
 ---
 
-## 1. Camera Vision Engine Overview
+## 1. Dual-Model Vision Engine Overview
 
-The HRIS Kiosk attendance system uses a fully **on-device Camera Vision facial recognition engine**. Running local neural network inference directly on the tablet's processor, it decodes the camera payload, extracts a face embedding in real-time, and performs matching locally or via a lightweight server-side comparison.
+The HRIS Kiosk attendance system uses a **Hybrid Dual-Model facial recognition engine**. It attempts to verify the face using a high-accuracy server-side model (`buffalo_l`), and seamlessly falls back to a fully **on-device local inference engine** (`buffalo_sc`) during network outages or low-bandwidth scenarios.
 
-*   **Accuracy:** 99.70%
+*   **Primary Engine (Server Mode):** `buffalo_l` (ResNet50) running on a Python AI server via `verify_embedding.php`.
+*   **Fallback Engine (Local Mode):** `buffalo_sc` (MobileFaceNet) running locally via ONNX Runtime.
+*   **Accuracy:** 99.70% (Local) / 99.83% (Server)
 *   **Liveness Verification:** Active Eye Blink state machine (Open → Closed → Open eyes sequence).
-*   **Latency:** <30ms local ONNX inference, overall transaction <500ms (online) or <50ms (offline).
+*   **Latency:** < 30ms local ONNX inference, overall transaction < 500ms (online) or < 50ms (offline).
 *   *For low-level coordinate scaling, preprocessing calculations, and detailed math, see:* **[Camera Vision Face Verification Documentation](file:///C:/Users/Keith/HRIS/HRIS-KIOSK/docs/face-verification.md)**.
 
 ### Camera Viewfinder Overlay
@@ -88,11 +90,11 @@ The camera viewfinder uses a premium, high-fidelity overlay conforming to the ap
         ↓
 [High-Res Photo captured & cropped]         ← Dynamic padding (1.6x - 2.0x)
         ↓
-[ONNX Local Inference runs]                 ← Generates 512-dim embedding
+[ONNX Local Inference runs (Optional)]     ← Generates 512-dim embedding (if offline)
         ↓
-[Online? Verify Embedding via Server API]   ← POSTs to verify_embedding.php
-        ├─► Yes: Cosine dot product match   ← Server-side comparison
-        └─► No: verifyFaceLocal() fallback  ← Instant on-device similarity check
+[Online? Verify Embedding via Server API]   ← POSTs live photo to verify_embedding.php (`buffalo_l`)
+        ├─► Yes: Cosine match in PHP        ← Server-side comparison vs `face_embedding_large`
+        └─► No: verifyFaceLocal() fallback  ← Instant on-device similarity check vs `face_embedding` (`buffalo_sc`)
         ↓
 [Attendance logged & saved]                 ← Supabase insert / local queue sync
 ```
@@ -131,8 +133,8 @@ The camera viewfinder uses a premium, high-fidelity overlay conforming to the ap
 *   The output embedding is normalized to unit length.
 
 ### Step 7 – Identity Verification
-*   **Online Path:** The embedding is sent to `verify_embedding.php`. The backend computes the Cosine similarity between the live embedding and the database stored embeddings.
-*   **Offline Path:** The local engine falls back to `verifyFaceLocal()` which performs the same calculations against the locally cached embeddings in memory.
+*   **Online Path (Server Mode):** The cropped image is sent to `verify_embedding.php` as base64. The backend forwards it to the Python AI server which uses the `buffalo_l` model to extract a live embedding. The PHP server computes the Cosine similarity between this live embedding and the user's `face_embedding_large` stored in the database.
+*   **Offline Path (Local Mode):** The local engine uses ONNX (`w600k_mbf.onnx`) to extract a live embedding and falls back to `verifyFaceLocal()`, which performs the Cosine similarity check against the locally cached `face_embedding`.
 
 ### Step 8 – Attendance Logging
 *   Upon successful validation (similarity $\ge 0.52$ with multi-angle consensus), the attendance record is inserted into Supabase via `record_attendance.php`.

@@ -94,8 +94,8 @@ This enables the backend to safely read and write the dynamic configuration sett
 ### 4.3. MySQL Database Setup
 When deploying to production MySQL (Webmin databases):
 1. Import the database schema from your IMS database.
-2. Ensure the `interns` table has the following columns for face verification to work:
-   - `face_embedding` (TEXT or LONGTEXT, to store JSON arrays of [512] floats).
+   - `face_embedding` (TEXT or LONGTEXT, to store JSON arrays of [512] floats from buffalo_sc).
+   - `face_embedding_large` (LONGTEXT, to store JSON arrays of [512] floats from buffalo_l).
    - `profile_photo` (VARCHAR, matching the file name in `uploads/photos/`).
 3. Ensure the `dtr_entries` table is initialized to keep logs:
    - `intern_id` (INT)

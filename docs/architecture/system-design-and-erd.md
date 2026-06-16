@@ -41,6 +41,7 @@ erDiagram
         varchar password
         varchar profile_photo
         longtext face_embedding
+        longtext face_embedding_large
         varchar qr_code
         enum status
         datetime face_registered_at
@@ -93,7 +94,8 @@ Holds user profile metadata and biometric reference structures for face scans.
 - `email` (VARCHAR(150), UNIQUE): Intern login email.
 - `password` (VARCHAR(255)): Hashed portal credentials.
 - `profile_photo` (VARCHAR(255)): Path to the base enrollment face photo.
-- `face_embedding` (LONGTEXT): JSON-serialized array of five 512-dimensional float vectors (representing Straight, Left, Right, Up, and Down head angles).
+- `face_embedding` (LONGTEXT): JSON-serialized array of five 512-dimensional float vectors using the lightweight `buffalo_sc` model.
+- `face_embedding_large` (LONGTEXT): JSON-serialized array of five 512-dimensional float vectors using the high-accuracy `buffalo_l` model (used for Server Verification).
 - `status` (ENUM('Active', 'Archived')): Access control flag.
 - `face_registered_at` (DATETIME): Timestamp when face enrollment was completed.
 
@@ -123,7 +125,10 @@ Provides transaction and security logs.
 
 ### 3.2. Employee Mode Cloud Database (Supabase PostgreSQL)
 
-In **Employee Mode**, all logs are sent via HTTPS POST REST queries to a Supabase PostgreSQL backend.
+In **Employee Mode**, all logs and profiles are managed via HTTPS POST REST queries to a Supabase PostgreSQL backend.
+
+#### Table: `profiles`
+Holds the employee demographics and dual-model face embeddings (`face_embedding` and `face_embedding_large`) corresponding to the MySQL `interns` table.
 
 #### Table: `attendance`
 - `att_id` (BIGINT, PK, AUTO_INCREMENT): Unique log sequence.
@@ -151,11 +156,21 @@ sequenceDiagram
     User->>App: Scans personal QR code
     App->>PHP: Request user face metadata & embeddings (resolve_qr.php)
     PHP->>DB: Query user records
-    DB-->>PHP: Return profile details & serialized embeddings
+    DB-->>PHP: Return profile details & dual-model serialized embeddings
     PHP-->>App: Return user metadata and reference vectors
-    App->>App: Prompt camera frame & extract face box
-    App->>App: Run ONNX Model (w600k_mbf.onnx) to generate 512-dim live vector
-    App->>App: Match live vector vs reference angles (Cosine Similarity)
+    App->>App: Prompt camera frame & extract face crop
+    
+    alt Server Mode (Primary)
+        App->>PHP: Send live image to verify_embedding.php
+        PHP->>Python: Generate `buffalo_l` embedding
+        Python-->>PHP: Return live vector
+        PHP->>PHP: Match vs `face_embedding_large`
+        PHP-->>App: Return match boolean
+    else Local Mode (Fallback/Offline)
+        App->>App: Run Local ONNX Model (`buffalo_sc`) to generate live vector
+        App->>App: Match live vector vs `face_embedding` (Cosine Similarity)
+    end
+
     App->>PHP: POST attendance log (record_attendance.php)
     PHP->>DB: Save entry to database (dtr_entries / attendance)
     DB-->>PHP: Database update success

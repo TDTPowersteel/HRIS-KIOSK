@@ -12,12 +12,13 @@ The system architecture utilizes a hybrid offline-online strategy. Below is the 
 graph TD
     subgraph Client Device [Kiosk Tablet Client]
         App[React Native App]
-        ONNX[ONNX Runtime / w600k_mbf.onnx]
+        ONNX[ONNX Runtime / buffalo_sc]
         LocalDB[Local Storage SQLite/MMKV]
     end
 
     subgraph Kiosk Backend [Kiosk PHP Backend]
         API[PHP REST APIs]
+        Verify[verify_embedding.php]
     end
 
     subgraph Cloud Storage [Cloud Database]
@@ -27,11 +28,14 @@ graph TD
     subgraph Local Server [Local IMS Server]
         IMS[IMS PHP Backend]
         MySQL[(MySQL db: tdt_ims)]
-        PyServer[Python Embedding Server]
+        PyServer[Python AI Server / buffalo_l]
     end
 
-    App -->|1. Fetch Embeddings| API
-    App -->|2. Local Inference| ONNX
+    App -->|1. Fetch Both Embeddings| API
+    App -->|2a. Local Inference| ONNX
+    App -->|2b. Server Inference| Verify
+    Verify -->|Forward Live Image| PyServer
+    
     App -->|3. Fallback Queue| LocalDB
     App -->|4. Record Attendance| API
 
@@ -39,7 +43,7 @@ graph TD
     API -->|Route: Intern| IMS
 
     IMS -->|Read/Write Interns & DTR| MySQL
-    IMS -->|Generate Vector| PyServer
+    IMS -->|Generate Vectors| PyServer
 ```
 
 ---
@@ -48,12 +52,16 @@ graph TD
 
 The kiosk frontend is a React Native app built on Expo. It handles user identification via QR code, validates user identities on-device using a deep learning face embedding model, and records attendance.
 
-### 2.1. Verification and Similarity Math
-The kiosk uses a local ONNX model (`w600k_mbf.onnx`) loaded on the device to extract face embeddings:
+### 2.1. Dual-Model Verification and Similarity Math
+The architecture supports two deployment modes to balance tablet performance and recognition accuracy:
 
+- **Local Mode**: The kiosk uses a lightweight local ONNX model (`buffalo_sc` / `w600k_mbf.onnx`) running directly on the device.
+- **Server Mode**: The tablet offloads the image to the Kiosk PHP Backend, which proxies it to the Python AI Server to run inference using a high-accuracy, heavy model (`buffalo_l` / `w600k_r50.onnx`).
+
+Regardless of the mode used, the following process occurs:
 1. **Preprocessing**: The captured face image frame is cropped, resized to $112 \times 112$ pixels, normalized using $(pixel - 127.5) / 128.0$, and transposed to `CHW` (Channel-Height-Width) format before ONNX inference.
 2. **Feature Extraction**: Inference yields a $1 \times 512$ floating-point feature vector (embedding) representing the face.
-3. **Cosine Similarity**: The vector is compared against all registered reference angles for the user:
+3. **Cosine Similarity**: The vector is compared against all registered reference angles for the user (using `face_embedding` for local mode, or `face_embedding_large` for server mode):
    $$\text{Similarity} = \frac{\mathbf{A} \cdot \mathbf{B}}{\|\mathbf{A}\| \|\mathbf{B}\|}$$
 4. **Multi-Angle Verification Gate**:
    To prevent false rejects while maintaining high security, the matching algorithm enforces these boundaries:
@@ -78,12 +86,12 @@ When enabled in Settings, the app uses a dual-liveness state machine:
 The backend acts as a proxy and database router. It exposes stateless JSON endpoints to the Kiosk app.
 
 - **`resolve_qr.php`**: Resolves the QR string (`LOG_ID:<id>` or `intern_<id>`).
-  - **Employee**: Queries the Supabase `profiles` table to return employee metadata.
-  - **Intern**: Queries the MySQL `interns` table to return the name, status, and serialized face embeddings.
+  - **Employee**: Queries the Supabase `profiles` table to return employee metadata and serialized face embeddings (`face_embedding` and `face_embedding_large`).
+  - **Intern**: Queries the MySQL `interns` table to return the name, status, and serialized face embeddings (`face_embedding` and `face_embedding_large`).
 - **`record_attendance.php`**: Receives clock-in/out records.
   - **Employee**: Saves entries to Supabase `attendance`.
   - **Intern**: Proxies the POST request directly to the Intern Management System's internal API (`/api/record_intern_attendance.php`).
-- **`verify_embedding.php`**: Validates embeddings if the device is configured in server-side verification mode.
+- **`verify_embedding.php`**: Validates embeddings if the device is configured in Server Mode. It forwards the live image to the Python Face Server requesting the `buffalo_l` model, and calculates cosine similarity against the `face_embedding_large` stored in the database.
 
 ---
 
@@ -109,5 +117,5 @@ During enrollment in [register_intern.php](file:///C:/Users/Keith/HRIS/INTERN-MA
 ### 4.2. Vector Extraction (Python Registration Server)
 - The PHP registration frontend captures photos at five primary angles (Straight, Left, Right, Up, Down).
 - Photos are sent to the Python embedding server ([face_server/app.py](file:///C:/Users/Keith/HRIS/HRIS-KIOSK/face_server/app.py)).
-- The server extracts a 512-dimension vector for each angle.
-- The vectors are JSON-serialized into a 2D array and saved under the `face_embedding` column in the MySQL database.
+- The server extracts two 512-dimension vector sets for each angle: one using the fast `buffalo_sc` model, and another using the high-accuracy `buffalo_l` model.
+- The vectors are JSON-serialized into 2D arrays and saved under the `face_embedding` and `face_embedding_large` columns respectively in the target database (MySQL for interns, Supabase for employees).
