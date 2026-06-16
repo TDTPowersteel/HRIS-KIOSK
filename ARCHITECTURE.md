@@ -108,6 +108,6 @@ During enrollment in [register_intern.php](file:///C:/Users/Keith/HRIS/INTERN-MA
 
 ### 4.2. Vector Extraction (Python Registration Server)
 - The PHP registration frontend captures photos at five primary angles (Straight, Left, Right, Up, Down).
-- Photos are sent to the Python embedding server ([intern_face_reg_server/app.py](file:///C:/Users/Keith/HRIS/HRIS-KIOSK/intern_face_reg_server/app.py)).
+- Photos are sent to the Python embedding server ([face_server/app.py](file:///C:/Users/Keith/HRIS/HRIS-KIOSK/face_server/app.py)).
 - The server extracts a 512-dimension vector for each angle.
 - The vectors are JSON-serialized into a 2D array and saved under the `face_embedding` column in the MySQL database.
