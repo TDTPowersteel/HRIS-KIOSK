@@ -140,14 +140,28 @@ async function main() {
     const rootDir = path.resolve(__dirname, '..');
     
     const runPhp = () => startProcess('php', 'php', ['-S', '0.0.0.0:8000', '-t', 'backend-php/public'], colors.bgBlue, rootDir);
-    const runPython = () => startProcess('intern-face-reg-server'.toUpperCase(), '.venv\\Scripts\\python.exe', ['-u', 'app.py'], colors.magenta, path.join(rootDir, 'intern_face_reg_server'));
+    const runPython = () => startProcess('face-server'.toUpperCase(), '.venv\\Scripts\\python.exe', ['-u', 'app.py'], colors.magenta, path.join(rootDir, 'face_server'));
     const runExpo = () => {
-      rl.question(`\n${colors.cyan}EXPO OPTIONS:${colors.reset}\n1. Standard Launch\n2. Device Selection (--device)\nChoice: `, (expoChoice) => {
-        rl.close();
-        const args = ['expo', 'run:android'];
-        if (expoChoice === '2') args.push('--device');
-        startProcess('expo', 'npx', args, colors.bgGreen, rootDir, 'inherit');
-      });
+      let dots = 0;
+      process.stdout.write(`\n${colors.yellow}Please wait, downloading and initializing build environment `);
+      const interval = setInterval(() => {
+        dots = (dots + 1) % 4;
+        process.stdout.write('\r\x1b[K'); // clear line
+        process.stdout.write(`${colors.yellow}Please wait, downloading and initializing build environment ${'.'.repeat(dots)}${colors.reset}`);
+      }, 500);
+
+      setTimeout(() => {
+        clearInterval(interval);
+        process.stdout.write('\r\x1b[K'); // clear line
+        console.log(`${colors.green}Done! Environment ready.${colors.reset}`);
+        
+        rl.question(`\n${colors.cyan}EXPO OPTIONS:${colors.reset}\n1. Standard Launch\n2. Device Selection (--device)\nChoice: `, (expoChoice) => {
+          rl.close();
+          const args = ['expo', 'run:android'];
+          if (expoChoice === '2') args.push('--device');
+          startProcess('expo', 'npx', args, colors.bgGreen, rootDir, 'inherit');
+        });
+      }, 2500); // 2.5 seconds loading animation
     };
 
     switch(choice) {
