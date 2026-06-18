@@ -40,7 +40,7 @@
         }
       ],
       "expo-asset",
-      "./withOnnxManualLink.js"
+      "./plugins/withOnnxManualLink.js"
     ],
     "web": {
       "favicon": "./assets/favicon.png"
