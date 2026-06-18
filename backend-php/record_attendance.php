@@ -273,13 +273,11 @@ if ($isIntern) {
     // (Trigger this even if IMS_URL is set, as the external IP might be unreachable from the host itself)
     if ($curlErr && strpos($targetApiUrl, 'localhost') === false && strpos($targetApiUrl, '127.0.0.1') === false) {
         error_log("[Attendance Sync] External connection failed ({$curlErr}). Trying localhost fallback...");
-        curl_setopt($ch, CURLOPT_URL, "http://localhost:8001/api/record_intern_attendance.php");
+        curl_setopt($ch, CURLOPT_URL, "http://127.0.0.1:8001/api/record_intern_attendance.php");
         $response = curl_exec($ch);
         $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
         $curlErr = curl_error($ch);
     }
-    
-    curl_close($ch);
 
     if ($curlErr) {
         error_log("[Attendance Sync] Curl error reaching IMS ({$imsUrl}): " . $curlErr);
