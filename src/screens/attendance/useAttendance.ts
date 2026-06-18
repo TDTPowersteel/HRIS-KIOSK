@@ -1385,8 +1385,7 @@ export function useAttendance() {
           
           // If it's a 4xx error (like "No clock in entry found"), it's a business logic rejection, NOT a network issue!
           if (onlineError.status >= 400 && onlineError.status < 500) {
-            setScanStage('error');
-            playErrorSound();
+            setScanStage('idle');
             showModal('error', 'Attendance Failed', onlineError.message || 'Rejected by server.', 5000);
             
             setTimeout(async () => {
@@ -1398,6 +1397,7 @@ export function useAttendance() {
           
           console.log('[Attendance] Falling back to offline queue...');
         }
+      }
 
       const offlineItem = await enqueueOfflineAttendance({ 
           userId: selectedUserRef.current!.userId, 
