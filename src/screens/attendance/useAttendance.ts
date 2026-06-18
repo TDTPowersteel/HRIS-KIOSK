@@ -54,7 +54,7 @@ type FaceSelection = {
   sourceFace: any;
 };
 
-function extractNormalizedFaceBox(face: any, frameWidth: number, frameHeight: number): NormalizedFaceBox | null {
+function extractNormalizedFaceBox(face: any, frameWidth: number, frameHeight: number, frameOrientation?: string): NormalizedFaceBox | null {
   'worklet';
   if (!face) return null;
   const rawBounds = face.bounds ?? face.boundaries ?? face.frame ?? face.boundingBox ?? face.box ?? face.rect ?? null;
@@ -82,12 +82,17 @@ function extractNormalizedFaceBox(face: any, frameWidth: number, frameHeight: nu
   const hVal = toNumber(bh);
   if (!Number.isFinite(xVal) || !Number.isFinite(yVal) || !Number.isFinite(wVal) || !Number.isFinite(hVal)) return null;
 
-  // Some detectors return normalized [0..1], others return pixel coordinates.
+  // frame.orientation reports the SENSOR orientation relative to the device.
+  // "landscape-left"/"landscape-right" means the DEVICE is in portrait → swap normalization dims.
+  const isDevicePortrait = frameOrientation === 'landscape-left' || frameOrientation === 'landscape-right';
+  const normW = isDevicePortrait ? frameHeight : frameWidth;
+  const normH = isDevicePortrait ? frameWidth : frameHeight;
+
   const looksNormalized = xVal >= -0.5 && yVal >= -0.5 && wVal > 0 && hVal > 0 && xVal <= 1.5 && yVal <= 1.5 && wVal <= 1.5 && hVal <= 1.5;
-  const nx = looksNormalized ? xVal : xVal / frameWidth;
-  const ny = looksNormalized ? yVal : yVal / frameHeight;
-  const nw = looksNormalized ? wVal : wVal / frameWidth;
-  const nh = looksNormalized ? hVal : hVal / frameHeight;
+  const nx = looksNormalized ? xVal : xVal / normW;
+  const ny = looksNormalized ? yVal : yVal / normH;
+  const nw = looksNormalized ? wVal : wVal / normW;
+  const nh = looksNormalized ? hVal : hVal / normH;
 
   const clampedX = Math.max(0, Math.min(1, nx));
   const clampedY = Math.max(0, Math.min(1, ny));
@@ -106,12 +111,12 @@ function isFaceBoxDetected(faceBox: NormalizedFaceBox): boolean {
   return true;
 }
 
-function selectBestDetectedFace(faces: any[], frameWidth: number, frameHeight: number): FaceSelection | null {
+function selectBestDetectedFace(faces: any[], frameWidth: number, frameHeight: number, frameOrientation?: string): FaceSelection | null {
   'worklet';
   let best: { box: NormalizedFaceBox; confidence: number | null; score: number; sourceFace: any } | null = null;
   for (let i = 0; i < faces.length; i++) {
     const face = faces[i];
-    const box = extractNormalizedFaceBox(face, frameWidth, frameHeight);
+    const box = extractNormalizedFaceBox(face, frameWidth, frameHeight, frameOrientation);
     if (!box || !isFaceBoxDetected(box)) continue;
     const rawConfidence =
       face?.faceProbability ??
@@ -139,11 +144,13 @@ function selectBestDetectedFace(faces: any[], frameWidth: number, frameHeight: n
 
     const yaw = face?.yawAngle;
     const roll = face?.rollAngle;
+    const rollMod1 = typeof roll === 'number' ? Math.abs(roll) % 90 : 999;
+    const rollDev1 = Math.min(rollMod1, 90 - rollMod1);
     const hasPlausiblePose =
       typeof yaw === 'number' &&
       typeof roll === 'number' &&
       Math.abs(yaw) <= 35 &&
-      Math.abs(roll) <= 35;
+      rollDev1 <= 35;
 
     if (confidence != null && confidence < 0.62) continue;
     if (confidence == null && landmarkCount < 3 && !hasEyeProbabilities && !hasPlausiblePose) continue;
@@ -176,15 +183,17 @@ function isFaceBoxUsableForRecognition(faceBox: NormalizedFaceBox, face?: any): 
     const yaw = face?.yawAngle ?? face?.eulerY ?? face?.headEulerAngleY ?? 0;
     const pitch = face?.pitchAngle ?? face?.eulerX ?? face?.headEulerAngleX ?? 0;
     const roll = face?.rollAngle ?? face?.eulerZ ?? face?.headEulerAngleZ ?? 0;
-    if (Math.abs(yaw) > 15 || Math.abs(pitch) > 15 || Math.abs(roll) > 15) return false;
+    const rollMod = Math.abs(roll) % 90;
+    const rollDeviation = Math.min(rollMod, 90 - rollMod);
+    if (Math.abs(yaw) > 15 || Math.abs(pitch) > 15 || rollDeviation > 15) return false;
   }
 
   return true;
 }
 
-function selectBestRecognitionFace(faces: any[], frameWidth: number, frameHeight: number): FaceSelection | null {
+function selectBestRecognitionFace(faces: any[], frameWidth: number, frameHeight: number, frameOrientation?: string): FaceSelection | null {
   'worklet';
-  const detectedFace = selectBestDetectedFace(faces, frameWidth, frameHeight);
+  const detectedFace = selectBestDetectedFace(faces, frameWidth, frameHeight, frameOrientation);
   if (!detectedFace) return null;
   if (isFaceBoxUsableForRecognition(detectedFace.box, detectedFace.sourceFace)) return detectedFace;
 
@@ -1805,6 +1814,7 @@ export function useAttendance() {
     setUiCapturingHardware(isCapturing);
   });
 
+
   const frameProcessor = useFrameProcessor((frame) => {
     'worklet';
 
@@ -1848,8 +1858,13 @@ export function useAttendance() {
         consecutiveNoFaceFrames.value = 0;
       }
 
-      const detectedFace = selectBestDetectedFace(faces, frame.width, frame.height);
-      const recognitionFace = selectBestRecognitionFace(faces, frame.width, frame.height);
+      const frameOrient = frame.orientation ?? 'landscape-left';
+      const isDevicePortrait = frameOrient === 'landscape-left' || frameOrient === 'landscape-right';
+      const orientedFrameW = isDevicePortrait ? frame.height : frame.width;
+      const orientedFrameH = isDevicePortrait ? frame.width : frame.height;
+
+      const detectedFace = selectBestDetectedFace(faces, frame.width, frame.height, frameOrient);
+      const recognitionFace = selectBestRecognitionFace(faces, frame.width, frame.height, frameOrient);
       const trackedFace = detectedFace ?? recognitionFace;
 
       let isMoving = false;
@@ -1910,7 +1925,7 @@ export function useAttendance() {
               const allFacesList = [];
               for (let i = 0; i < faces.length; i++) {
                 const f = faces[i];
-                const fBox = extractNormalizedFaceBox(f, frame.width, frame.height);
+                const fBox = extractNormalizedFaceBox(f, frame.width, frame.height, frameOrient);
                 if (fBox && isFaceBoxDetected(fBox)) {
                   const isTarget = trackedFace && 
                     Math.abs(fBox.x - trackedFace.box.x) < 0.08 && 
@@ -1936,8 +1951,8 @@ export function useAttendance() {
                   readinessPercent,
                   trackedFace?.box ?? null,
                   telemetry,
-                  frame.width,
-                  frame.height,
+                  orientedFrameW,
+                  orientedFrameH,
                   allFacesList,
                 );
               } else {
@@ -1946,8 +1961,8 @@ export function useAttendance() {
                   readinessPercent,
                   trackedFace?.box ?? null,
                   telemetry,
-                  frame.width,
-                  frame.height,
+                  orientedFrameW,
+                  orientedFrameH,
                   allFacesList,
                 );
               }
@@ -1967,7 +1982,7 @@ export function useAttendance() {
               );
               lastCameraVisionReadinessSent.value = readinessPercent;
               lastCameraVisionDetectedSent.value = false;
-              onCameraVisionDetectionProgress(false, readinessPercent, null, null, frame.width, frame.height, []);
+              onCameraVisionDetectionProgress(false, readinessPercent, null, null, orientedFrameW, orientedFrameH, []);
             }
             onTouchlessFaceLost();
           }
