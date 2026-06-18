@@ -18,17 +18,21 @@ export const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   newHeader: {
+    width: '100%',
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingTop: 10,
-    height: 70,
+    justifyContent: 'center',
+    height: 80,
+    position: 'relative',
   },
   headerLeft: {
+    position: 'absolute',
+    left: 16,
+    top: 0,
+    bottom: 0,
     flexDirection: 'row',
     alignItems: 'center',
-    width: 100,
+    justifyContent: 'center',
   },
   headerIconButton: {
     width: 42,
@@ -54,8 +58,10 @@ export const styles = StyleSheet.create({
     borderColor: '#fff',
   },
   headerCenter: {
-    flex: 1,
+    height: '100%',
     alignItems: 'center',
+    justifyContent: 'center',
+    paddingTop: 12,
   },
   topTime: {
     color: '#fff',
@@ -71,7 +77,14 @@ export const styles = StyleSheet.create({
     fontWeight: '600',
     marginTop: -2,
   },
-  headerRight: { width: 85, alignItems: 'flex-end' },
+  headerRight: {
+    position: 'absolute',
+    right: 16,
+    top: 0,
+    bottom: 0,
+    alignItems: 'flex-end',
+    justifyContent: 'center',
+  },
   miniOfflineBadge: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -350,7 +363,7 @@ export const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     paddingTop: 20,
-    paddingLeft: -10,
+    paddingLeft: 20,
     paddingRight: 20,
   },
   headerIconButtonLight: {

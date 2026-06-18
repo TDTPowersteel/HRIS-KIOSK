@@ -10,6 +10,7 @@ import {
   Image,
   useWindowDimensions,
   TextInput,
+  Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -21,9 +22,11 @@ import { Colors, useTheme } from '../config/theme';
 import {
   getOfflineAttendanceQueue,
   syncOfflineQueue,
+  removeOfflineAttendanceItem,
   type OfflineAttendanceItem,
 } from '../utils/offlineAttendance';
 import { useNetworkStatus } from '../hooks/useNetworkStatus';
+import { mmkv } from '../utils/offlineUsers';
 
 const APP_VERSION = 'v1.0.41';
 
@@ -130,6 +133,7 @@ export default function OfflineSync({ onBack, onOpenScanner }: Props) {
   const shortDimension = Math.min(windowWidth, windowHeight);
   const isTablet = shortDimension >= 768;
   const isSmallTablet = shortDimension >= 480 && shortDimension < 768;
+  const useSplitLayout = isTablet || (isSmallTablet && windowWidth > windowHeight);
   const isPhone = shortDimension < 480;
 
   const [items, setItems] = useState<OfflineAttendanceItem[]>([]);
@@ -142,14 +146,15 @@ export default function OfflineSync({ onBack, onOpenScanner }: Props) {
   const [searchQuery, setSearchQuery] = useState('');
   const [timeFilter, setTimeFilter] = useState('ALL');
   const [isActionHubOpen, setIsActionHubOpen] = useState(false);
+  const [kioskMode, setKioskMode] = useState<'employee' | 'intern'>(() => {
+    return (mmkv.getString('kiosk_mode') as 'employee' | 'intern') || 'employee';
+  });
 
   const { hasGoodInternet, isChecking, checkStatus } = useNetworkStatus();
   const prevHasGoodInternetRef = useRef<boolean>(true);
 
   const cardHeight = isPhone ? 70 : isSmallTablet ? 74 : 80;
   const avatarSize = isPhone ? 40 : 48;
-  const columnWidth = isPhone ? 52 : 60;
-  const gridGap = isPhone ? 6 : 8;
 
   const headerFontSize = isTablet ? 24 : isSmallTablet ? 20 : 18;
   const subtitleFontSize = isTablet ? 14 : isSmallTablet ? 12 : 10;
@@ -227,7 +232,7 @@ export default function OfflineSync({ onBack, onOpenScanner }: Props) {
     } catch (e) {
       clearTimeout(timeoutId);
       // Only log if it's not a standard connectivity error
-      const message = String(e?.message || '').toLowerCase();
+      const message = String((e as any)?.message || '').toLowerCase();
       const isConnectivity = message.includes('network request failed') || message.includes('aborted');
       if (!isConnectivity) {
         console.error('[OfflineSync] Failed to fetch history', e);
@@ -289,6 +294,15 @@ export default function OfflineSync({ onBack, onOpenScanner }: Props) {
     }
   }, [isSyncing, reloadQueue, loadHistory, hasGoodInternet]);
 
+  const handleDeleteItem = useCallback(async (id: string) => {
+    try {
+      await removeOfflineAttendanceItem(id);
+      await reloadQueue();
+    } catch (e) {
+      console.error('[OfflineSync] Failed to delete item', e);
+    }
+  }, [reloadQueue]);
+
   const exportToCSV = async (dataToExport: any[]) => {
     try {
       const headerString = 'ID,Name,Time In,Time Out\n';
@@ -315,11 +329,11 @@ export default function OfflineSync({ onBack, onOpenScanner }: Props) {
       if (isAvailable) {
         await Sharing.shareAsync(file.uri);
       } else {
-        alert('Sharing is not available on this device');
+        Alert.alert('Sharing', 'Sharing is not available on this device');
       }
     } catch (error) {
       console.error('Export error:', error);
-      alert('Failed to export data');
+      Alert.alert('Export Error', 'Failed to export data');
     }
   };
 
@@ -343,10 +357,10 @@ export default function OfflineSync({ onBack, onOpenScanner }: Props) {
     });
   }, [history, searchQuery, timeFilter]);
 
-  const DashboardWrapper = isTablet ? View : ScrollView;
+  const DashboardWrapper = useSplitLayout ? View : ScrollView;
 
   return (
-    <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]} edges={['top', 'left', 'right']}>
+    <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]} edges={['top', 'left', 'right', 'bottom']}>
       <View style={styles.mainHeader}>
         <View style={styles.headerLeftRow}>
           <Pressable
@@ -370,7 +384,9 @@ export default function OfflineSync({ onBack, onOpenScanner }: Props) {
               Management Dashboard
             </Text>
             <Text style={[styles.headerSubtitle, { color: colors.textSecondary, fontSize: subtitleFontSize }]} numberOfLines={1}>
-              Real-time monitor and sync terminal.
+              {kioskMode === 'intern' 
+                ? 'Monitor and Synchronize Intern Logs' 
+                : 'Monitor and Synchronize Employee Logs'}
             </Text>
           </View>
         </View>
@@ -396,9 +412,9 @@ export default function OfflineSync({ onBack, onOpenScanner }: Props) {
       <DashboardWrapper
         style={[
           styles.dashboardContainer, 
-          isTablet ? styles.tabletRow : styles.mobileColumn
+          useSplitLayout ? styles.tabletRow : styles.mobileColumn
         ]}
-        {...(!isTablet ? {
+        {...(!useSplitLayout ? {
           contentContainerStyle: styles.mobileScrollContainer,
           showsVerticalScrollIndicator: false,
           refreshControl: (
@@ -411,11 +427,11 @@ export default function OfflineSync({ onBack, onOpenScanner }: Props) {
           )
         } : {})}
       >
-        {/* LEFT PANEL: OFFLINE SYNC (The "Front" panel) */}
+        {/* Left Panel: Offline Sync Queue */}
         <View style={[
           styles.syncPanel, 
-          isTablet ? { 
-            flex: 0.6, 
+          useSplitLayout ? { 
+            flex: 0.5, 
             backgroundColor: theme === 'light' ? '#FFFFFF' : colors.surface, 
             borderRightWidth: 1, 
             borderRightColor: colors.border,
@@ -442,7 +458,7 @@ export default function OfflineSync({ onBack, onOpenScanner }: Props) {
           <View style={[styles.noobInfoBox, { backgroundColor: withAlpha('#f97316', 0.08) }]}>
             <Text style={[styles.noobTitle, { color: '#ea580c', fontSize: noobTitleFontSize }]}>WAITING TO SYNC</Text>
             <Text style={[styles.noobText, { color: colors.textSecondary, fontSize: noobTextFontSize }]}>
-              These logs were saved offline. Click <Text style={{fontWeight: '800'}}>SYNC NOW</Text> to send to server.
+              These logs were saved offline. Click <Text style={{fontWeight: '800', color: '#ea580c'}}>SYNC NOW</Text> to send to server.
             </Text>
           </View>
 
@@ -480,7 +496,7 @@ export default function OfflineSync({ onBack, onOpenScanner }: Props) {
             </Pressable>
           </View>
 
-          <ScrollView scrollEnabled={isTablet} contentContainerStyle={styles.listContent} showsVerticalScrollIndicator={false}>
+          <ScrollView scrollEnabled={useSplitLayout} contentContainerStyle={styles.listContent} showsVerticalScrollIndicator={false}>
             {isLoading ? (
               <ActivityIndicator size="large" color={colors.accent} style={{marginTop: 40}} />
             ) : displayedItems.length ? (
@@ -492,12 +508,13 @@ export default function OfflineSync({ onBack, onOpenScanner }: Props) {
                   <View
                     key={item.id}
                     style={[
-                      styles.standardCard,
-                      {
-                        backgroundColor: isFailedItem ? 'rgba(239, 68, 68, 0.04)' : colors.background,
-                        borderColor: isFailedItem ? '#ef4444' : colors.border,
-                        height: cardHeight,
-                      },
+                       styles.standardCard,
+                       {
+                         backgroundColor: isFailedItem ? 'rgba(239, 68, 68, 0.04)' : colors.background,
+                         borderColor: isFailedItem ? '#ef4444' : colors.border,
+                         height: isFailedItem ? undefined : cardHeight,
+                         paddingVertical: isFailedItem ? 12 : undefined,
+                       },
                     ]}
                   >
                     <View style={[
@@ -514,13 +531,28 @@ export default function OfflineSync({ onBack, onOpenScanner }: Props) {
                     <View style={styles.standardContent}>
                       <View style={styles.standardTopRow}>
                         <Text style={[styles.standardName, { color: colors.text, fontSize: standardNameFontSize }]} numberOfLines={1}>{displayName}</Text>
-                        <View style={[styles.standardBadge, { backgroundColor: isFailedItem ? withAlpha('#ef4444', 0.15) : withAlpha('#f97316', 0.15) }]}>
-                          <Text style={[styles.standardBadgeText, { color: isFailedItem ? '#ef4444' : '#ea580c', fontSize: standardBadgeTextFontSize }]}>
-                            {item.action === 'clock_in' ? 'IN' : 'OUT'}
-                          </Text>
+                        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                          <View style={[styles.standardBadge, { backgroundColor: isFailedItem ? withAlpha('#ef4444', 0.15) : withAlpha('#f97316', 0.15) }]}>
+                            <Text style={[styles.standardBadgeText, { color: isFailedItem ? '#ef4444' : '#ea580c', fontSize: standardBadgeTextFontSize }]}>
+                              {item.action === 'clock_in' ? 'IN' : 'OUT'}
+                            </Text>
+                          </View>
+                          {isFailedItem && (
+                            <Pressable
+                              onPress={() => handleDeleteItem(item.id)}
+                              style={({ pressed }) => [{ marginLeft: 12, opacity: pressed ? 0.6 : 1 }]}
+                            >
+                              <MaterialCommunityIcons name="delete-outline" size={20} color="#ef4444" />
+                            </Pressable>
+                          )}
                         </View>
                       </View>
                       <Text style={[styles.standardTime, { color: colors.textSecondary, fontSize: standardTimeFontSize }]}>{formatTimeDisplay(item.time)}</Text>
+                      {isFailedItem && item.errorMessage ? (
+                        <Text style={{ color: '#ef4444', fontSize: 11, marginTop: 4, fontWeight: '500' }}>
+                          Error: {item.errorMessage}
+                        </Text>
+                      ) : null}
                     </View>
                   </View>
                 );
@@ -558,11 +590,11 @@ export default function OfflineSync({ onBack, onOpenScanner }: Props) {
           </View>
         </View>
 
-        {/* RIGHT PANEL: TODAY'S HISTORY (The "Back" panel) */}
+        {/* Right Panel: Today's History */}
         <View style={[
           styles.historyPanel, 
-          isTablet ? { 
-            flex: 0.4, 
+          useSplitLayout ? { 
+            flex: 0.5, 
             backgroundColor: theme === 'light' ? '#F4F4F5' : colors.background, 
           } : {
             backgroundColor: theme === 'light' ? '#F4F4F5' : colors.background,
@@ -655,11 +687,11 @@ export default function OfflineSync({ onBack, onOpenScanner }: Props) {
           </View>
 
           <ScrollView
-            scrollEnabled={isTablet}
+            scrollEnabled={useSplitLayout}
             contentContainerStyle={styles.listContent}
             showsVerticalScrollIndicator={false}
             refreshControl={
-              isTablet ? (
+              useSplitLayout ? (
                 <RefreshControl
                   refreshing={isHistoryLoading}
                   onRefresh={loadHistory}
@@ -672,7 +704,7 @@ export default function OfflineSync({ onBack, onOpenScanner }: Props) {
             {filteredHistory.length > 0 ? (
               <View style={{backgroundColor: theme === 'light' ? '#fff' : colors.surface, borderRadius: 12, overflow: 'hidden', borderWidth: 1, borderColor: colors.border}}>
                 <View style={{flexDirection: 'row', paddingVertical: 12, paddingHorizontal: 16, backgroundColor: withAlpha(colors.border, 0.3), borderBottomWidth: 1, borderBottomColor: colors.border}}>
-                  <Text style={{flex: 1.5, fontSize: tableHeaderFontSize, fontWeight: '900', color: colors.textSecondary, textAlign: 'left'}}>ID & NAME</Text>
+                  <Text style={{flex: 1.5, fontSize: tableHeaderFontSize, fontWeight: '900', color: colors.textSecondary, textAlign: 'left'}}>NAME</Text>
                   <Text style={{flex: 1, fontSize: tableHeaderFontSize, fontWeight: '900', color: colors.textSecondary, textAlign: 'left'}}>TIME IN</Text>
                   <Text style={{flex: 1, fontSize: tableHeaderFontSize, fontWeight: '900', color: colors.textSecondary, textAlign: 'left'}}>TIME OUT</Text>
                 </View>
@@ -687,7 +719,9 @@ export default function OfflineSync({ onBack, onOpenScanner }: Props) {
                     <View key={item.id} style={{flexDirection: 'row', paddingVertical: 12, paddingHorizontal: 16, backgroundColor: isEven ? 'transparent' : withAlpha(colors.border, 0.1), borderBottomWidth: index === filteredHistory.length - 1 ? 0 : 1, borderBottomColor: withAlpha(colors.border, 0.4), alignItems: 'center'}}>
                       <View style={{flex: 1.5, alignItems: 'flex-start'}}>
                         <Text style={{fontSize: rowNameFontSize, fontWeight: '800', color: colors.text, textAlign: 'left'}} numberOfLines={1}>{displayName}</Text>
-                        <Text style={{fontSize: rowIdFontSize, color: colors.textSecondary, marginTop: 2, textAlign: 'left'}} numberOfLines={1}>{displayId}</Text>
+                        {kioskMode !== 'intern' && (
+                          <Text style={{fontSize: rowIdFontSize, color: colors.textSecondary, marginTop: 2, textAlign: 'left'}} numberOfLines={1}>{displayId}</Text>
+                        )}
                       </View>
                       <Text style={{flex: 1, fontSize: rowTimeFontSize, fontWeight: '700', color: '#22c55e', textAlign: 'left'}}>
                         {timeinVal ? formatTimeDisplay(timeinVal) : '--:--'}

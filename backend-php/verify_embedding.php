@@ -21,24 +21,29 @@ $input = json_decode(file_get_contents('php://input'), true) ?? $_REQUEST;
 
 $userId = isset($input['log_id']) ? trim((string) $input['log_id']) : null;
 $liveEmbeddingRaw = $input['live_embedding'] ?? null;
+$liveImageB64 = $input['live_image_b64'] ?? null;
 $engine = isset($input['engine']) ? trim((string) $input['engine']) : '';
+$faceServerUrl = getenv('FACE_SERVER_URL') ?: 'http://localhost:5001';
 
-if (!$userId || !$liveEmbeddingRaw) {
-    http_response_code(400);
-    echo json_encode(['ok' => false, 'message' => 'Missing parameter (log_id and live_embedding)']);
+if ($userId === 'warmup') {
+    if ($liveImageB64) {
+        $ch = curl_init($faceServerUrl . '/embed_single');
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_POST, true);
+        curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode(['image' => $liveImageB64, 'model' => 'buffalo_l']));
+        curl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type: application/json']);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 3);
+        curl_exec($ch);
+        curl_close($ch);
+    }
+    http_response_code(200);
+    echo json_encode(['ok' => true, 'message' => 'Warmup completed.']);
     exit;
 }
 
-$liveEmbedding = null;
-if (is_array($liveEmbeddingRaw)) {
-    $liveEmbedding = $liveEmbeddingRaw;
-} else if (is_string($liveEmbeddingRaw)) {
-    $liveEmbedding = json_decode($liveEmbeddingRaw, true);
-}
-
-if (!is_array($liveEmbedding) || count($liveEmbedding) === 0) {
+if (!$userId) {
     http_response_code(400);
-    echo json_encode(['ok' => false, 'message' => 'Invalid live_embedding format (must be array of numbers)']);
+    echo json_encode(['ok' => false, 'message' => 'Missing parameter (log_id)']);
     exit;
 }
 
@@ -50,10 +55,69 @@ if ($errorMsg) {
     exit;
 }
 
-$storedEmbeddingStr = $faceData['face_embedding'] ?? null;
+$isServerMode = !empty($liveImageB64);
+$targetModel = 'buffalo_sc';
+$storedEmbeddingStr = null;
+
+if ($isServerMode) {
+    // Auto-fallback: Prefer large embedding, but fallback to regular if missing
+    if (!empty($faceData['face_embedding_large'])) {
+        $targetModel = 'buffalo_l';
+        $storedEmbeddingStr = $faceData['face_embedding_large'];
+    } else if (!empty($faceData['face_embedding'])) {
+        $targetModel = 'buffalo_sc';
+        $storedEmbeddingStr = $faceData['face_embedding'];
+    }
+} else {
+    // Local mode always uses regular embedding
+    $storedEmbeddingStr = $faceData['face_embedding'] ?? null;
+}
+
 if (!$storedEmbeddingStr) {
     http_response_code(404);
     echo json_encode(['ok' => false, 'message' => 'No face embedding registered for this user']);
+    exit;
+}
+
+$liveEmbedding = null;
+if ($liveImageB64) {
+    // Forward crop base64 to local Python ML server
+    $ch = curl_init($faceServerUrl . '/embed_single');
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_POST, true);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode(['image' => $liveImageB64, 'model' => $targetModel]));
+    curl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type: application/json']);
+    
+    $response = curl_exec($ch);
+    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+
+    $errorMsg = 'Server-side face extraction failed.';
+    if ($response) {
+        $resData = json_decode($response, true);
+        if ($httpCode === 200 && isset($resData['ok']) && $resData['ok'] && isset($resData['embedding'])) {
+            $liveEmbedding = $resData['embedding'];
+        } else if (isset($resData['error'])) {
+            $errorMsg = $resData['error'];
+        }
+    }
+    
+    if (!$liveEmbedding) {
+        http_response_code(400);
+        echo json_encode(['ok' => false, 'message' => $errorMsg]);
+        exit;
+    }
+} else if ($liveEmbeddingRaw) {
+    if (is_array($liveEmbeddingRaw)) {
+        $liveEmbedding = $liveEmbeddingRaw;
+    } else if (is_string($liveEmbeddingRaw)) {
+        $liveEmbedding = json_decode($liveEmbeddingRaw, true);
+    }
+}
+
+if (!is_array($liveEmbedding) || count($liveEmbedding) === 0) {
+    http_response_code(400);
+    echo json_encode(['ok' => false, 'message' => 'Invalid live_embedding format (must be array of numbers)']);
     exit;
 }
 
@@ -100,11 +164,13 @@ foreach ($angleEmbeddings as $idx => $angleEmb) {
 $matchThreshold = 0.52;
 $subThreshold = 0.45;
 
-// top2_agree: require at least 2 angles to agree above sub-threshold
+// Require at least 3 matching angles for 5 profiles, 2 for 3-4 profiles, and 1 for <3 profiles
 $agreeingAngles = count(array_filter($perAngleScores, fn($s) => $s >= $subThreshold));
-$top2Agrees = count($angleEmbeddings) < 3 || $agreeingAngles >= 2;
+$angleCount = count($angleEmbeddings);
+$minAgrees = $angleCount >= 5 ? 3 : ($angleCount >= 3 ? 2 : 1);
+$agreementOk = $agreeingAngles >= $minAgrees;
 
-$isMatch = $maxSimilarity >= $matchThreshold && $top2Agrees;
+$isMatch = $maxSimilarity >= $matchThreshold && $agreementOk;
 
 $message = null;
 $hint = null;
@@ -128,4 +194,5 @@ echo json_encode([
     'best_angle_index' => $bestAngleIndex,
     'per_angle_scores' => $perAngleScores,
     'agreeing_angles' => $agreeingAngles,
+    'model_used' => $isServerMode ? $targetModel : 'local_buffalo_sc'
 ]);

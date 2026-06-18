@@ -4,7 +4,7 @@ import { useTheme, Colors } from '../../../config/theme';
 
 export type SettingRowProps = {
   title: string;
-  description?: string;
+  description?: ReactNode;
   extraText?: string[];
   action?: ReactNode;
   danger?: boolean;

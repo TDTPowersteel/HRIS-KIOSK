@@ -4,7 +4,7 @@
     "slug": "TDT-KIOSK",
     "version": "1.0.0",
     "orientation": "default",
-    "icon": "./assets/icon.png",
+    "icon": "./assets/tdt-logo-new.jpg",
     "userInterfaceStyle": "light",
     "splash": {
       "image": "./assets/splash-icon.png",
@@ -17,12 +17,6 @@
     "android": {
       "package": "com.ams.attendanceapp",
       "versionCode": 1,
-      "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
-        "foregroundImage": "./assets/android-icon-foreground.png",
-        "backgroundImage": "./assets/android-icon-background.png",
-        "monochromeImage": "./assets/android-icon-monochrome.png"
-      },
       "predictiveBackGestureEnabled": false,
       "permissions": [
         "android.permission.CAMERA",
@@ -46,7 +40,7 @@
         }
       ],
       "expo-asset",
-      "./withOnnxManualLink.js"
+      "./plugins/withOnnxManualLink.js"
     ],
     "web": {
       "favicon": "./assets/favicon.png"

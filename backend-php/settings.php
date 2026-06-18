@@ -13,12 +13,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     exit;
 }
 
+require_once __DIR__ . '/connect.php';
 require_once __DIR__ . '/settings_store.php';
 
 if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     echo json_encode([
         'ok' => true,
         'settings' => settings_get_public_data(),
+        'kiosk_mode' => defined('KIOSK_MODE') ? KIOSK_MODE : 'employee'
     ]);
     exit;
 }

@@ -19,6 +19,7 @@ export type CachedOfflineUser = {
   role?: string | null;
   department?: string | null;
   face_embedding?: string | number[] | number[][] | null;
+  isIntern?: boolean;
 };
 
 export type EmployeePayloadRow = {
@@ -78,10 +79,11 @@ function parseQrHints(qrData: string) {
   const exact = qrData.trim();
   const logIdMatch = exact.match(/LOG_?ID:([0-9]+)/i);
   const usernameMatch = exact.match(/USER:([^|]+)/i);
+  const internMatch = exact.match(/TDTINTRN([0-9]+)/i);
 
   return {
     exact,
-    userId: logIdMatch?.[1]?.trim() ?? null,
+    userId: logIdMatch?.[1]?.trim() ?? (internMatch ? `intern_${internMatch[1]}` : null),
     username: usernameMatch?.[1]?.trim().toLowerCase() ?? null,
   };
 }
@@ -242,6 +244,7 @@ export function mapEmployeesToOfflineUsers(data: EmployeePayloadRow[]): CachedOf
         profile_picture_remote: remoteUrl,
         qrCode: account?.qr_code ?? null,
         face_embedding: (account as any)?.face_embedding ?? (employee as any).face_embedding ?? null,
+        isIntern: employee.role?.toLowerCase() === 'intern' || userId.startsWith('intern_'),
       };
     })
     .filter((u): u is CachedOfflineUser => u !== null);

@@ -28,16 +28,20 @@ if (!$userId && !$username) {
 }
 
 if (!$userId && $username) {
-    [$status, $data, $err] = supabase_request(
-        'GET',
-        "rest/v1/accounts?username=eq." . urlencode($username) . "&select=log_id"
-    );
-    if ($err || $status !== 200 || !is_array($data) || count($data) === 0) {
-        http_response_code(404);
-        echo json_encode(['ok' => false, 'message' => 'Account not found by username', 'detail' => $err]);
-        exit;
+    if (strpos($username, 'intern_') === 0 || (defined('KIOSK_MODE') && KIOSK_MODE === 'intern')) {
+        $userId = $username;
+    } else {
+        [$status, $data, $err] = supabase_request(
+            'GET',
+            "rest/v1/accounts?username=eq." . urlencode($username) . "&select=log_id"
+        );
+        if ($err || $status !== 200 || !is_array($data) || count($data) === 0) {
+            http_response_code(404);
+            echo json_encode(['ok' => false, 'message' => 'Account not found by username', 'detail' => $err]);
+            exit;
+        }
+        $userId = $data[0]['log_id'];
     }
-    $userId = $data[0]['log_id'];
 }
 
 [$faceData, $errorMsg] = fetchUserFaceData($userId, $engine);

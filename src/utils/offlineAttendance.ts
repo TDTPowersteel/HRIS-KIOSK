@@ -21,6 +21,7 @@ export type OfflineAttendanceItem = {
   latitude?: number;
   longitude?: number;
   address?: string;
+  isIntern?: boolean;
 };
 
 export async function getOfflineAttendanceQueue(): Promise<OfflineAttendanceItem[]> {
@@ -110,6 +111,7 @@ export async function syncOfflineItem(item: OfflineAttendanceItem): Promise<void
       latitude: item.latitude,
       longitude: item.longitude,
       address: item.address,
+      isIntern: item.isIntern,
     }),
   });
 
@@ -129,10 +131,13 @@ export async function syncOfflineQueue(): Promise<{ success: number; failed: num
   const queue = await getOfflineAttendanceQueue();
   const candidates = queue.filter((item) => item.status === 'pending' || item.status === 'failed');
   
+  // Chronological order: process oldest items first by reversing the unshifted queue array
+  const chronologicalCandidates = [...candidates].reverse();
+  
   let successCount = 0;
   let failedCount = 0;
 
-  for (const item of candidates) {
+  for (const item of chronologicalCandidates) {
     try {
       await syncOfflineItem(item);
       successCount++;

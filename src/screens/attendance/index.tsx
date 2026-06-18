@@ -67,6 +67,7 @@ export default function AttendanceScanner({ onBack, onOpenOffline }: AttendanceP
           offlineModeEnabled={state.offlineModeEnabled}
           pendingSyncCount={state.pendingSyncCount}
           isOnline={state.isOnline}
+          kioskMode={state.kioskMode}
           onBack={onBack}
           onOpenOffline={onOpenOffline}
         />

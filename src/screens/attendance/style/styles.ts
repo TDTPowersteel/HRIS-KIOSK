@@ -28,19 +28,28 @@ export const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
 
+  topHeaderContainer: {
+    width: '100%',
+    alignItems: 'center',
+    paddingTop: 10,
+  },
   // HEADER
   newHeader: {
+    width: '100%',
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingTop: 10,
-    height: 70,
+    justifyContent: 'center',
+    height: 80,
+    position: 'relative',
   },
   headerLeft: {
+    position: 'absolute',
+    left: 16,
+    top: 0,
+    bottom: 0,
     flexDirection: 'row',
     alignItems: 'center',
-    width: 100,
+    justifyContent: 'center',
   },
   headerIconButton: {
     width: 42,
@@ -63,8 +72,9 @@ export const styles = StyleSheet.create({
     borderColor: '#fff',
   },
   headerCenter: {
-    flex: 1,
     alignItems: 'center',
+    justifyContent: 'center',
+    paddingTop: 12,
   },
   topTime: {
     color: '#fff',
@@ -81,7 +91,14 @@ export const styles = StyleSheet.create({
     marginTop: -4,
     letterSpacing: 0.5,
   },
-  headerRight: { width: 85, alignItems: 'flex-end' },
+  headerRight: {
+    position: 'absolute',
+    right: 16,
+    top: 0,
+    bottom: 0,
+    alignItems: 'flex-end',
+    justifyContent: 'center',
+  },
   miniOfflineBadge: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -108,7 +125,7 @@ export const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    marginTop: 15,
+    marginTop: 10,
     gap: 8,
   },
   stepPill: {
@@ -146,7 +163,11 @@ export const styles = StyleSheet.create({
 
   // CENTER SCANNER
   scannerOverlayContainer: {
-    flex: 1,
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    left: 0,
+    right: 0,
     alignItems: 'center',
     justifyContent: 'center',
   },

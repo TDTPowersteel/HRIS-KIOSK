@@ -4,12 +4,14 @@ import { useEffect, useMemo, useState, useCallback } from 'react';
 import { Image, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import ShowQRScan from './src/screens/ShowQRScan';
-import EmployeeProfileData from './src/screens/EmployeeProfileData';
+// import EmployeeProfileData from './src/screens/EmployeeProfileData'; // DISABLED FOR PERFORMANCE
 import Settings from './src/screens/settings';
 import OfflineSync from './src/screens/OfflineSync';
 import * as Location from 'expo-location';
 import { ThemeContext, Theme, getStoredTheme, saveTheme, ThemeType, Colors } from './src/config/theme';
 import { useAutoSync } from './src/utils/useAutoSync';
+import { mmkv, refreshOfflineUserCache } from './src/utils/offlineUsers';
+import { BACKEND_URL } from './src/config/backend';
 
 export default function App() {
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
@@ -45,6 +47,9 @@ export default function App() {
 
   const [screen, setScreen] = useState<'home' | 'qr' | 'profile' | 'settings' | 'offline'>('home');
   const [theme, setThemeState] = useState<ThemeType>('light');
+  const [kioskMode, setKioskMode] = useState<'employee' | 'intern'>(() => {
+    return (mmkv.getString('kiosk_mode') as 'employee' | 'intern') || 'employee';
+  });
 
   const setTheme = useCallback((newTheme: ThemeType) => {
     setThemeState(newTheme);
@@ -57,11 +62,62 @@ export default function App() {
     ScreenOrientation.unlockAsync().catch(() => {});
     getStoredTheme().then(setThemeState);
     Location.requestForegroundPermissionsAsync().catch(() => {});
+    fetch(`${BACKEND_URL}/settings.php`, {
+      headers: {
+        Accept: 'application/json',
+        'ngrok-skip-browser-warning': 'true',
+      },
+    })
+      .then((res) => res.json())
+      .then((payload) => {
+        if (payload?.ok && payload?.kiosk_mode) {
+          const mode = payload.kiosk_mode as 'employee' | 'intern';
+          mmkv.set('kiosk_mode', mode);
+          setKioskMode(mode);
+        }
+      })
+      .catch((err) => {
+        console.log('Failed to fetch settings:', err);
+      });
   }, []);
+
+  useEffect(() => {
+    const runStartupTasks = async () => {
+      // Delay by 3 seconds to avoid blocking main UI rendering
+      await new Promise(resolve => setTimeout(resolve, 3000));
+      
+      console.log('[Startup] Executing background sync...');
+      refreshOfflineUserCache()
+        .then(users => console.log(`[Startup] Background sync complete. Mapped ${users?.length || 0} users.`))
+        .catch(err => console.log('[Startup] Background sync failed:', err));
+
+      console.log('[Startup] Triggering server warmup...');
+      fetch(`${BACKEND_URL}/verify_embedding.php`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({
+          log_id: 'warmup',
+          live_image_b64: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII='
+        })
+      })
+        .then(res => res.json())
+        .then(data => console.log('[Startup] Server warmup response:', data))
+        .catch(err => console.log('[Startup] Server warmup request failed:', err));
+    };
+
+    runStartupTasks();
+  }, []);
+
+  useEffect(() => {
+    const mode = (mmkv.getString('kiosk_mode') as 'employee' | 'intern') || 'employee';
+    if (mode !== kioskMode) {
+      setKioskMode(mode);
+    }
+  }, [screen]);
 
   const ScreenComponent = useMemo(() => {
     if (screen === 'qr') return <ShowQRScan onBack={() => setScreen('home')} onOpenOffline={() => setScreen('offline')} />;
-    if (screen === 'profile') return <EmployeeProfileData onBack={() => setScreen('home')} />;
+    // if (screen === 'profile') return <EmployeeProfileData onBack={() => setScreen('home')} />; // DISABLED FOR PERFORMANCE
     if (screen === 'settings') return <Settings onBack={() => setScreen('home')} />;
     if (screen === 'offline') return <OfflineSync onBack={() => setScreen('home')} onOpenScanner={() => setScreen('qr')} />;
     return null;
@@ -144,6 +200,7 @@ export default function App() {
                   <Text style={[styles.largeButtonText, { fontSize: scannerBtnFontSize }]}>ATTENDANCE SCANNER</Text>
                 </Pressable>
 
+                {/* --- DISABLED FOR PERFORMANCE ---
                 <Pressable 
                   style={({ pressed }) => [
                     styles.secondaryButton, 
@@ -156,8 +213,11 @@ export default function App() {
                   ]} 
                   onPress={() => setScreen('profile')}
                 >
-                  <Text style={[styles.secondaryButtonText, { color: currentTheme.text, fontSize: directoryBtnFontSize }]}>EMPLOYEE DIRECTORY</Text>
+                  <Text style={[styles.secondaryButtonText, { color: currentTheme.text, fontSize: directoryBtnFontSize }]}>
+                    {kioskMode === 'intern' ? 'INTERN LIST' : 'EMPLOYEE DIRECTORY'}
+                  </Text>
                 </Pressable>
+                -------------------------------- */}
 
                 <Pressable 
                   style={({ pressed }) => [

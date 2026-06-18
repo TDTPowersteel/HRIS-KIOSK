@@ -374,15 +374,17 @@ export default function FaceScanView({
 
   const getYawLabel = (yaw: number | null | undefined) => {
     if (typeof yaw !== 'number' || !Number.isFinite(yaw)) return '--';
-    if (yaw > 12) return 'Left';
-    if (yaw < -12) return 'Right';
-    return 'Center';
+    const rounded = Math.round(yaw);
+    if (yaw > 12) return `Left (${rounded}°)`;
+    if (yaw < -12) return `Right (${rounded}°)`;
+    return `Center (${rounded}°)`;
   };
   const getPitchLabel = (pitch: number | null | undefined) => {
     if (typeof pitch !== 'number' || !Number.isFinite(pitch)) return '--';
-    if (pitch > 12) return 'Up';
-    if (pitch < -12) return 'Down';
-    return 'Center';
+    const rounded = Math.round(pitch);
+    if (pitch > 12) return `Up (${rounded}°)`;
+    if (pitch < -12) return `Down (${rounded}°)`;
+    return `Center (${rounded}°)`;
   };
   const yawLabel = getYawLabel(cameraVisionFaceTelemetry?.yaw);
   const pitchLabel = getPitchLabel(cameraVisionFaceTelemetry?.pitch);
@@ -434,34 +436,9 @@ export default function FaceScanView({
 
   const renderDetectionOverlay = () => {
     if (!showDetectionOverlay) return null;
-    const bystanderFaces = (cameraVisionAllFaces || []).filter(f => !f.isTarget);
     return (
       <View style={styles.fullScreenDetectionOverlay} pointerEvents="none">
-        {bystanderFaces.map((face) => {
-          const px = mapFaceBoxToPx({
-            left: face.left,
-            top: face.top,
-            width: face.width,
-            height: face.height,
-            frameWidth: face.frameWidth,
-            frameHeight: face.frameHeight,
-          });
-          return (
-            <View
-              key={face.id}
-              style={[
-                styles.detectionFaceBox,
-                styles.bystanderFaceBox,
-                {
-                  left: px.left,
-                  top: px.top,
-                  width: px.width,
-                  height: px.height,
-                },
-              ]}
-            />
-          );
-        })}
+        {/* Bystander faces overlay removed for A7 Lite performance */}
         {(() => {
           const isFaceReady = livenessEnabled ? backgroundLivenessPassed : (detectionPercent === 100);
           return (
@@ -499,7 +476,7 @@ export default function FaceScanView({
         </TouchableOpacity>
       </View>
       <View style={styles.headerCenter}>
-        <Text style={styles.topTime}>{formattedTime}</Text>
+        <Text style={[styles.topTime, width < 380 && { fontSize: 24 }]}>{formattedTime}</Text>
         <Text style={styles.topDate}>{formattedDate}</Text>
       </View>
       <View style={styles.headerRight}>
@@ -521,7 +498,7 @@ export default function FaceScanView({
         </View>
       )}
       <View style={styles.portraitProfileInfo}>
-        <Text style={[styles.portraitProfileName, { color: nameTextColor }]} numberOfLines={1}>{selectedUser?.name || selectedUser?.username || 'Employee'}</Text>
+        <Text style={[styles.portraitProfileName, { color: nameTextColor }]} numberOfLines={1}>{selectedUser?.name || selectedUser?.username || (selectedUser?.isIntern ? 'Intern' : 'Employee')}</Text>
         <Text style={[styles.portraitProfileRole, { color: roleTextColor }]} numberOfLines={1}>{selectedUser?.role || 'Staff'} • {selectedUser?.department || 'Dept'}</Text>
       </View>
       {isClockingOut && clockInTime ? (
@@ -561,7 +538,7 @@ export default function FaceScanView({
     return (
       <View style={styles.portraitFaceContainer} onLayout={handleOverlayLayout}>
         <View style={getDynamicCameraStyle()}>
-          <Camera ref={cameraRef} style={styles.fullScreenCamera} device={device} format={cameraFormat} isActive={true} photo={true} pixelFormat="yuv" frameProcessor={frameProcessor} androidPreviewViewType="texture-view" outputOrientation="device" resizeMode="cover" />
+          <Camera ref={cameraRef} style={styles.fullScreenCamera} device={device} format={cameraFormat} isActive={true} photo={true} pixelFormat="yuv" frameProcessor={frameProcessor} androidPreviewViewType="texture-view" outputOrientation="device" resizeMode="cover" photoQualityBalance="speed" />
         </View>
         <Animated.View style={[styles.snapFlash, { opacity: flashAnim }]} pointerEvents="none" />
         <View style={styles.cameraTintLight} pointerEvents="none" />
@@ -607,7 +584,7 @@ export default function FaceScanView({
                 <View style={styles.profileImageContainer}>
                   {selectedUser?.profile_picture ? <Image source={{ uri: selectedUser.profile_picture }} style={[styles.profileImage, { borderColor: portraitBorderColor }]} /> : <View style={[styles.profileImagePlaceholder, { backgroundColor: placeholderBg, borderColor: portraitBorderColor }]}><MaterialCommunityIcons name="account" size={100} color={iconColor} /></View>}
                 </View>
-                <Text style={[styles.profileName, { color: nameTextColor }]}>{selectedUser?.name || selectedUser?.username || 'Employee'}</Text>
+                <Text style={[styles.profileName, { color: nameTextColor }]}>{selectedUser?.name || selectedUser?.username || (selectedUser?.isIntern ? 'Intern' : 'Employee')}</Text>
                 <Text style={[styles.profileRole, { color: roleTextColor }]}>{selectedUser?.role || 'Staff Member'}</Text>
                 <Text style={[styles.profileDept, { color: roleTextColor }]}>{selectedUser?.department || 'Department'}</Text>
                 {isClockingOut && clockInTime ? <View style={[styles.clockInTimeContainer, { backgroundColor: isThemeLight ? 'rgba(0,0,0,0.05)' : 'rgba(0,0,0,0.2)' }]}><MaterialCommunityIcons name="clock-outline" size={18} color={roleTextColor} /><Text style={[styles.clockInTimeText, { color: roleTextColor }]}>Clocked In at: {clockInTime}</Text></View> : null}
@@ -623,7 +600,7 @@ export default function FaceScanView({
       </View>
       <View style={styles.cameraPanel} onLayout={handleOverlayLayout}>
         <View style={getDynamicCameraStyle()}>
-          <Camera ref={cameraRef} style={styles.fullScreenCamera} device={device} format={cameraFormat} isActive={true} photo={true} pixelFormat="yuv" frameProcessor={frameProcessor} androidPreviewViewType="texture-view" outputOrientation="device" resizeMode="cover" />
+          <Camera ref={cameraRef} style={styles.fullScreenCamera} device={device} format={cameraFormat} isActive={true} photo={true} pixelFormat="yuv" frameProcessor={frameProcessor} androidPreviewViewType="texture-view" outputOrientation="device" resizeMode="cover" photoQualityBalance="speed" />
         </View>
         <Animated.View style={[styles.snapFlash, { opacity: flashAnim }]} pointerEvents="none" />
         <View style={styles.cameraTintLight} pointerEvents="none" />

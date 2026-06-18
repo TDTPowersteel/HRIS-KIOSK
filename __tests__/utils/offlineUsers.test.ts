@@ -50,7 +50,8 @@ describe('Offline Users Caching Utils', () => {
       profile_picture: 'https://example.com/pic.jpg',
       profile_picture_remote: 'https://example.com/pic.jpg',
       qrCode: 'LOG_ID:10|USER:keith123',
-      face_embedding: [0.1, 0.2, 0.3]
+      face_embedding: [0.1, 0.2, 0.3],
+      isIntern: false
     });
   });
 

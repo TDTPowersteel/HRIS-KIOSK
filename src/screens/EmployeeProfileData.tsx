@@ -26,21 +26,33 @@ function withAlpha(hexColor: string, alpha: number) {
   return `rgba(${red}, ${green}, ${blue}, ${alpha})`;
 }
 
+function parseId(val: string | number | null | undefined): string | number | null {
+  if (val === null || val === undefined || val === '') return null;
+  const num = Number(val);
+  return isNaN(num) ? val : num;
+}
+
+function parseIdOrZero(val: string | number | null | undefined): string | number {
+  if (val === null || val === undefined || val === '') return 0;
+  const num = Number(val);
+  return isNaN(num) ? val : num;
+}
+
 type SortOption = 'name_asc' | 'name_desc';
 
 type Account = {
-  log_id: number;
+  log_id: number | string;
   username: string | null;
   qr_code?: string | null;
   profile_picture?: string | null;
 };
 
 type EmployeeRow = {
-  emp_id: number;
+  emp_id: number | string;
   name: string;
   role: string | null;
   dept_id: number | null;
-  log_id: number | null;
+  log_id: number | string | null;
   accounts?: Account | Account[] | null;
   departments?: {
     name?: string | null;
@@ -72,7 +84,7 @@ function enrichEmployeesWithCache(data: EmployeeRow[]): EmployeeRow[] {
             const acc = normalizeAccount(emp.accounts);
             const isArr = Array.isArray(emp.accounts);
             const enrichedAcc = {
-              log_id: emp.log_id || acc?.log_id || parseInt(cached.userId) || 0,
+              log_id: emp.log_id || acc?.log_id || parseIdOrZero(cached.userId),
               username: acc?.username ?? cached.username ?? null,
               qr_code: acc?.qr_code ?? cached.qrCode ?? null,
               profile_picture: cached.profile_picture
@@ -101,25 +113,25 @@ export default function EmployeeProfileData({ onBack }: Props) {
   const ITEMS_PER_PAGE = 50;
   
   const setUniqueEmployees = useCallback((data: EmployeeRow[], append: boolean = false) => {
-    const seen = new Set<number>();
+    const seen = new Set<string>();
     
     let sourceData: EmployeeRow[] = [];
     if (append) {
       sourceData = [...employeesRef.current, ...data];
     } else {
-      const existingMap = new Map<number, EmployeeRow>();
+      const existingMap = new Map<string, EmployeeRow>();
       employeesRef.current.forEach(emp => {
-        if (emp && emp.emp_id != null) existingMap.set(Number(emp.emp_id), emp);
+        if (emp && emp.emp_id != null) existingMap.set(String(emp.emp_id), emp);
       });
       data.forEach(emp => {
-        if (emp && emp.emp_id != null) existingMap.set(Number(emp.emp_id), emp);
+        if (emp && emp.emp_id != null) existingMap.set(String(emp.emp_id), emp);
       });
       sourceData = Array.from(existingMap.values());
     }
 
     const unique = sourceData.filter(emp => {
       if (!emp || emp.emp_id == null) return false;
-      const id = Number(emp.emp_id);
+      const id = String(emp.emp_id);
       if (seen.has(id)) return false;
       seen.add(id);
       return true;
@@ -149,6 +161,9 @@ export default function EmployeeProfileData({ onBack }: Props) {
   const [isBootstrapping, setIsBootstrapping] = useState(globalEmployeesCache.length === 0);
   const [lastUpdatedAt, setLastUpdatedAt] = useState<number | null>(globalLastSyncCache);
   const [selectedEmployee, setSelectedEmployee] = useState<EmployeeRow | null>(null);
+  const [kioskMode, setKioskMode] = useState<'employee' | 'intern' | null>(() => {
+    return (mmkv.getString('kiosk_mode') as 'employee' | 'intern') || null;
+  });
   const localMatchCount = useMemo(() => {
     if (!searchText) return 0;
     return employees.filter(emp => {
@@ -226,7 +241,7 @@ export default function EmployeeProfileData({ onBack }: Props) {
           const isArr = Array.isArray(emp.accounts);
           const enrichedAcc: Account = {
             ...(acc ?? {}),
-            log_id: logId || parseInt(userId) || 0,
+            log_id: logId || parseIdOrZero(userId),
             username: acc?.username ?? null,
             profile_picture: localUri
           };
@@ -259,6 +274,12 @@ export default function EmployeeProfileData({ onBack }: Props) {
         const text = await response.text();
         const payload = JSON.parse(text);
         if (payload?.ok && Array.isArray(payload?.data)) {
+          if (payload.kiosk_mode) {
+            mmkv.set('kiosk_mode', payload.kiosk_mode);
+            if (kioskMode !== payload.kiosk_mode) {
+              setKioskMode(payload.kiosk_mode);
+            }
+          }
           const rows = payload.data as EmployeeRow[];
           if (rows.length === 0) {
             keepFetching = false;
@@ -284,7 +305,7 @@ export default function EmployeeProfileData({ onBack }: Props) {
     } finally {
       isBackgroundSyncingRef.current = false;
     }
-  }, [setUniqueEmployees, handleProfileCached]);
+  }, [setUniqueEmployees, handleProfileCached, kioskMode, setKioskMode]);
 
   const fetchEmployees = useCallback(async (options?: { showLoading?: boolean; manual?: boolean; page?: number }) => {
     if (isFetchingRef.current) return;
@@ -319,6 +340,13 @@ export default function EmployeeProfileData({ onBack }: Props) {
       if (!payload?.ok || !Array.isArray(payload?.data)) {
         console.log('[fetchEmployees] Payload validation failed:', payload);
         throw new Error('Unable to sync employee directory');
+      }
+
+      if (payload.kiosk_mode) {
+        mmkv.set('kiosk_mode', payload.kiosk_mode);
+        if (kioskMode !== payload.kiosk_mode) {
+          setKioskMode(payload.kiosk_mode);
+        }
       }
 
       let rows = payload.data as EmployeeRow[];
@@ -410,6 +438,12 @@ export default function EmployeeProfileData({ onBack }: Props) {
         }
 
         if (payload?.ok && Array.isArray(payload?.data) && isCurrent) {
+          if (payload.kiosk_mode) {
+            mmkv.set('kiosk_mode', payload.kiosk_mode);
+            if (kioskMode !== payload.kiosk_mode) {
+              setKioskMode(payload.kiosk_mode);
+            }
+          }
           let rows = payload.data as EmployeeRow[];
           rows = enrichEmployeesWithCache(rows);
           setUniqueEmployees(rows, false);
@@ -447,13 +481,13 @@ export default function EmployeeProfileData({ onBack }: Props) {
           const mapped: EmployeeRow[] = cached
             .filter(u => u !== null && typeof u === 'object')
             .map(u => ({
-              emp_id: parseInt(u.empId) || 0,
+              emp_id: parseIdOrZero(u.empId),
               name: u.name || '',
               role: u.role || null,
               dept_id: null,
-              log_id: parseInt(u.userId) || null,
+              log_id: parseId(u.userId),
               accounts: {
-                log_id: parseInt(u.userId) || 0,
+                log_id: parseIdOrZero(u.userId),
                 username: u.username,
                 qr_code: u.qrCode,
                 profile_picture: u.profile_picture
@@ -665,9 +699,11 @@ export default function EmployeeProfileData({ onBack }: Props) {
           <MaterialCommunityIcons name="chevron-left" size={32} color={colors.text} />
         </Pressable>
         <View style={styles.headerTitleWrap}>
-          <Text style={[styles.title, { color: colors.text, fontSize: titleFontSize }]}>Employee Directory</Text>
+          <Text style={[styles.title, { color: colors.text, fontSize: titleFontSize }]}>
+            {kioskMode === null ? '...' : kioskMode === 'intern' ? 'Intern List' : 'Employee Directory'}
+          </Text>
           <Text style={[styles.subtitle, { color: colors.textSecondary, fontSize: subtitleFontSize }]}>
-            Employee information and records.
+            {kioskMode === null ? '' : kioskMode === 'intern' ? 'Intern information and records.' : 'Employee information and records.'}
           </Text>
         </View>
         <Pressable
@@ -692,7 +728,7 @@ export default function EmployeeProfileData({ onBack }: Props) {
         ]}>
           <TextInput
             style={[styles.searchInput, { color: colors.text, fontSize: searchInputFontSize }]}
-            placeholder="Search by name or role..."
+            placeholder={kioskMode === 'intern' ? 'Search by intern name...' : 'Search by name or role...'}
             placeholderTextColor={colors.textSecondary}
             value={searchText}
             onChangeText={setSearchText}
@@ -814,7 +850,9 @@ export default function EmployeeProfileData({ onBack }: Props) {
               {isLoadingMore ? (
                 <ActivityIndicator color={Colors.powerOrange} />
               ) : (
-                <Text style={[styles.loadMoreText, { color: Colors.powerOrange, fontSize: loadMoreTextFontSize }]}>LOAD MORE EMPLOYEES</Text>
+                <Text style={[styles.loadMoreText, { color: Colors.powerOrange, fontSize: loadMoreTextFontSize }]}>
+                  {kioskMode === 'intern' ? 'LOAD MORE INTERNS' : 'LOAD MORE EMPLOYEES'}
+                </Text>
               )}
             </Pressable>
           )}
@@ -824,7 +862,9 @@ export default function EmployeeProfileData({ onBack }: Props) {
               <View style={styles.notSyncedContainer}>
                 <MaterialCommunityIcons name="database-sync" size={80} color={colors.textSecondary} style={{ marginBottom: 16 }} />
                 <Text style={[styles.notSyncedText, { color: colors.text, fontSize: notSyncedTextFontSize }]}>Directory Not Synced Yet</Text>
-                <Text style={[styles.notSyncedSubtext, { color: colors.textSecondary, fontSize: notSyncedSubtextFontSize }]}>You need to sync to load employee records.</Text>
+                <Text style={[styles.notSyncedSubtext, { color: colors.textSecondary, fontSize: notSyncedSubtextFontSize }]}>
+                  {kioskMode === 'intern' ? 'You need to sync to load intern records.' : 'You need to sync to load employee records.'}
+                </Text>
                 <Pressable
                   onPress={handleManualRefresh}
                   style={({ pressed }) => [
