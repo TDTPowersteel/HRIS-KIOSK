@@ -139,8 +139,13 @@ async function main() {
   rl.question(`${colors.yellow}Enter your choice (1-6): ${colors.reset}`, async (choice) => {
     const rootDir = path.resolve(__dirname, '..');
     
+    const isWindows = process.platform === 'win32';
+    const pythonBin = isWindows 
+      ? path.join(rootDir, 'face_server', '.venv', 'Scripts', 'python.exe') 
+      : path.join(rootDir, 'face_server', '.venv', 'bin', 'python');
+    
     const runPhp = () => startProcess('php', 'php', ['-S', '0.0.0.0:8000', '-t', 'backend-php/public'], colors.bgBlue, rootDir);
-    const runPython = () => startProcess('face-server'.toUpperCase(), '.venv\\Scripts\\python.exe', ['-u', 'app.py'], colors.magenta, path.join(rootDir, 'face_server'));
+    const runPython = () => startProcess('face-server'.toUpperCase(), pythonBin, ['-u', 'app.py'], colors.magenta, path.join(rootDir, 'face_server'));
     const runExpo = () => {
       let dots = 0;
       process.stdout.write(`\n${colors.yellow}Please wait, downloading and initializing build environment `);
