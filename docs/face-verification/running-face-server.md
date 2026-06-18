@@ -43,11 +43,10 @@ Navigate into the server folder:
 cd face_server
 ```
 
-Create a fresh virtual environment using a stable Python version (e.g., Python 3.11):
+Create a fresh virtual environment using a stable Python version:
 ```bash
-py -3.11 -m venv .venv
+python -m venv .venv
 ```
-*(If you only have one Python version installed, `python -m venv .venv` works too).*
 
 ### 2. Activate the Environment
 **Windows (PowerShell):**

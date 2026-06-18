@@ -1,6 +1,6 @@
-Flask==3.0.3
-numpy==1.26.4
-opencv-python==4.9.0.80
-insightface==0.7.3
-onnxruntime==1.17.1
-waitress==3.0.0
+Flask
+numpy
+opencv-python
+insightface
+onnxruntime
+waitress
