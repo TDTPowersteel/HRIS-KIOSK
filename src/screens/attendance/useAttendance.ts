@@ -1328,20 +1328,6 @@ export function useAttendance() {
         const cachedRaw = await AsyncStorage.getItem('kiosk_cached_location');
         if (cachedRaw) {
           locationData = JSON.parse(cachedRaw);
-        } else {
-          // Fallback to live fetch if cache is somehow missing
-          const { status } = await Location.requestForegroundPermissionsAsync();
-          if (status === 'granted') {
-            const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
-            const [addressRes] = await Location.reverseGeocodeAsync({ latitude: loc.coords.latitude, longitude: loc.coords.longitude });
-            locationData = {
-              latitude: loc.coords.latitude,
-              longitude: loc.coords.longitude,
-              radius: loc.coords.accuracy ?? 0,
-              address: addressRes ? `${addressRes.streetNumber ? addressRes.streetNumber + ' ' : ''}${addressRes.street || ''}, ${addressRes.city || ''}, ${addressRes.region || ''}`.trim().replace(/^, |, $/g, '') : 'Unknown'
-            };
-            await AsyncStorage.setItem('kiosk_cached_location', JSON.stringify(locationData));
-          }
         }
       } catch (e) {
         console.log('[Attendance] Could not capture location', e);
