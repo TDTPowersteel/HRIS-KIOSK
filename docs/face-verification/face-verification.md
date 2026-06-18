@@ -8,7 +8,7 @@
 
 1. [Overview](#1-overview)
 2. [Libraries & Technologies](#2-libraries--technologies)
-3. [The AI Model (buffalo_sc)](#3-the-ai-model-buffalo_sc)
+3. [Dual-Model Architecture: Local vs. Server (buffalo_sc & buffalo_l)](#3-dual-model-architecture-local-vs-server-buffalo_sc--buffalo_l)
 4. [End-to-End Verification Pipeline](#4-end-to-end-verification-pipeline)
 5. [Mathematics of Coordinate Mapping & Cropping](#5-mathematics-of-coordinate-mapping--cropping)
 6. [Quality & Stability Gates (Readiness)](#6-quality--stability-gates-readiness)
@@ -80,20 +80,42 @@ The local pipeline is powered by a high-performance stack optimized for React Na
 
 ---
 
-## 3. The AI Model (`buffalo_sc`)
+## 3. Dual-Model Architecture: Local vs. Server (buffalo_sc & buffalo_l)
 
-The local face verification uses the industry-standard **MobileFaceNet** backbone, distributed under the **InsightFace** model zoo.
+The HRIS Kiosk attendance system features a **Hybrid Dual-Model facial recognition engine** that shifts between offline local inference and online server comparison based on network availability:
 
-*   **Filename:** `w600k_mbf.onnx` (~16MB)
-*   **Backbone:** MobileFaceNet optimized for mobile devices
-*   **Loss Function:** Trained using ArcFace loss for high discriminative capability
+1. **Server Mode (Primary / Online):** Uses the higher-capacity `buffalo_l` model on a Flask AI server.
+2. **Local Mode (Fallback / Offline):** Runs the lightweight `buffalo_sc` model directly on the device using ONNX Runtime.
+
+---
+
+### A. The Server-Side Model (`buffalo_l`)
+
+When the kiosk is online, it sends the cropped face image via PHP to a local Python Flask AI server executing the high-accuracy server-side model.
+
+*   **Model Name:** `buffalo_l` (ResNet50 backbone)
+*   **Primary Execution:** Python / PyTorch / ONNX Runtime (on the local server)
+*   **Accuracy:** **99.83%** (higher discriminative power, robust to lighting variation)
+*   **Stored Template Field:** `face_embedding_large` (stored in the database)
+*   **Verification Endpoint:** `/verify_embedding.php` (which forwards to Python AI server port 5001)
+
+---
+
+### B. The Local On-Device Model (`buffalo_sc`)
+
+When network request delays exceed thresholds or during network outages, the local face verification falls back instantly to the **MobileFaceNet** model running directly on the device's CPU.
+
+*   **Model Filename:** `w600k_mbf.onnx` (~16MB)
+*   **Backbone:** MobileFaceNet optimized for low-power mobile processors
+*   **Loss Function:** Trained using ArcFace loss
 *   **LFW Benchmark Accuracy:** **99.70%**
 *   **Input Tensor Dimensions:** `[1, 3, 112, 112]` (Float32 CHW format)
 *   **Normalization Scale:** `(pixel_value - 127.5) / 128.0` (maps pixels to `[-1.0, 1.0]`)
 *   **Output Vector:** `512` Float32 dimensional embedding vector
+*   **Stored Template Field:** `face_embedding` (stored locally in accounts/AsyncStorage cache)
 
 > [!NOTE]
-> The model is packaged in the kiosk binary asset folder (`assets/models/w600k_mbf.onnx`). On initial boot, the app copies the model from the read-only package system into `FileSystem.documentDirectory` to initialize the `InferenceSession` asynchronously.
+> The local `buffalo_sc` model is packaged in the kiosk binary asset folder (`assets/models/w600k_mbf.onnx`). On initial boot, the app copies the model from the read-only package system into `FileSystem.documentDirectory` to initialize the `InferenceSession` asynchronously.
 
 ---
 
