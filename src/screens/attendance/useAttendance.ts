@@ -1290,7 +1290,11 @@ export function useAttendance() {
       let data: any = {};
       try { data = responseText ? JSON.parse(responseText) : {}; }
       catch { throw new Error(`Attendance response invalid. Status: ${res.status}`); }
-      if (!res.ok || !data?.ok) throw new Error(data?.message || `Unable to record attendance (${res.status})`);
+      if (!res.ok || !data?.ok) {
+        const err = new Error(data?.message || `Unable to record attendance (${res.status})`);
+        (err as any).status = res.status;
+        throw err;
+      }
       return data;
     } catch (error) {
       clearTimeout(timeoutId);
@@ -1328,20 +1332,6 @@ export function useAttendance() {
         const cachedRaw = await AsyncStorage.getItem('kiosk_cached_location');
         if (cachedRaw) {
           locationData = JSON.parse(cachedRaw);
-        } else {
-          // Fallback to live fetch if cache is somehow missing
-          const { status } = await Location.requestForegroundPermissionsAsync();
-          if (status === 'granted') {
-            const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
-            const [addressRes] = await Location.reverseGeocodeAsync({ latitude: loc.coords.latitude, longitude: loc.coords.longitude });
-            locationData = {
-              latitude: loc.coords.latitude,
-              longitude: loc.coords.longitude,
-              radius: loc.coords.accuracy ?? 0,
-              address: addressRes ? `${addressRes.streetNumber ? addressRes.streetNumber + ' ' : ''}${addressRes.street || ''}, ${addressRes.city || ''}, ${addressRes.region || ''}`.trim().replace(/^, |, $/g, '') : 'Unknown'
-            };
-            await AsyncStorage.setItem('kiosk_cached_location', JSON.stringify(locationData));
-          }
         }
       } catch (e) {
         console.log('[Attendance] Could not capture location', e);
@@ -1390,8 +1380,22 @@ export function useAttendance() {
               'Attendance processed.', 2000);
           }, 500);
           return;
-        } catch (onlineError) {
-          console.log('[Attendance] Online record failed, falling back to offline queue:', onlineError);
+        } catch (onlineError: any) {
+          console.log('[Attendance] Online record failed:', onlineError);
+          
+          // If it's a 4xx error (like "No clock in entry found"), it's a business logic rejection, NOT a network issue!
+          if (onlineError.status >= 400 && onlineError.status < 500) {
+            setScanStage('idle');
+            showModal('error', 'Attendance Failed', onlineError.message || 'Rejected by server.', 5000);
+            
+            setTimeout(async () => {
+              await resetAttendanceFlow();
+              workletPhase.value = 0;
+            }, 5000);
+            return;
+          }
+          
+          console.log('[Attendance] Falling back to offline queue...');
         }
       }
 

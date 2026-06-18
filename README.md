@@ -10,7 +10,7 @@ Verify that your local machine has the following software installed before proce
 
 - **Node.js**: Version 18.x or newer (recommended LTS).
 - **PHP**: Version 8.0 or newer. Required extensions: `curl`, `gd`, `mysqli`, `openssl`, `json`.
-- **Python**: Version 3.9 or newer (for the Face Recognition Engine).
+- **Python**: Version 3.9 to 3.12 (for the Face Recognition Engine. *Note: Avoid 3.13+ as AI libraries often lack pre-compiled binaries for bleeding-edge Python versions*).
 - **MySQL / MariaDB**: Version 5.7 or newer (stores local intern database `tdt_ims`).
 - **Supabase Account**: A configured cloud Supabase instance for regular employee records.
 
@@ -214,3 +214,9 @@ To compile and generate the release APK directly on your local machine:
   Ensure the Python Face Server is running on port `5001`. On Windows, verify that the virtual environment is activated before running `python app.py`.
 - **Leftover .zip files bloating disk space**
   Our Python server automatically cleans up `.zip` archives upon model extraction. If downloads fail or get interrupted, manually delete any `.zip` files in `assets/models/` and restart the script to retry.
+
+---
+
+## 7. Known Constraints
+
+- **Orientation**: The kiosk application currently only supports **Landscape Mode**. Please ensure the tablet is physically mounted or locked in landscape orientation, as portrait UI layouts and other orientations are still actively under development.
