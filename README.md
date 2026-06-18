@@ -1,18 +1,18 @@
-# HRIS Attendance Kiosk Deployment Guide
+# TDT PowerSteel Attendance System Kiosk
 
-The HRIS Attendance Kiosk is a hybrid attendance verification system. It features a React Native/Expo frontend running on a tablet or mobile device and a lightweight PHP backend that coordinates attendance storage with both a cloud Supabase database (for employees) and a local MySQL database (for interns).
+The TDT PowerSteel Attendance System Kiosk is a hybrid attendance tracking and verification system. It features a React Native/Expo frontend running on tablet/mobile devices, a lightweight PHP backend for local attendance storage coordination, and a Python Face Recognition server for high-accuracy facial embedding validation.
 
 ---
 
 ## 1. System Requirements & Prerequisites
 
-To deploy and run the system, verify that your environment has the following components:
+Verify that your local machine has the following software installed before proceeding:
 
 - **Node.js**: Version 18.x or newer (recommended LTS).
 - **PHP**: Version 8.0 or newer. Required extensions: `curl`, `gd`, `mysqli`, `openssl`, `json`.
-- **MySQL**: Version 5.7 or newer (used for the local Intern Management System database `tdt_ims`).
-- **Supabase Project**: A configured cloud Supabase instance with an `attendance` table.
-- **Expo CLI & EAS**: For building and distributing the React Native mobile application.
+- **Python**: Version 3.9 or newer (for the Face Recognition Engine).
+- **MySQL / MariaDB**: Version 5.7 or newer (stores local intern database `tdt_ims`).
+- **Supabase Account**: A configured cloud Supabase instance for regular employee records.
 
 ---
 
@@ -20,156 +20,197 @@ To deploy and run the system, verify that your environment has the following com
 
 ```text
 HRIS-KIOSK/
-├── App.tsx                     # Main React Native entry point
-├── app.json                    # Expo configuration file
-├── package.json                # Frontend dependencies and scripts
+├── App.tsx                     # React Native main entry point
+├── app.json                    # Expo config configuration
+├── package.json                # Frontend package definition
 ├── scripts/
-│   └── dev.js                  # Local development orchestration script
-├── src/
-│   ├── config/
-│   │   └── backend.ts          # Frontend API URL configuration
-│   ├── screens/
-│   │   ├── attendance/
-│   │   │   └── useAttendance.ts # Attendance and face scanning state machine
-│   │   └── settings/
-│   │       └── index.tsx       # Kiosk administrator settings screen
-│   └── utils/
-│       ├── offlineAttendance.ts # Local SQLite/AsyncStorage attendance queue
-│       └── useAutoSync.ts      # Background sync mechanism hook
-└── backend-php/                # Kiosk backend PHP API service
-    ├── .env.example            # Environment template file
-    ├── connect.php             # Database connection and helper utilities
-    ├── resolve_qr.php          # Resolves QR codes to user profiles
-    ├── verify_embedding.php    # Submits embedding to verification algorithm
-    └── record_attendance.php   # Performs clock-in/out updates
+│   └── dev.js                  # Local setup & server runner script
+├── src/                        # React Native source files
+├── face_server/                # Python Face Recognition AI Server
+│   ├── app.py                  # AI Server Flask entry point
+│   ├── requirements.txt        # Python library dependencies
+│   └── models/                 # Downloaded models (git-ignored)
+└── backend-php/                # Kiosk PHP API service
+    ├── .env                    # Environment credentials
+    ├── connect.php             # MySQL database connection handler
+    └── record_attendance.php   # Direct DB logging API
 ```
 
 ---
 
-## 3. Local Development Setup
+## 3. Installation & Configuration
 
-We provide an automated setup script to launch the local PHP backend and Expo bundler concurrently.
-
-1. **Install Frontend Dependencies**:
-   Navigate to the kiosk directory and run:
+### 3.1. Frontend App Installation
+1. Navigate to the project root and install Node packages:
    ```bash
    npm install
    ```
-
-2. **Configure Local Environment**:
-   Duplicate the example environment file in the backend folder:
+2. **Prebuild the Native Directories:** Because this project uses custom native modules (like Vision Camera and ONNX Runtime), you must generate the native directories (which will automatically configure the custom ONNX plugins in `app.json`):
    ```bash
-   cp backend-php/.env.example backend-php/.env
+   npx expo prebuild
    ```
-   Open `backend-php/.env` and fill in your Supabase credentials and MySQL database connections (see Section 4).
 
-3. **Start Development Server**:
+### 3.2. PHP Backend Configuration
+1. Navigate to the `backend-php` directory:
    ```bash
-   npm run dev
+   cd backend-php
    ```
-   The `node scripts/dev.js` script will:
-   - Auto-detect your local IPv4 address (prioritizing Wi-Fi/Wireless LAN interfaces).
-   - Write this IP address directly to [backend.ts](file:///C:/Users/Keith/HRIS/HRIS-KIOSK/src/config/backend.ts) so that physical mobile devices on the same Wi-Fi subnet can connect to the host.
-   - Start the local PHP built-in server on port `8000`.
-   - Start the Expo development server.
+2. Duplicate the example environment file:
+   ```bash
+   cp .env.example .env
+   ```
+3. Open `backend-php/.env` in your editor and configure the keys:
+   ```ini
+   # Supabase (Employee records - Can be ignored/left empty in Intern-only Mode)
+   SUPABASE_URL=https://your-project.supabase.co
+   SUPABASE_ANON_KEY=your-anon-key
+   SUPABASE_SERVICE_ROLE_KEY=your-role-key
+
+   # MySQL Database (Intern records - REQUIRED for Intern Mode)
+   IMS_DB_HOST=127.0.0.1
+   IMS_DB_USER=root
+   IMS_DB_PASS=your-mysql-password
+   IMS_DB_NAME=tdt_ims
+
+   # Connections & Local Network IP
+   # (If running manually, replace 'localhost' with your computer's local network IP, e.g. 192.168.1.100)
+   IMS_URL=http://localhost:8001
+   FACE_SERVER_URL=http://localhost:5001
+   EXPO_PUBLIC_BACKEND_IP=localhost
+   ```
+
+> [!NOTE]
+> **Intern Mode Simplified Setup:**
+> Since this kiosk defaults to **Intern Mode** (`KIOSK_MODE = 'intern'` in `connect.php`), you **do not need** to configure or set up a Supabase project. The system bypasses Supabase completely and operates solely using your local MySQL database. You only need to create the local MySQL database `tdt_ims` and configure its credentials above.
+
+> [!TIP]
+> **Automated Configuration:** If you run the system using the orchestrator command `npm run dev` (Recommended), it will automatically detect your local network IP and dynamically update `IMS_URL` and `EXPO_PUBLIC_BACKEND_IP` in your `.env` file.
+
+### 3.3. Python Face Server Configuration
+1. Navigate to the `face_server` directory:
+   ```bash
+   cd face_server
+   ```
+2. Create a virtual environment:
+   ```bash
+   python -m venv .venv
+   ```
+3. Activate the virtual environment:
+   * **Windows (Command Prompt / PowerShell):**
+     ```powershell
+     .venv\Scripts\activate
+     ```
+   * **Linux / Ubuntu / macOS:**
+     ```bash
+     source .venv/bin/activate
+     ```
+4. Install the required Python packages:
+   ```bash
+   pip install -r requirements.txt
+   ```
 
 ---
 
-## 4. Backend Environment Variables (`.env`)
+## 4. Running the Application
 
-Create a `.env` file in the [backend-php](file:///C:/Users/Keith/HRIS/HRIS-KIOSK/backend-php) directory containing these keys:
+You can run the kiosk ecosystem using the automated development menu (`npm run dev` - Recommended) or by launching each server manually.
 
-```ini
-# Supabase Configuration (For Employee Attendance)
-SUPABASE_URL=https://your-supabase-project-id.supabase.co
-SUPABASE_ANON_KEY=your-supabase-anon-key
-SUPABASE_SERVICE_ROLE_KEY=your-supabase-service-role-key
+### 4.1. Automated Development Menu (`npm run dev` - Recommended)
+We provide an orchestrator script that automatically detects your local IP and manages startup options. Run it using:
+```bash
+npm run dev
+```
+You will be presented with a menu:
+1. **Full System**: Launches the PHP Server, Python Face Server, and Expo bundler together.
+2. **Backend Only**: Launches both the PHP Server and the Python Face Server.
+3. **PHP Backend Only**: Launches only the PHP server on port `8000`.
+4. **Python Face Server Only**: Launches only the Face Server on port `5001`.
+5. **Expo Android Only**: Starts the React Native compilation.
+6. **Exit**
 
-# MySQL Database Configuration (For Intern Management System)
-IMS_DB_HOST=127.0.0.1
-IMS_DB_USER=root
-IMS_DB_PASS=your-mysql-password
-IMS_DB_NAME=tdt_ims
+### 4.2. Manual CLI Startup
+To run the components individually without the automated menu, you must **manually configure your local network IP address** so that the mobile device can communicate with the server.
 
-# Intern Management System (IMS) Server URL
-# The kiosk backend proxies intern clock-in/out events to this endpoint
-IMS_URL=http://localhost:8001
+> [!WARNING]
+> **Manual Network IP Configuration Required:**
+> If you run manually, you must find your computer's local network IP (e.g. `192.168.1.100`) and manually update these files before starting:
+> 1. **`backend-php/.env`**: Set `IMS_URL=http://<YOUR_IP>:8001` and `EXPO_PUBLIC_BACKEND_IP=<YOUR_IP>`.
+> 2. **`src/config/backend.ts`**: Set the local dev URL to `http://<YOUR_IP>:8000`.
 
-# Face Recognition AI Server
-# URL to your locally hosted Python AI Server running buffalo_l
-FACE_SERVER_URL=http://localhost:5001
+To run components individually, open separate terminal tabs and execute the following:
+
+#### A. Start the PHP Kiosk Backend (Port 8000)
+```bash
+php -S 0.0.0.0:8000 -t backend-php/public
+```
+
+#### B. Start the Python Face AI Server (Port 5001)
+Navigate to `face_server`, activate the virtual environment, and run:
+* **Windows:**
+  ```powershell
+  cd face_server
+  .venv\Scripts\activate
+  python app.py
+  ```
+* **Linux / Ubuntu:**
+  ```bash
+  cd face_server
+  source .venv/bin/activate
+  python app.py
+  ```
+*(Note: On the first launch, the server will download the buffalo_sc and buffalo_l model files into `assets/models/`. The download `.zip` files will be automatically deleted on success).*
+
+#### C. Start the Expo App
+To compile and run the React Native frontend on your connected Android tablet or emulator:
+```bash
+# Option 1: Compile and run the native Android app (Required for first-time runs)
+npm run android
+
+# Option 2: Start the Expo dev server (If the app is already installed on the device)
+npm run start
 ```
 
 ---
 
-## 5. Production Deployment
+## 5. Production Hosting & Deployment
 
-### 5.1. Deploying the Backend API (Render Example)
+### 5.1. Deploying the PHP Backend
+* Host the `backend-php` folder on Apache/Nginx. Point the document root to the `backend-php/public` folder.
+* Ensure the production database is configured correctly.
 
-You can host the PHP backend folder on Render, Heroku, or any virtual private server running Apache/Nginx.
+### 5.2. Deploying the Python Face AI Server
+* Place the `face_server` folder on your Linux/Ubuntu server.
+* Create a Systemd service file `/etc/systemd/system/face-server.service` to run it automatically in the background:
+  ```ini
+  [Unit]
+  Description=HRIS Face Recognition Engine
+  After=network.target
 
-1. **Set Up a Web Service**:
-   - Create a new web service on your hosting provider.
-   - Set the root directory to the repository or copy the [backend-php](file:///C:/Users/Keith/HRIS/HRIS-KIOSK/backend-php) folder to a dedicated branch.
-   - Set the build command (if applicable) or select the **PHP** environment.
+  [Service]
+  WorkingDirectory=/var/www/hris-kiosk/face_server
+  ExecStart=/var/www/hris-kiosk/face_server/.venv/bin/python app.py
+  Restart=always
 
-2. **Add Environment Variables**:
-   In your hosting service's environment settings, add the keys defined in Section 4. 
-   > [!IMPORTANT]
-   > Ensure `SUPABASE_SERVICE_ROLE_KEY` is set in production to allow bypassing Row Level Security (RLS) when storing attendance entries.
+  [Install]
+  WantedBy=multi-user.target
+  ```
 
-3. **Configure SSL / HTTPS**:
-   - The React Native frontend requires secure `https://` connections to communicate with production endpoints. Ensure your host has SSL enabled (Render provides this automatically).
+### 5.3. Building the Android App Locally (Release APK)
+To compile and generate the release APK directly on your local machine:
 
-4. **Verify Backend Status**:
-   Visit `https://your-backend-domain.com/settings.php` in a browser. It should return a JSON payload with `kiosk_mode` and server status.
-
-### 5.2. Building & Deploying the Expo App
-
-To distribute the kiosk application to tablet devices:
-
-1. **Configure Production URL**:
-   Ensure [backend.ts](file:///C:/Users/Keith/HRIS/HRIS-KIOSK/src/config/backend.ts) points to your production backend domain. Edit the production condition:
-   ```typescript
-   export const BACKEND_URL = __DEV__ 
-     ? 'http://<your-detected-lan-ip>:8000' 
-     : 'https://your-backend-domain.com';
-   ```
-
-2. **Setup EAS Credentials**:
-   Initialize Expo Application Services (EAS):
+1. Run the local release compilation:
    ```bash
-   npm install -g eas-cli
-   eas login
-   eas project:init
+   npx expo run:android
    ```
-
-3. **Generate Android APK/AAB**:
-   Configure `eas.json` to produce an APK for sideloading on your kiosk tablet:
-   ```json
-   {
-     "build": {
-       "preview": {
-         "android": {
-           "buildType": "apk"
-         }
-       },
-       "production": {}
-     }
-   }
-   ```
-   Run the build command:
-   ```bash
-   eas build --platform android --profile preview
-   ```
-   Once finished, download the generated APK from the Expo dashboard and install it on the kiosk device.
+2. Once complete, the production APK will be created at:
+   `android/app/build/outputs/apk/release/app-release.apk`
+3. Copy this APK file to your tablet and install it.
 
 ---
 
 ## 6. Troubleshooting
 
-- **Error: "Python AI Server unreachable"**:
-  This happens when the Python face recognition server (`app.py`) is not running or `FACE_SERVER_URL` is incorrect. Start it via `python intern_face_reg_server/app.py`.
-  
-- **Clock-In Offline Fallback**:
-  If the kiosk is online, it will try to record directly to the server. If it fails due to network instability, it falls back to the local device queue. Administrators can visit the **Offline Sync** screen inside settings to view queue status, trigger manual synchronization, or delete stuck/failed items.
+- **Error: "Python AI Server unreachable"**
+  Ensure the Python Face Server is running on port `5001`. On Windows, verify that the virtual environment is activated before running `python app.py`.
+- **Leftover .zip files bloating disk space**
+  Our Python server automatically cleans up `.zip` archives upon model extraction. If downloads fail or get interrupted, manually delete any `.zip` files in `assets/models/` and restart the script to retry.

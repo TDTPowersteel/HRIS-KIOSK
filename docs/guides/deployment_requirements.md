@@ -11,46 +11,83 @@ The system enables automated, secure attendance tracking. It has two main interf
 
 ---
 
-## 2. Infrastructure Requirements (The 3 Backend Services)
-To run this system, the IT department needs to host three backend services. These can run on a single physical server PC in the IT office, or on a cloud hosting provider.
+## 2. Required Backend Services
+To run this system, the IT department needs to host three backend services. These can run on a single physical server PC (localhost) in the IT office managed by Webmin, or on a cloud hosting provider.
 
-### A. Intern Management System (IMS) Website
-* **Function:** Hosts the website where interns fill out their profile and register their faces. It also hosts the central MySQL database. Once an intern registers their face, the two face embedding datasets go into this IMS database, along with all clock-in/out data.
-* **Requirements:** Must be open to the public internet (secured via HTTPS) so interns can access the link on their personal phones or computers from outside the office.
-* **Command Used:** 
+### A. Intern Management System (IMS) Website (PHP / MySQL)
+* **Function:** Hosts the website where interns fill out their profile and register their faces. It also hosts the central MySQL database containing all intern records, attendance logs, and registered face templates.
+* **Requirements:** 
+  * The web server must be open to the public internet (secured via HTTPS) so interns can access registration links from outside the office.
+  * The MySQL database must allow secure connections from both the IMS website (local) and the HRIS Kiosk Backend (local or remote if hosted on separate machines).
+* **Local Developer Testing Command:**
   ```bash
   php -S 0.0.0.0:8001
   ```
+* **IT Production Deployment (Linux/Webmin):**
+  * **Option A (Via Webmin Apache):** Use the Webmin Apache Webserver module to configure a virtual host pointing to the IMS root directory (`/var/www/ims`), mapping it to port `80`/`443`.
+  * **Option B (Via CLI Background Service):** Run as a persistent background process:
+    ```bash
+    nohup php -S 0.0.0.0:8001 > ims.log 2>&1 &
+    ```
 
-### B. HRIS Attendance Kiosk Backend
+### B. HRIS Attendance Kiosk Backend (PHP)
 * **Function:** Processes clock-ins, calculates working hours, and handles local offline synchronization.
-* **Requirements:** Only needs to be accessible inside the office network (Local Area Network / Wi-Fi) by the kiosk tablets.
-* **Command Used:** 
+* **Requirements:** Only needs to be accessible inside the office local area network (LAN/Wi-Fi) by the kiosk tablets.
+* **Local Developer Testing Command:**
   ```bash
   php -S 0.0.0.0:8000 -t backend-php/public
   ```
+* **IT Production Deployment (Linux/Webmin):**
+  * **Option A (Via Webmin Apache):** Configure a virtual host pointing to the public directory `/var/www/hris-kiosk/backend-php/public`.
+  * **Option B (Via CLI Background Service):** Run as a persistent background process:
+    ```bash
+    nohup php -S 0.0.0.0:8000 -t backend-php/public > kiosk.log 2>&1 &
+    ```
 
-### C. The Face Recognition Engine (AI Server)
-* **Function:** The "brain" that analyzes photos, extracts facial measurements, and verifies matches.
-* **Requirements:** Runs on the same network as the kiosk backend to ensure clock-in scans are verified instantly (in under 1 second).
-* **Command Used:** 
-  ```bash
-  # 1. Navigate to the folder
-  cd face_server
+### C. The Face Recognition Engine (Python AI Server)
+* **Function:** Analyzes photos, extracts facial measurements, and verifies matches.
+* **Requirements:** Runs on the same network as the kiosk backend to ensure fast local face verification scans (under 1 second).
+* **Local Developer Testing Command:**
+  * **Windows:**
+    ```cmd
+    cd intern_face_reg_server
+    .venv\Scripts\activate
+    python app.py
+    ```
+  * **Linux:**
+    ```bash
+    cd intern_face_reg_server
+    source .venv/bin/activate
+    python app.py
+    ```
+* **IT Production Deployment (Linux/Webmin):**
+  * **Option A (Systemd Service):** Create a system service under `/etc/systemd/system/face-server.service` for auto-restarting:
+    ```ini
+    [Unit]
+    Description=HRIS Face Recognition Engine
+    After=network.target
 
-  # 2. Activate the virtual environment
-  # On Windows (Command Prompt):
-  .venv\Scripts\activate
-  # On Linux / Ubuntu:
-  source .venv/bin/activate
+    [Service]
+    Type=simple
+    WorkingDirectory=/var/www/hris-kiosk/intern_face_reg_server
+    ExecStart=/var/www/hris-kiosk/intern_face_reg_server/.venv/bin/python app.py
+    Restart=always
+    RestartSec=5
 
-  # 3. Start the server
-  python app.py
-  ```
-
-### D. The Shared Database
-* **Function:** A central storage vault that holds employee records, logs, and registered face templates.
-* **Requirements:** Secure access allowed by both the Web Registration Portal and the Kiosk Backend.
+    [Install]
+    WantedBy=multi-user.target
+    ```
+    Then enable and start it:
+    ```bash
+    sudo systemctl daemon-reload
+    sudo systemctl enable face-server.service
+    sudo systemctl start face-server.service
+    ```
+  * **Option B (Via CLI Background Service):**
+    ```bash
+    cd /var/www/hris-kiosk/intern_face_reg_server
+    nohup .venv/bin/python app.py > face_server.log 2>&1 &
+    ```
 
 ---
 
