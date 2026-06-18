@@ -34,7 +34,6 @@ if ($userId === 'warmup') {
         curl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type: application/json']);
         curl_setopt($ch, CURLOPT_TIMEOUT, 3);
         curl_exec($ch);
-        curl_close($ch);
     }
     http_response_code(200);
     echo json_encode(['ok' => true, 'message' => 'Warmup completed.']);
@@ -90,7 +89,6 @@ if ($liveImageB64) {
     
     $response = curl_exec($ch);
     $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    curl_close($ch);
 
     $errorMsg = 'Server-side face extraction failed.';
     if ($response) {
