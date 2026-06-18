@@ -1,16 +1,12 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useEffect, useRef, useState } from 'react';
+import NetInfo from '@react-native-community/netinfo';
 import { BACKEND_URL } from '../config/backend';
 import { getOfflineAttendanceQueue, syncOfflineQueue } from './offlineAttendance';
+import { mmkv } from './offlineUsers';
 
 /**
  * Hook to handle automatic background syncing of offline attendance records.
- * 
- * Logic:
- * 1. Checks if the offline queue has items.
- * 2. If items exist, pings the backend every 30 seconds to check connectivity.
- * 3. If 2 consecutive pings succeed (1 minute total), triggers syncOfflineQueue().
- * 4. If any ping fails, resets the counter.
- * 5. Sleeps when the queue is empty to save battery.
  */
 export function useAutoSync() {
   const [isOnline, setIsOnline] = useState(true);
@@ -22,6 +18,15 @@ export function useAutoSync() {
 
     const checkAndSync = async () => {
       try {
+        // Check if auto-sync is enabled
+        const autoSyncRaw = await AsyncStorage.getItem('settings_auto_sync_enabled');
+        const isAutoSyncEnabled = autoSyncRaw !== 'false'; // Default to true
+
+        if (!isAutoSyncEnabled) {
+          timeoutId = setTimeout(checkAndSync, 30000);
+          return;
+        }
+
         const queue = await getOfflineAttendanceQueue();
         
         // If queue is empty, sleep and check again in 30s (minimal cost)
@@ -38,23 +43,32 @@ export function useAutoSync() {
           return;
         }
 
-        // Ping the backend to check actual connectivity
-        const response = await fetch(`${BACKEND_URL}/settings.php`, {
-          headers: { Accept: 'application/json', 'ngrok-skip-browser-warning': 'true' },
-        });
+        const state = await NetInfo.fetch();
+        const online = !!state.isConnected;
 
-        if (response.ok) {
+        if (online) {
           setIsOnline(true);
           stabilityCounterRef.current += 1;
 
-          // If stable for 2 pings (60s), trigger sync
+          try {
+            const response = await fetch(`${BACKEND_URL}/settings.php`, {
+              headers: { Accept: 'application/json', 'ngrok-skip-browser-warning': 'true' },
+            });
+            if (response.ok) {
+              const data = await response.json();
+              if (data && data.kiosk_mode) {
+                mmkv.set('kiosk_mode', data.kiosk_mode);
+              }
+            }
+          } catch (e) {}
+
           if (stabilityCounterRef.current >= 2) {
             isSyncingRef.current = true;
             try {
               await syncOfflineQueue();
             } finally {
               isSyncingRef.current = false;
-              stabilityCounterRef.current = 0; // Reset after attempt
+              stabilityCounterRef.current = 0;
             }
           }
         } else {

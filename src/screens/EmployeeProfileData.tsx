@@ -5,7 +5,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import EmployeeDetailsModal from './settings/components/EmployeeDetailsModal';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { BACKEND_URL } from '../config/backend';
-import { updateOfflineUserCacheFromEmployees, getOfflineUserCache, clearOfflineUserCache } from '../utils/offlineUsers';
+import { updateOfflineUserCacheFromEmployees, getOfflineUserCache, clearOfflineUserCache, mmkv } from '../utils/offlineUsers';
 import { useTheme, Colors } from '../config/theme';
 
 const DIRECTORY_POLL_INTERVAL_MS = 30000; // Increased to 30s to reduce background load
@@ -26,21 +26,33 @@ function withAlpha(hexColor: string, alpha: number) {
   return `rgba(${red}, ${green}, ${blue}, ${alpha})`;
 }
 
+function parseId(val: string | number | null | undefined): string | number | null {
+  if (val === null || val === undefined || val === '') return null;
+  const num = Number(val);
+  return isNaN(num) ? val : num;
+}
+
+function parseIdOrZero(val: string | number | null | undefined): string | number {
+  if (val === null || val === undefined || val === '') return 0;
+  const num = Number(val);
+  return isNaN(num) ? val : num;
+}
+
 type SortOption = 'name_asc' | 'name_desc';
 
 type Account = {
-  log_id: number;
+  log_id: number | string;
   username: string | null;
   qr_code?: string | null;
   profile_picture?: string | null;
 };
 
 type EmployeeRow = {
-  emp_id: number;
+  emp_id: number | string;
   name: string;
   role: string | null;
   dept_id: number | null;
-  log_id: number | null;
+  log_id: number | string | null;
   accounts?: Account | Account[] | null;
   departments?: {
     name?: string | null;
@@ -55,6 +67,40 @@ type Props = {
 let globalEmployeesCache: EmployeeRow[] = [];
 let globalLastSyncCache: number | null = null;
 
+function enrichEmployeesWithCache(data: EmployeeRow[]): EmployeeRow[] {
+  const normalizeAccount = (val: Account | Account[] | null | undefined): Account | null => {
+    if (Array.isArray(val)) return val[0] ?? null;
+    return val ?? null;
+  };
+  return data.map(emp => {
+    if (!emp) return emp;
+    const empId = emp.emp_id;
+    if (empId) {
+      const cachedRaw = mmkv.getString(`user_by_emp_id:${empId}`) || mmkv.getString(`user_by_id:${emp.log_id || normalizeAccount(emp.accounts)?.log_id}`);
+      if (cachedRaw) {
+        try {
+          const cached = JSON.parse(cachedRaw);
+          if (cached.profile_picture?.startsWith('file://')) {
+            const acc = normalizeAccount(emp.accounts);
+            const isArr = Array.isArray(emp.accounts);
+            const enrichedAcc = {
+              log_id: emp.log_id || acc?.log_id || parseIdOrZero(cached.userId),
+              username: acc?.username ?? cached.username ?? null,
+              qr_code: acc?.qr_code ?? cached.qrCode ?? null,
+              profile_picture: cached.profile_picture
+            };
+            return {
+              ...emp,
+              accounts: isArr ? [enrichedAcc] : enrichedAcc
+            };
+          }
+        } catch {}
+      }
+    }
+    return emp;
+  });
+}
+
 export default function EmployeeProfileData({ onBack }: Props) {
   const normalizeAccount = (val: Account | Account[] | null | undefined): Account | null => {
     if (Array.isArray(val)) return val[0] ?? null;
@@ -67,17 +113,32 @@ export default function EmployeeProfileData({ onBack }: Props) {
   const ITEMS_PER_PAGE = 50;
   
   const setUniqueEmployees = useCallback((data: EmployeeRow[], append: boolean = false) => {
-    const seen = new Set<number>();
-    const sourceData = append ? [...employeesRef.current, ...data] : data;
+    const seen = new Set<string>();
+    
+    let sourceData: EmployeeRow[] = [];
+    if (append) {
+      sourceData = [...employeesRef.current, ...data];
+    } else {
+      const existingMap = new Map<string, EmployeeRow>();
+      employeesRef.current.forEach(emp => {
+        if (emp && emp.emp_id != null) existingMap.set(String(emp.emp_id), emp);
+      });
+      data.forEach(emp => {
+        if (emp && emp.emp_id != null) existingMap.set(String(emp.emp_id), emp);
+      });
+      sourceData = Array.from(existingMap.values());
+    }
+
     const unique = sourceData.filter(emp => {
-      if (!emp || !emp.emp_id || seen.has(emp.emp_id)) return false;
-      seen.add(emp.emp_id);
+      if (!emp || emp.emp_id == null) return false;
+      const id = String(emp.emp_id);
+      if (seen.has(id)) return false;
+      seen.add(id);
       return true;
     });
     setEmployees(unique);
     globalEmployeesCache = unique;
     
-    // If we got fewer items than requested, there's no more data
     if (data.length < ITEMS_PER_PAGE) {
       setHasMore(false);
     } else {
@@ -100,16 +161,54 @@ export default function EmployeeProfileData({ onBack }: Props) {
   const [isBootstrapping, setIsBootstrapping] = useState(globalEmployeesCache.length === 0);
   const [lastUpdatedAt, setLastUpdatedAt] = useState<number | null>(globalLastSyncCache);
   const [selectedEmployee, setSelectedEmployee] = useState<EmployeeRow | null>(null);
+  const [kioskMode, setKioskMode] = useState<'employee' | 'intern' | null>(() => {
+    return (mmkv.getString('kiosk_mode') as 'employee' | 'intern') || null;
+  });
+  const localMatchCount = useMemo(() => {
+    if (!searchText) return 0;
+    return employees.filter(emp => {
+      if (!emp) return false;
+      const acc = normalizeAccount(emp.accounts ?? null);
+      return emp.name.toLowerCase().includes(searchText.toLowerCase()) ||
+        (emp.role && emp.role.toLowerCase().includes(searchText.toLowerCase())) ||
+        (acc?.username && acc.username.toLowerCase().includes(searchText.toLowerCase()));
+    }).length;
+  }, [employees, searchText]);
   const { colors, theme } = useTheme();
-  const { width: windowWidth } = useWindowDimensions();
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
+  const shortDimension = Math.min(windowWidth, windowHeight);
+  const isTablet = shortDimension >= 768;
+  const isSmallTablet = shortDimension >= 480 && shortDimension < 768;
+  const isPhone = shortDimension < 480;
+
+  const titleFontSize = isTablet ? 24 : isSmallTablet ? 20 : 18;
+  const subtitleFontSize = isTablet ? 14 : isSmallTablet ? 12 : 10;
+  const refreshButtonTextFontSize = isTablet ? 12 : isSmallTablet ? 11 : 10;
+  const searchInputFontSize = isTablet ? 18 : isSmallTablet ? 16 : 14;
+  const cacheStatusTextFontSize = isTablet ? 12 : isSmallTablet ? 11 : 10;
+  const dropdownValueFontSize = isTablet ? 14 : isSmallTablet ? 12 : 11;
+  const optionTextFontSize = isTablet ? 14 : isSmallTablet ? 12 : 11;
+  const dropdownArrowFontSize = isTablet ? 12 : isSmallTablet ? 11 : 10;
+  const emptyTextFontSize = isTablet ? 18 : isSmallTablet ? 16 : 14;
+  const employeeNameFontSize = isTablet ? 20 : isSmallTablet ? 17 : 14;
+  const employeeRoleFontSize = isTablet ? 14 : isSmallTablet ? 12 : 10;
+  const deptTextFontSize = isTablet ? 12 : isSmallTablet ? 11 : 9;
+  const loadMoreTextFontSize = isTablet ? 14 : isSmallTablet ? 12 : 11;
+  const notSyncedTextFontSize = isTablet ? 20 : isSmallTablet ? 17 : 15;
+  const notSyncedSubtextFontSize = isTablet ? 14 : isSmallTablet ? 12 : 11;
+  const syncNowButtonTextFontSize = isTablet ? 16 : isSmallTablet ? 14 : 12;
+  const avatarPlaceholderTextFontSize = isTablet ? 24 : isSmallTablet ? 20 : 16;
+  const sortToggleTextFontSize = isTablet ? 13 : isSmallTablet ? 12 : 11;
+  const deleteIconFontSize = isTablet ? 18 : isSmallTablet ? 16 : 14;
   const isFetchingRef = useRef(false);
   const mountedRef = useRef(true);
+  const isBackgroundSyncingRef = useRef(false);
 
   // Animation for sliding shimmer
   const shimmerTranslate = useRef(new Animated.Value(-1)).current;
 
   useEffect(() => {
-    if (isRefreshing || (isLoading && employees.length === 0)) {
+    if (isRefreshing || isLoading) {
       Animated.loop(
         Animated.timing(shimmerTranslate, {
           toValue: 1,
@@ -120,7 +219,7 @@ export default function EmployeeProfileData({ onBack }: Props) {
     } else {
       shimmerTranslate.setValue(-1);
     }
-  }, [isRefreshing, isLoading, employees.length, shimmerTranslate]);
+  }, [isRefreshing, isLoading, shimmerTranslate]);
 
   const updateLastSync = useCallback(async (timestamp: number) => {
     setLastUpdatedAt(timestamp);
@@ -131,6 +230,82 @@ export default function EmployeeProfileData({ onBack }: Props) {
   useEffect(() => {
     employeesRef.current = employees;
   }, [employees]);
+
+  const handleProfileCached = useCallback((userId: string, localUri: string) => {
+    if (!mountedRef.current) return;
+    setEmployees(prev => {
+      const updated = prev.map(emp => {
+        const acc = Array.isArray(emp.accounts) ? emp.accounts[0] : emp.accounts;
+        const logId = emp.log_id || acc?.log_id;
+        if ((logId && String(logId) === String(userId)) || (emp.emp_id && String(emp.emp_id) === String(userId))) {
+          const isArr = Array.isArray(emp.accounts);
+          const enrichedAcc: Account = {
+            ...(acc ?? {}),
+            log_id: logId || parseIdOrZero(userId),
+            username: acc?.username ?? null,
+            profile_picture: localUri
+          };
+          return {
+            ...emp,
+            accounts: isArr ? [enrichedAcc] : enrichedAcc
+          };
+        }
+        return emp;
+      });
+      globalEmployeesCache = updated;
+      return updated;
+    });
+  }, []);
+
+  const syncRemainingEmployeesInBackground = useCallback(async () => {
+    if (isBackgroundSyncingRef.current) return;
+    isBackgroundSyncingRef.current = true;
+    try {
+      let page = 1;
+      let keepFetching = true;
+      while (keepFetching && mountedRef.current) {
+        const url = `${BACKEND_URL}/employees.php?page=${page}&limit=${ITEMS_PER_PAGE}`;
+        console.log('[BackgroundSync] Fetching URL:', url);
+        const response = await fetch(url);
+        if (!response.ok) {
+          keepFetching = false;
+          break;
+        }
+        const text = await response.text();
+        const payload = JSON.parse(text);
+        if (payload?.ok && Array.isArray(payload?.data)) {
+          if (payload.kiosk_mode) {
+            mmkv.set('kiosk_mode', payload.kiosk_mode);
+            if (kioskMode !== payload.kiosk_mode) {
+              setKioskMode(payload.kiosk_mode);
+            }
+          }
+          const rows = payload.data as EmployeeRow[];
+          if (rows.length === 0) {
+            keepFetching = false;
+            break;
+          }
+          const enriched = enrichEmployeesWithCache(rows);
+          await updateOfflineUserCacheFromEmployees(rows, false, handleProfileCached);
+          if (!mountedRef.current) break;
+          setUniqueEmployees(enriched, true);
+          setCurrentPage(page);
+          if (rows.length < ITEMS_PER_PAGE) {
+            keepFetching = false;
+          } else {
+            page++;
+          }
+        } else {
+          keepFetching = false;
+        }
+        await new Promise(r => setTimeout(r, 200));
+      }
+    } catch (err) {
+      console.log('[BackgroundSync] error:', err);
+    } finally {
+      isBackgroundSyncingRef.current = false;
+    }
+  }, [setUniqueEmployees, handleProfileCached, kioskMode, setKioskMode]);
 
   const fetchEmployees = useCallback(async (options?: { showLoading?: boolean; manual?: boolean; page?: number }) => {
     if (isFetchingRef.current) return;
@@ -146,21 +321,41 @@ export default function EmployeeProfileData({ onBack }: Props) {
     if (!isInitial) setIsLoadingMore(true);
     if (options?.manual && isInitial) setIsRefreshing(true);
 
+    const url = `${BACKEND_URL}/employees.php?page=${page}&limit=${ITEMS_PER_PAGE}`;
+    console.log('[fetchEmployees] Fetching URL:', url);
     try {
-      const response = await fetch(`${BACKEND_URL}/employees.php?page=${page}&limit=${ITEMS_PER_PAGE}`);
-      const payload = await response.json();
+      const response = await fetch(url);
+      console.log('[fetchEmployees] Response Status:', response.status);
+      const responseText = await response.text();
+      console.log('[fetchEmployees] Raw Response (first 500 chars):', responseText.slice(0, 500));
+
+      let payload: any;
+      try {
+        payload = JSON.parse(responseText);
+      } catch (parseErr) {
+        console.log('[fetchEmployees] JSON Parse Error:', parseErr);
+        throw new Error('Invalid JSON response');
+      }
 
       if (!payload?.ok || !Array.isArray(payload?.data)) {
+        console.log('[fetchEmployees] Payload validation failed:', payload);
         throw new Error('Unable to sync employee directory');
       }
 
-      const rows = payload.data as EmployeeRow[];
-      
-      // Update local cache only on first few pages to save storage, 
-      // or update it fully but with compressed thumbnails.
-      if (isInitial) {
-        await updateOfflineUserCacheFromEmployees(rows);
+      if (payload.kiosk_mode) {
+        mmkv.set('kiosk_mode', payload.kiosk_mode);
+        if (kioskMode !== payload.kiosk_mode) {
+          setKioskMode(payload.kiosk_mode);
+        }
       }
+
+      let rows = payload.data as EmployeeRow[];
+      
+      if (isInitial) {
+        await updateOfflineUserCacheFromEmployees(rows, false, handleProfileCached);
+      }
+
+      rows = enrichEmployeesWithCache(rows);
       
       const now = Date.now();
       if (!mountedRef.current) return;
@@ -169,11 +364,14 @@ export default function EmployeeProfileData({ onBack }: Props) {
       if (isInitial) {
         await updateLastSync(now);
         setCurrentPage(0);
+        setTimeout(() => {
+          syncRemainingEmployeesInBackground();
+        }, 500);
       } else {
         setCurrentPage(page);
       }
     } catch (error) {
-      console.log('fetchEmployees error:', error);
+      console.log('[fetchEmployees] fetchEmployees error:', error);
     } finally {
       isFetchingRef.current = false;
       if (mountedRef.current) {
@@ -182,7 +380,7 @@ export default function EmployeeProfileData({ onBack }: Props) {
         setIsLoadingMore(false);
       }
     }
-  }, [setUniqueEmployees, updateLastSync]);
+  }, [setUniqueEmployees, updateLastSync, handleProfileCached, syncRemainingEmployeesInBackground]);
 
   const departments = useMemo(() => {
     const depts = new Set<string>();
@@ -205,11 +403,64 @@ export default function EmployeeProfileData({ onBack }: Props) {
   }, [employees, selectedDept]);
 
   useEffect(() => {
+    if (!searchText) {
+      setHasMore(true);
+    }
+  }, [searchText]);
+
+  useEffect(() => {
     const timer = setTimeout(() => {
       setDebouncedSearchText(searchText);
     }, 300);
     return () => clearTimeout(timer);
   }, [searchText]);
+
+  useEffect(() => {
+    if (!debouncedSearchText) return;
+    
+    let isCurrent = true;
+    const fetchSearchResults = async () => {
+      setIsLoading(true);
+      const url = `${BACKEND_URL}/employees.php?search=${encodeURIComponent(debouncedSearchText)}&limit=100`;
+      console.log('[fetchSearchResults] Fetching URL:', url);
+      try {
+        const response = await fetch(url);
+        console.log('[fetchSearchResults] Response Status:', response.status);
+        const responseText = await response.text();
+        console.log('[fetchSearchResults] Raw Response (first 500 chars):', responseText.slice(0, 500));
+
+        let payload: any;
+        try {
+          payload = JSON.parse(responseText);
+        } catch (parseErr) {
+          console.log('[fetchSearchResults] JSON Parse Error:', parseErr);
+          throw new Error('Invalid JSON response');
+        }
+
+        if (payload?.ok && Array.isArray(payload?.data) && isCurrent) {
+          if (payload.kiosk_mode) {
+            mmkv.set('kiosk_mode', payload.kiosk_mode);
+            if (kioskMode !== payload.kiosk_mode) {
+              setKioskMode(payload.kiosk_mode);
+            }
+          }
+          let rows = payload.data as EmployeeRow[];
+          rows = enrichEmployeesWithCache(rows);
+          setUniqueEmployees(rows, false);
+        }
+      } catch (err) {
+        console.log('[fetchSearchResults] Search fetch error:', err);
+      } finally {
+        if (isCurrent) {
+          setIsLoading(false);
+        }
+      }
+    };
+    fetchSearchResults();
+    return () => {
+      isCurrent = false;
+    };
+  }, [debouncedSearchText, setUniqueEmployees]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -230,13 +481,13 @@ export default function EmployeeProfileData({ onBack }: Props) {
           const mapped: EmployeeRow[] = cached
             .filter(u => u !== null && typeof u === 'object')
             .map(u => ({
-              emp_id: parseInt(u.empId) || 0,
+              emp_id: parseIdOrZero(u.empId),
               name: u.name || '',
               role: u.role || null,
               dept_id: null,
-              log_id: parseInt(u.userId) || null,
+              log_id: parseId(u.userId),
               accounts: {
-                log_id: parseInt(u.userId) || 0,
+                log_id: parseIdOrZero(u.userId),
                 username: u.username,
                 qr_code: u.qrCode,
                 profile_picture: u.profile_picture
@@ -282,10 +533,11 @@ export default function EmployeeProfileData({ onBack }: Props) {
   }, [fetchEmployees, currentPage, isLoadingMore, hasMore]);
 
   const sortedAndFilteredEmployees = useMemo(() => {
-    console.log('Filtering. Total loaded employees:', employees.length);
     let result = employees.filter(emp => {
+      const acc = normalizeAccount(emp.accounts ?? null);
       const matchesSearch = emp.name.toLowerCase().includes(debouncedSearchText.toLowerCase()) ||
-        (emp.role && emp.role.toLowerCase().includes(debouncedSearchText.toLowerCase()));
+        (emp.role && emp.role.toLowerCase().includes(debouncedSearchText.toLowerCase())) ||
+        (acc?.username && acc.username.toLowerCase().includes(debouncedSearchText.toLowerCase()));
       
       const matchesDept = selectedDept === 'All Departments' || emp.departments?.name === selectedDept;
       const matchesRole = selectedRole === 'All Roles' || emp.role === selectedRole;
@@ -294,12 +546,23 @@ export default function EmployeeProfileData({ onBack }: Props) {
     });
 
     if (sortBy === 'name_asc') {
-      result.sort((a, b) => a.name.localeCompare(b.name));
+      result.sort((a, b) => {
+        const nameA = a.name.toLowerCase();
+        const nameB = b.name.toLowerCase();
+        if (nameA < nameB) return -1;
+        if (nameA > nameB) return 1;
+        return 0;
+      });
     } else if (sortBy === 'name_desc') {
-      result.sort((a, b) => b.name.localeCompare(a.name));
+      result.sort((a, b) => {
+        const nameA = a.name.toLowerCase();
+        const nameB = b.name.toLowerCase();
+        if (nameA > nameB) return -1;
+        if (nameA < nameB) return 1;
+        return 0;
+      });
     }
     
-    console.log('Filtered result count:', result.length);
     return result;
   }, [employees, debouncedSearchText, sortBy, selectedDept, selectedRole]);
 
@@ -329,10 +592,10 @@ export default function EmployeeProfileData({ onBack }: Props) {
           }
         ]}
       >
-        <Text style={[styles.dropdownValue, { color: colors.text }]} numberOfLines={1}>
+        <Text style={[styles.dropdownValue, { color: colors.text, fontSize: dropdownValueFontSize }]} numberOfLines={1}>
           {value}
         </Text>
-        <Text style={{ color: Colors.powerOrange, fontSize: 12 }}>{isOpen ? '▲' : '▼'}</Text>
+        <Text style={{ color: Colors.powerOrange, fontSize: dropdownArrowFontSize }}>{isOpen ? '▲' : '▼'}</Text>
       </Pressable>
       
       {isOpen && (
@@ -350,7 +613,7 @@ export default function EmployeeProfileData({ onBack }: Props) {
                   value === opt && { backgroundColor: theme === 'light' ? '#f3f4f6' : '#322721' }
                 ]}
               >
-                <Text style={[styles.optionText, { color: colors.text }]}>{opt}</Text>
+                <Text style={[styles.optionText, { color: colors.text, fontSize: optionTextFontSize }]}>{opt}</Text>
               </Pressable>
             ))}
           </ScrollView>
@@ -360,7 +623,8 @@ export default function EmployeeProfileData({ onBack }: Props) {
   );
 
   const cardWidth = useMemo(() => {
-    const availableWidth = windowWidth - 64; // 32 horizontal padding on each side
+    const horizontalPadding = 48; // 24 horizontal padding on each side
+    const availableWidth = windowWidth - horizontalPadding;
     const gap = 20;
     let cols = 1;
     if (windowWidth >= 1200) cols = 4;
@@ -370,35 +634,29 @@ export default function EmployeeProfileData({ onBack }: Props) {
     return Math.max(availableWidth - (gap * (cols - 1)), 0) / cols;
   }, [windowWidth]);
 
-  const getShimmerStyle = (width: number = 200) => ({
-    position: 'absolute' as const,
-    top: 0,
-    bottom: 0,
-    width: width,
-    backgroundColor: theme === 'light' ? 'rgba(255, 255, 255, 0.45)' : 'rgba(255, 255, 255, 0.08)',
-    transform: [{
-      translateX: shimmerTranslate.interpolate({
-        inputRange: [-1, 1],
-        outputRange: [-width, width]
-      })
-    }]
-  });
+  const getShimmerStyle = (width: number | string = 200) => {
+    const numericWidth = typeof width === 'number' ? width : 200;
+    return {
+      position: 'absolute' as const,
+      top: 0,
+      bottom: 0,
+      width: width as any,
+      backgroundColor: theme === 'light' ? 'rgba(255, 255, 255, 0.7)' : 'rgba(255, 255, 255, 0.15)',
+      opacity: shimmerTranslate.interpolate({
+        inputRange: [-1, -0.2, 0.2, 1],
+        outputRange: [0, 1, 1, 0]
+      }),
+      transform: [{
+        translateX: shimmerTranslate.interpolate({
+          inputRange: [-1, 1],
+          outputRange: [-numericWidth, numericWidth]
+        })
+      }]
+    };
+  };
 
   const SkeletonCard = () => (
     <View style={[styles.employeeCard, { width: cardWidth, backgroundColor: colors.surface, borderColor: colors.border, overflow: 'hidden' }]}>
-      <Animated.View 
-        style={[
-          styles.shimmerStreak, 
-          { 
-            transform: [{ 
-              translateX: shimmerTranslate.interpolate({
-                inputRange: [-1, 1],
-                outputRange: [-200, 600]
-              }) 
-            }] 
-          }
-        ]} 
-      />
       <View style={[styles.accentStrip, { backgroundColor: colors.border, opacity: 0.2 }]} />
       <View style={styles.cardContent}>
         <View style={styles.cardHeader}>
@@ -441,9 +699,11 @@ export default function EmployeeProfileData({ onBack }: Props) {
           <MaterialCommunityIcons name="chevron-left" size={32} color={colors.text} />
         </Pressable>
         <View style={styles.headerTitleWrap}>
-          <Text style={[styles.title, { color: colors.text }]}>Employee Directory</Text>
-          <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
-            Employee information and records.
+          <Text style={[styles.title, { color: colors.text, fontSize: titleFontSize }]}>
+            {kioskMode === null ? '...' : kioskMode === 'intern' ? 'Intern List' : 'Employee Directory'}
+          </Text>
+          <Text style={[styles.subtitle, { color: colors.textSecondary, fontSize: subtitleFontSize }]}>
+            {kioskMode === null ? '' : kioskMode === 'intern' ? 'Intern information and records.' : 'Employee information and records.'}
           </Text>
         </View>
         <Pressable
@@ -454,7 +714,7 @@ export default function EmployeeProfileData({ onBack }: Props) {
             { backgroundColor: colors.surface, borderColor: colors.border, opacity: isRefreshing ? 0.6 : 1 },
           ]}
         >
-          <Text style={styles.refreshButtonText}>{isRefreshing ? 'SYNCING...' : 'REFRESH'}</Text>
+          <Text style={[styles.refreshButtonText, { fontSize: refreshButtonTextFontSize }]}>{isRefreshing ? 'SYNCING...' : 'REFRESH'}</Text>
         </Pressable>
       </View>
 
@@ -467,8 +727,8 @@ export default function EmployeeProfileData({ onBack }: Props) {
           }
         ]}>
           <TextInput
-            style={[styles.searchInput, { color: colors.text }]}
-            placeholder="Search by name or role..."
+            style={[styles.searchInput, { color: colors.text, fontSize: searchInputFontSize }]}
+            placeholder={kioskMode === 'intern' ? 'Search by intern name...' : 'Search by name or role...'}
             placeholderTextColor={colors.textSecondary}
             value={searchText}
             onChangeText={setSearchText}
@@ -477,7 +737,7 @@ export default function EmployeeProfileData({ onBack }: Props) {
           />
           {searchText.length > 0 && (
             <Pressable onPress={() => setSearchText('')} style={styles.clearButton}>
-              <Text style={{ color: Colors.steelGray, fontSize: 20, fontWeight: '800' }}>✕</Text>
+              <Text style={{ color: Colors.steelGray, fontSize: deleteIconFontSize, fontWeight: '800' }}>✕</Text>
             </Pressable>
           )}
         </View>
@@ -509,12 +769,12 @@ export default function EmployeeProfileData({ onBack }: Props) {
             onPress={() => setSortBy(sortBy === 'name_asc' ? 'name_desc' : 'name_asc')}
             style={[styles.sortToggle, { borderColor: colors.border, backgroundColor: colors.surface }]}
           >
-            <Text style={{ color: colors.textSecondary, fontWeight: '900', fontSize: 13 }}>
+            <Text style={{ color: colors.textSecondary, fontWeight: '900', fontSize: sortToggleTextFontSize }}>
               {sortBy === 'name_asc' ? 'A-Z' : 'Z-A'}
             </Text>
           </Pressable>
         </View>
-        <Text style={[styles.cacheStatusText, { color: colors.textSecondary }]}>
+        <Text style={[styles.cacheStatusText, { color: colors.textSecondary, fontSize: cacheStatusTextFontSize }]}>
           {lastUpdatedAt
             ? `Last Sync: ${new Date(lastUpdatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit'})}`
             : 'Last Sync: Not yet synced'}
@@ -527,10 +787,12 @@ export default function EmployeeProfileData({ onBack }: Props) {
         employee={selectedEmployee} 
       />
 
-      {(isRefreshing || (isLoading && employees.length === 0)) ? (
+      {(isRefreshing || (isLoading && (employees.length === 0 || searchText.trim().length > 0))) ? (
         <ScrollView contentContainerStyle={styles.list} scrollEnabled={false}>
           <View style={styles.gridContainer}>
-            {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map((i) => <SkeletonCard key={i} />)}
+            {Array.from({ length: searchText ? (localMatchCount > 0 ? localMatchCount : 3) : 12 }).map((_, i) => (
+              <SkeletonCard key={i} />
+            ))}
           </View>
         </ScrollView>
       ) : (
@@ -556,20 +818,20 @@ export default function EmployeeProfileData({ onBack }: Props) {
                           />
                         ) : (
                           <View style={[styles.profileImage, { backgroundColor: colors.background, justifyContent: 'center', alignItems: 'center' }]}>
-                            <Text style={{ color: colors.textSecondary, fontWeight: '800', fontSize: 24 }}>{emp.name?.charAt(0) || '?'}</Text>
+                            <Text style={{ color: colors.textSecondary, fontWeight: '800', fontSize: avatarPlaceholderTextFontSize }}>{emp.name?.charAt(0) || '?'}</Text>
                           </View>
                         );
                       })()}
                     </View>
                     <View style={styles.infoBlock}>
-                      <Text style={[styles.employeeName, { color: colors.text }]} numberOfLines={1}>{emp?.name || 'Unknown'}</Text>
-                      <Text style={[styles.employeeRole, { color: Colors.steelGray }]} numberOfLines={1}>{emp?.role ?? 'Unassigned Role'}</Text>
+                      <Text style={[styles.employeeName, { color: colors.text, fontSize: employeeNameFontSize }]} numberOfLines={1}>{emp?.name || 'Unknown'}</Text>
+                      <Text style={[styles.employeeRole, { color: Colors.steelGray, fontSize: employeeRoleFontSize }]} numberOfLines={1}>{emp?.role ?? 'Unassigned Role'}</Text>
                     </View>
                   </View>
                   
                   <View style={styles.cardFooter}>
                     <View style={[styles.deptBadge, { backgroundColor: theme === 'light' ? '#f3f4f6' : '#322721' }]}>
-                      <Text style={[styles.deptText, { color: colors.textSecondary }]}>
+                      <Text style={[styles.deptText, { color: colors.textSecondary, fontSize: deptTextFontSize }]}>
                         {emp.departments?.name ?? 'General'}
                       </Text>
                     </View>
@@ -588,15 +850,40 @@ export default function EmployeeProfileData({ onBack }: Props) {
               {isLoadingMore ? (
                 <ActivityIndicator color={Colors.powerOrange} />
               ) : (
-                <Text style={[styles.loadMoreText, { color: Colors.powerOrange }]}>LOAD MORE EMPLOYEES</Text>
+                <Text style={[styles.loadMoreText, { color: Colors.powerOrange, fontSize: loadMoreTextFontSize }]}>
+                  {kioskMode === 'intern' ? 'LOAD MORE INTERNS' : 'LOAD MORE EMPLOYEES'}
+                </Text>
               )}
             </Pressable>
           )}
 
           {sortedAndFilteredEmployees.length === 0 && !isBootstrapping && !isLoading && (
-            <View style={styles.emptyContainer}>
-              <Text style={[styles.emptyText, { color: colors.textSecondary }]}>No matching employees found.</Text>
-            </View>
+            !lastUpdatedAt ? (
+              <View style={styles.notSyncedContainer}>
+                <MaterialCommunityIcons name="database-sync" size={80} color={colors.textSecondary} style={{ marginBottom: 16 }} />
+                <Text style={[styles.notSyncedText, { color: colors.text, fontSize: notSyncedTextFontSize }]}>Directory Not Synced Yet</Text>
+                <Text style={[styles.notSyncedSubtext, { color: colors.textSecondary, fontSize: notSyncedSubtextFontSize }]}>
+                  {kioskMode === 'intern' ? 'You need to sync to load intern records.' : 'You need to sync to load employee records.'}
+                </Text>
+                <Pressable
+                  onPress={handleManualRefresh}
+                  style={({ pressed }) => [
+                    styles.syncNowButton,
+                    {
+                      backgroundColor: colors.accent,
+                      opacity: pressed ? 0.85 : 1,
+                    }
+                  ]}
+                >
+                  <Text style={[styles.syncNowButtonText, { fontSize: syncNowButtonTextFontSize }]}>SYNC NOW</Text>
+                </Pressable>
+              </View>
+            ) : (
+              <View style={styles.emptyContainer}>
+                <MaterialCommunityIcons name="account-search-outline" size={80} color={colors.textSecondary} style={{ marginBottom: 16 }} />
+                <Text style={[styles.emptyText, { color: colors.textSecondary, fontSize: emptyTextFontSize }]}>No result found in searching</Text>
+              </View>
+            )
           )}
         </ScrollView>
       )}
@@ -746,15 +1033,6 @@ const styles = StyleSheet.create({
   skeletonLine: {
     borderRadius: 4,
   },
-  shimmerStreak: {
-    position: 'absolute',
-    top: 0,
-    bottom: 0,
-    width: '100%',
-    backgroundColor: 'rgba(61, 61, 61, 0.15)',
-    zIndex: 10,
-    transform: [{ skewX: '-25deg' }],
-  },
   list: {
     paddingHorizontal: 24,
     paddingBottom: 40,
@@ -852,5 +1130,40 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '800',
     letterSpacing: 1,
+  },
+  notSyncedContainer: {
+    flex: 1,
+    paddingTop: 100,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 24,
+  },
+  notSyncedText: {
+    fontSize: 20,
+    fontWeight: '800',
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  notSyncedSubtext: {
+    fontSize: 14,
+    fontWeight: '600',
+    marginBottom: 24,
+    textAlign: 'center',
+  },
+  syncNowButton: {
+    paddingHorizontal: 32,
+    paddingVertical: 16,
+    borderRadius: 14,
+    shadowColor: Colors.powerOrange,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 10,
+    elevation: 6,
+  },
+  syncNowButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '900',
+    letterSpacing: 0.5,
   },
 });

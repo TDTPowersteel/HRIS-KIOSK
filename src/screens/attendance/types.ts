@@ -13,13 +13,14 @@ export type ResolvedUser = {
   name?: string | null;
   profile_picture?: string | null;
   face?: string | null;
-  face_embedding?: string | number[] | null;
+  face_embedding?: string | number[] | number[][] | null;
   role?: string | null;
   department?: string | null;
   open_session?: {
     timein: string;
     date: string;
   } | null;
+  isIntern?: boolean;
 };
 
 export type StoredAttendanceSession = {
@@ -30,7 +31,7 @@ export type StoredAttendanceSession = {
   clockInDate: string;
 };
 
-export type ModalType = 'success' | 'error' | 'info' | 'warning';
+export type ModalType = 'success' | 'error' | 'info' | 'warning' | 'qr_error' | 'camera_error' | 'face_error';
 
 export type FaceScanStage =
   | 'idle'

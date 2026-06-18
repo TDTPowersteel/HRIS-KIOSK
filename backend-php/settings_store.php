@@ -1,7 +1,7 @@
 <?php
 
 const SETTINGS_STORE_DIR = __DIR__ . '/storage';
-const SETTINGS_STORE_FILE = SETTINGS_STORE_DIR . '/app_settings.json';
+define('SETTINGS_STORE_FILE', SETTINGS_STORE_DIR . '/' . (defined('KIOSK_MODE') && KIOSK_MODE === 'intern' ? 'app_settings_intern.json' : 'app_settings.json'));
 
 function settings_default_values(): array
 {

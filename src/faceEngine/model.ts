@@ -1,7 +1,7 @@
 import { InferenceSession, Tensor } from 'onnxruntime-react-native';
 import { Platform } from 'react-native';
 import { Asset } from 'expo-asset';
-import * as FileSystem from 'expo-file-system/legacy';
+import { File, Paths } from 'expo-file-system';
 
 let session: InferenceSession | null = null;
 
@@ -15,16 +15,37 @@ export async function loadFaceModel(): Promise<void> {
     throw new Error('Failed to resolve local URI for model asset.');
   }
 
-  const destPath = `${FileSystem.documentDirectory}w600k_mbf.onnx`;
-  const fileInfo = await FileSystem.getInfoAsync(destPath);
-  if (!fileInfo.exists) {
-    await FileSystem.copyAsync({ from: asset.localUri, to: destPath });
+  const file = new File(Paths.document, 'w600k_mbf.onnx');
+  if (!file.exists) {
+    const sourceFile = new File(asset.localUri);
+    sourceFile.copy(file);
   }
 
-  const cleanPath = destPath.replace('file://', '');
-  session = await InferenceSession.create(cleanPath);
+  const cleanPath = file.uri.replace('file://', '');
+  session = await InferenceSession.create(cleanPath, {
+    executionProviders: Platform.OS === 'ios'
+      ? ['coreml', 'xnnpack', 'cpu']
+      : ['xnnpack', 'cpu'],
+    graphOptimizationLevel: 'all',
+    enableCpuMemArena: true,
+    enableMemPattern: true,
+    intraOpNumThreads: Platform.OS === 'android' ? 4 : 0,
+  });
 
-  console.log('[FaceEngine] buffalo_sc ONNX model loaded');
+  try {
+    const dummyPixels = new Float32Array(3 * 112 * 112);
+    const inputTensor = new Tensor('float32', dummyPixels, [1, 3, 112, 112]);
+    const feeds: any = {};
+    session.inputNames.forEach((name: string) => {
+      feeds[name] = inputTensor;
+    });
+    await session.run(feeds);
+    console.log('[FaceEngine] Model warmed up successfully.');
+  } catch (e) {
+    console.warn('[FaceEngine] Model warmup failed:', e);
+  }
+
+  console.log(`[FaceEngine] buffalo_sc ONNX model loaded (${Platform.OS === 'ios' ? 'CoreML→' : ''}XNNPACK→CPU)`);
 }
 
 export function isModelLoaded(): boolean {

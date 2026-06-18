@@ -1,24 +1,55 @@
 import { StatusBar } from 'expo-status-bar';
 import * as ScreenOrientation from 'expo-screen-orientation';
 import { useEffect, useMemo, useState, useCallback } from 'react';
-import { Image, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import { Image, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import ShowQRScan from './src/screens/ShowQRScan';
-import EmployeeProfileData from './src/screens/EmployeeProfileData';
+// import EmployeeProfileData from './src/screens/EmployeeProfileData'; // DISABLED FOR PERFORMANCE
 import Settings from './src/screens/settings';
 import OfflineSync from './src/screens/OfflineSync';
 import * as Location from 'expo-location';
 import { ThemeContext, Theme, getStoredTheme, saveTheme, ThemeType, Colors } from './src/config/theme';
 import { useAutoSync } from './src/utils/useAutoSync';
+import { mmkv, refreshOfflineUserCache } from './src/utils/offlineUsers';
+import { BACKEND_URL } from './src/config/backend';
 
 export default function App() {
-  const { width: windowWidth } = useWindowDimensions();
-  const isTablet = windowWidth > 600;
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
+  const isTablet = windowWidth > 600 && windowHeight > 550;
+
+  const isSmallScreen = windowWidth < 380 || windowHeight < 550;
+  const isShortScreen = windowHeight < 550;
+
+  const cardPaddingHorizontal = isTablet ? 56 : (isSmallScreen ? 24 : 32);
+  const cardPaddingVertical = isTablet ? 72 : (isShortScreen ? 25 : (isSmallScreen ? 32 : 48));
+  const brandBlockMargin = isTablet ? 56 : (isShortScreen ? 20 : (isSmallScreen ? 24 : 32));
+  
+  const maxAvailableLogoWidth = windowWidth - (cardPaddingHorizontal * 2) - (isTablet ? 96 : 48);
+  const targetLogoWidth = isTablet ? 420 : (isSmallScreen ? 220 : 280);
+  const logoWidth = Math.min(targetLogoWidth, maxAvailableLogoWidth);
+  const logoHeight = logoWidth * (isTablet ? 130 / 420 : 85 / 280);
+  
+  const logoMarginBottom = isTablet ? 8 : (isShortScreen ? 4 : 8);
+  const brandSubcopyFontSize = isTablet ? 15 : (isSmallScreen ? 11 : 12);
+  
+  const buttonGap = isTablet ? 20 : (isShortScreen ? 12 : (isSmallScreen ? 12 : 16));
+  const scannerBtnHeight = isTablet ? 96 : (isShortScreen ? 56 : (isSmallScreen ? 60 : 72));
+  const directoryBtnHeight = isTablet ? 80 : (isShortScreen ? 48 : (isSmallScreen ? 54 : 64));
+  
+  const scannerBtnFontSize = isTablet ? 20 : (isShortScreen ? 14 : (isSmallScreen ? 14 : 16));
+  const directoryBtnFontSize = isTablet ? 17 : (isShortScreen ? 13 : (isSmallScreen ? 13 : 14));
+  
+  const settingsIconSize = isTablet ? 20 : (isShortScreen ? 14 : (isSmallScreen ? 14 : 16));
+  const settingsTextSize = isTablet ? 14 : (isShortScreen ? 11 : (isSmallScreen ? 11 : 12));
+  const settingsMarginTop = isShortScreen ? 4 : 8;
 
   useAutoSync();
 
   const [screen, setScreen] = useState<'home' | 'qr' | 'profile' | 'settings' | 'offline'>('home');
   const [theme, setThemeState] = useState<ThemeType>('light');
+  const [kioskMode, setKioskMode] = useState<'employee' | 'intern'>(() => {
+    return (mmkv.getString('kiosk_mode') as 'employee' | 'intern') || 'employee';
+  });
 
   const setTheme = useCallback((newTheme: ThemeType) => {
     setThemeState(newTheme);
@@ -31,11 +62,62 @@ export default function App() {
     ScreenOrientation.unlockAsync().catch(() => {});
     getStoredTheme().then(setThemeState);
     Location.requestForegroundPermissionsAsync().catch(() => {});
+    fetch(`${BACKEND_URL}/settings.php`, {
+      headers: {
+        Accept: 'application/json',
+        'ngrok-skip-browser-warning': 'true',
+      },
+    })
+      .then((res) => res.json())
+      .then((payload) => {
+        if (payload?.ok && payload?.kiosk_mode) {
+          const mode = payload.kiosk_mode as 'employee' | 'intern';
+          mmkv.set('kiosk_mode', mode);
+          setKioskMode(mode);
+        }
+      })
+      .catch((err) => {
+        console.log('Failed to fetch settings:', err);
+      });
   }, []);
+
+  useEffect(() => {
+    const runStartupTasks = async () => {
+      // Delay by 3 seconds to avoid blocking main UI rendering
+      await new Promise(resolve => setTimeout(resolve, 3000));
+      
+      console.log('[Startup] Executing background sync...');
+      refreshOfflineUserCache()
+        .then(users => console.log(`[Startup] Background sync complete. Mapped ${users?.length || 0} users.`))
+        .catch(err => console.log('[Startup] Background sync failed:', err));
+
+      console.log('[Startup] Triggering server warmup...');
+      fetch(`${BACKEND_URL}/verify_embedding.php`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({
+          log_id: 'warmup',
+          live_image_b64: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII='
+        })
+      })
+        .then(res => res.json())
+        .then(data => console.log('[Startup] Server warmup response:', data))
+        .catch(err => console.log('[Startup] Server warmup request failed:', err));
+    };
+
+    runStartupTasks();
+  }, []);
+
+  useEffect(() => {
+    const mode = (mmkv.getString('kiosk_mode') as 'employee' | 'intern') || 'employee';
+    if (mode !== kioskMode) {
+      setKioskMode(mode);
+    }
+  }, [screen]);
 
   const ScreenComponent = useMemo(() => {
     if (screen === 'qr') return <ShowQRScan onBack={() => setScreen('home')} onOpenOffline={() => setScreen('offline')} />;
-    if (screen === 'profile') return <EmployeeProfileData onBack={() => setScreen('home')} />;
+    // if (screen === 'profile') return <EmployeeProfileData onBack={() => setScreen('home')} />; // DISABLED FOR PERFORMANCE
     if (screen === 'settings') return <Settings onBack={() => setScreen('home')} />;
     if (screen === 'offline') return <OfflineSync onBack={() => setScreen('home')} onOpenScanner={() => setScreen('qr')} />;
     return null;
@@ -68,77 +150,94 @@ export default function App() {
           height: isTablet ? 450 : 320,
         } as any]} />
 
-        <SafeAreaView style={[styles.container, { paddingHorizontal: isTablet ? 48 : 24 }]}>
-          <View style={[styles.homeCard, { 
-            backgroundColor: theme === 'light' ? '#FFFFFF' : '#242423', 
-            paddingHorizontal: isTablet ? 56 : 32,
-            paddingVertical: isTablet ? 72 : 48,
-            shadowColor: '#000',
-            shadowOpacity: 0.12,
-            shadowRadius: 16,
-            shadowOffset: { width: 0, height: 8 },
-            elevation: 12,
-          }]}>
+        <SafeAreaView style={styles.container}>
+          <ScrollView
+            contentContainerStyle={[
+              styles.scrollContainer,
+              { 
+                paddingHorizontal: isTablet ? 48 : (isSmallScreen ? 12 : 24),
+                paddingVertical: isShortScreen ? 0 : 24
+              }
+            ]}
+            bounces={false}
+            showsVerticalScrollIndicator={false}
+          >
+            <View style={[styles.homeCard, { 
+              backgroundColor: theme === 'light' ? '#FFFFFF' : '#242423', 
+              paddingHorizontal: cardPaddingHorizontal,
+              paddingVertical: cardPaddingVertical,
+              maxWidth: isTablet ? 650 : (isShortScreen ? 460 : 540),
+              shadowColor: '#000',
+              shadowOpacity: 0.12,
+              shadowRadius: 16,
+              shadowOffset: { width: 0, height: 8 },
+              elevation: 12,
+            }]}>
 
-            <View style={[styles.brandBlock, { marginBottom: isTablet ? 56 : 32 }]}>
-              <Image 
-                source={require('./assets/tdt-logo.png')} 
-                style={{ width: isTablet ? 420 : 280, height: isTablet ? 130 : 85, marginBottom: 8 }} 
-                resizeMode="contain" 
-              />
-              <Text style={[styles.brandSubcopy, { color: currentTheme.textSecondary, fontSize: isTablet ? 15 : 12, marginTop: 0 }]}>
-                Attendance Monitoring System
-              </Text>
+              <View style={[styles.brandBlock, { marginBottom: brandBlockMargin }]}>
+                <Image 
+                  source={require('./assets/tdt-logo.png')} 
+                  style={{ width: logoWidth, height: logoHeight, marginBottom: logoMarginBottom }} 
+                  resizeMode="contain" 
+                />
+                <Text style={[styles.brandSubcopy, { color: currentTheme.textSecondary, fontSize: brandSubcopyFontSize, marginTop: 0 }]}>
+                  Attendance Monitoring System
+                </Text>
+              </View>
+
+              <View style={[styles.buttonStack, { gap: buttonGap }]}>
+                <Pressable 
+                  style={({ pressed }) => [
+                    styles.largeButton, 
+                    { 
+                      backgroundColor: Colors.powerOrange, 
+                      height: scannerBtnHeight 
+                    },
+                    pressed && { backgroundColor: Colors.deepOrange, transform: [{ scale: 0.985 }] }
+                  ]} 
+                  onPress={() => setScreen('qr')}
+                >
+                  <Text style={[styles.largeButtonText, { fontSize: scannerBtnFontSize }]}>ATTENDANCE SCANNER</Text>
+                </Pressable>
+
+                {/* --- DISABLED FOR PERFORMANCE ---
+                <Pressable 
+                  style={({ pressed }) => [
+                    styles.secondaryButton, 
+                    { 
+                      backgroundColor: theme === 'light' ? '#F5F5F5' : '#2D2D2C', 
+                      borderColor: theme === 'light' ? '#E0E0E0' : 'rgba(255,255,255,0.1)',
+                      height: directoryBtnHeight 
+                    },
+                    pressed && { backgroundColor: theme === 'light' ? '#EEEEEE' : '#353534', transform: [{ scale: 0.985 }] }
+                  ]} 
+                  onPress={() => setScreen('profile')}
+                >
+                  <Text style={[styles.secondaryButtonText, { color: currentTheme.text, fontSize: directoryBtnFontSize }]}>
+                    {kioskMode === 'intern' ? 'INTERN LIST' : 'EMPLOYEE DIRECTORY'}
+                  </Text>
+                </Pressable>
+                -------------------------------- */}
+
+                <Pressable 
+                  style={({ pressed }) => [
+                    styles.minimalButton, 
+                    { 
+                      marginTop: settingsMarginTop,
+                      backgroundColor: pressed ? (theme === 'light' ? 'rgba(0,0,0,0.03)' : 'rgba(255,255,255,0.03)') : 'transparent',
+                      borderRadius: 12,
+                    }
+                  ]} 
+                  onPress={() => setScreen('settings')}
+                >
+                  <View style={styles.settingsRow}>
+                    <Text style={[styles.settingsIcon, { color: Colors.steelGray, fontSize: settingsIconSize }]}>{'\u2699'}</Text>
+                    <Text style={[styles.minimalButtonText, { color: Colors.steelGray, fontSize: settingsTextSize }]}>SETTINGS</Text>
+                  </View>
+                </Pressable>
+              </View>
             </View>
-
-            <View style={[styles.buttonStack, { gap: isTablet ? 20 : 16 }]}>
-              <Pressable 
-                style={({ pressed }) => [
-                  styles.largeButton, 
-                  { 
-                    backgroundColor: Colors.powerOrange, 
-                    height: isTablet ? 96 : 72 
-                  },
-                  pressed && { backgroundColor: Colors.deepOrange, transform: [{ scale: 0.985 }] }
-                ]} 
-                onPress={() => setScreen('qr')}
-              >
-                <Text style={[styles.largeButtonText, { fontSize: isTablet ? 20 : 16 }]}>ATTENDANCE SCANNER</Text>
-              </Pressable>
-
-              <Pressable 
-                style={({ pressed }) => [
-                  styles.secondaryButton, 
-                  { 
-                    backgroundColor: theme === 'light' ? '#F5F5F5' : '#2D2D2C', 
-                    borderColor: theme === 'light' ? '#E0E0E0' : 'rgba(255,255,255,0.1)',
-                    height: isTablet ? 80 : 64 
-                  },
-                  pressed && { backgroundColor: theme === 'light' ? '#EEEEEE' : '#353534', transform: [{ scale: 0.985 }] }
-                ]} 
-                onPress={() => setScreen('profile')}
-              >
-                <Text style={[styles.secondaryButtonText, { color: currentTheme.text, fontSize: isTablet ? 17 : 14 }]}>EMPLOYEE DIRECTORY</Text>
-              </Pressable>
-
-              <Pressable 
-                style={({ pressed }) => [
-                  styles.minimalButton, 
-                  { 
-                    marginTop: 8,
-                    backgroundColor: pressed ? (theme === 'light' ? 'rgba(0,0,0,0.03)' : 'rgba(255,255,255,0.03)') : 'transparent',
-                    borderRadius: 12,
-                  }
-                ]} 
-                onPress={() => setScreen('settings')}
-              >
-                <View style={styles.settingsRow}>
-                  <Text style={[styles.settingsIcon, { color: Colors.steelGray, fontSize: isTablet ? 20 : 16 }]}>{'\u2699'}</Text>
-                  <Text style={[styles.minimalButtonText, { color: Colors.steelGray, fontSize: isTablet ? 14 : 12 }]}>SETTINGS</Text>
-                </View>
-              </Pressable>
-            </View>
-          </View>
+          </ScrollView>
         </SafeAreaView>
 
         <StatusBar style={theme === 'light' ? 'dark' : 'light'} />
@@ -162,7 +261,11 @@ const styles = StyleSheet.create({
   },
   container: {
     flex: 1,
+  },
+  scrollContainer: {
+    flexGrow: 1,
     justifyContent: 'center',
+    alignItems: 'center',
   },
   backgroundGlowTop: {
     position: 'absolute',

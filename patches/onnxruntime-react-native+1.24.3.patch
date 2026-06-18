@@ -1,0 +1,123 @@
+diff --git a/node_modules/onnxruntime-react-native/android/.project b/node_modules/onnxruntime-react-native/android/.project
+new file mode 100644
+index 0000000..27ec91d
+--- /dev/null
++++ b/node_modules/onnxruntime-react-native/android/.project
+@@ -0,0 +1,28 @@
++<?xml version="1.0" encoding="UTF-8"?>
++<projectDescription>
++	<name>onnxruntime-react-native</name>
++	<comment>Project onnxruntime-react-native created by Buildship.</comment>
++	<projects>
++	</projects>
++	<buildSpec>
++		<buildCommand>
++			<name>org.eclipse.buildship.core.gradleprojectbuilder</name>
++			<arguments>
++			</arguments>
++		</buildCommand>
++	</buildSpec>
++	<natures>
++		<nature>org.eclipse.buildship.core.gradleprojectnature</nature>
++	</natures>
++	<filteredResources>
++		<filter>
++			<id>1781147033114</id>
++			<name></name>
++			<type>30</type>
++			<matcher>
++				<id>org.eclipse.core.resources.regexFilterMatcher</id>
++				<arguments>node_modules|\.git|__CREATED_BY_JAVA_LANGUAGE_SERVER__</arguments>
++			</matcher>
++		</filter>
++	</filteredResources>
++</projectDescription>
+diff --git a/node_modules/onnxruntime-react-native/android/build.gradle b/node_modules/onnxruntime-react-native/android/build.gradle
+index 41b4359..a9502de 100644
+--- a/node_modules/onnxruntime-react-native/android/build.gradle
++++ b/node_modules/onnxruntime-react-native/android/build.gradle
+@@ -24,7 +24,8 @@ def getExtOrIntegerDefault(name) {
+ 
+ def reactNativeArchitectures() {
+   def value = project.getProperties().get("reactNativeArchitectures")
+-  return value ? value.split(",") : ["armeabi-v7a", "x86", "x86_64", "arm64-v8a"]
++  def archs = value ? value.split(",") : ["armeabi-v7a", "x86", "x86_64", "arm64-v8a"]
++  return archs.findAll { it != "x86" }
+ }
+ 
+ def resolveBuildType() {
+diff --git a/node_modules/onnxruntime-react-native/android/src/main/java/ai/onnxruntime/reactnative/OnnxruntimeModule.java b/node_modules/onnxruntime-react-native/android/src/main/java/ai/onnxruntime/reactnative/OnnxruntimeModule.java
+index c362e6a..f03e2e5 100644
+--- a/node_modules/onnxruntime-react-native/android/src/main/java/ai/onnxruntime/reactnative/OnnxruntimeModule.java
++++ b/node_modules/onnxruntime-react-native/android/src/main/java/ai/onnxruntime/reactnative/OnnxruntimeModule.java
+@@ -51,7 +51,7 @@ public class OnnxruntimeModule extends ReactContextBaseJavaModule {
+         (CallInvokerHolderImpl) getReactApplicationContext().getCatalystInstance().getJSCallInvokerHolder();
+       nativeInstall(jsContext.get(), jsCallInvokerHolder);
+       return true;
+-    } catch (Exception e) {
++    } catch (Throwable e) {
+       return false;
+     }
+   }
+diff --git a/node_modules/onnxruntime-react-native/dist/commonjs/binding.js b/node_modules/onnxruntime-react-native/dist/commonjs/binding.js
+index b5ca0ca..3e17fde 100644
+--- a/node_modules/onnxruntime-react-native/dist/commonjs/binding.js
++++ b/node_modules/onnxruntime-react-native/dist/commonjs/binding.js
+@@ -13,8 +13,13 @@ if (typeof globalThis.OrtApi === 'undefined') {
+   Module.install();
+ }
+ const OrtApi = exports.OrtApi = globalThis.OrtApi ?? new Proxy({}, {
+-  get: () => {
+-    throw new Error('OrtApi is not initialized. Please make sure Onnxruntime installation is successful.');
++  get: (_target, prop) => {
++    if (prop === 'listSupportedBackends') {
++      return () => [];
++    }
++    return () => {
++      throw new Error('OrtApi is not initialized. Please make sure Onnxruntime installation is successful.');
++    };
+   }
+ });
+ //# sourceMappingURL=binding.js.map
+\ No newline at end of file
+diff --git a/node_modules/onnxruntime-react-native/dist/module/binding.js b/node_modules/onnxruntime-react-native/dist/module/binding.js
+index e1bca3a..25ffd8d 100644
+--- a/node_modules/onnxruntime-react-native/dist/module/binding.js
++++ b/node_modules/onnxruntime-react-native/dist/module/binding.js
+@@ -9,8 +9,13 @@ if (typeof globalThis.OrtApi === 'undefined') {
+   Module.install();
+ }
+ export const OrtApi = globalThis.OrtApi ?? new Proxy({}, {
+-  get: () => {
+-    throw new Error('OrtApi is not initialized. Please make sure Onnxruntime installation is successful.');
++  get: (_target, prop) => {
++    if (prop === 'listSupportedBackends') {
++      return () => [];
++    }
++    return () => {
++      throw new Error('OrtApi is not initialized. Please make sure Onnxruntime installation is successful.');
++    };
+   }
+ });
+ //# sourceMappingURL=binding.js.map
+\ No newline at end of file
+diff --git a/node_modules/onnxruntime-react-native/lib/binding.ts b/node_modules/onnxruntime-react-native/lib/binding.ts
+index f5963a0..0263c34 100644
+--- a/node_modules/onnxruntime-react-native/lib/binding.ts
++++ b/node_modules/onnxruntime-react-native/lib/binding.ts
+@@ -19,8 +19,13 @@ export const OrtApi =
+   new Proxy(
+     {},
+     {
+-      get: () => {
+-        throw new Error('OrtApi is not initialized. Please make sure Onnxruntime installation is successful.');
++      get: (_target, prop) => {
++        if (prop === 'listSupportedBackends') {
++          return () => [];
++        }
++        return () => {
++          throw new Error('OrtApi is not initialized. Please make sure Onnxruntime installation is successful.');
++        };
+       },
+     },
+   );

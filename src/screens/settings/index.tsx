@@ -1,6 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useCallback, useEffect, useState, useRef } from 'react';
-import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, View, Modal, Animated } from 'react-native';
+import { Alert, Pressable, ScrollView, StyleSheet, Text, View, /* Modal, */ Animated, useWindowDimensions } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { BACKEND_URL } from '../../config/backend';
@@ -8,14 +8,14 @@ import { useTheme, Colors } from '../../config/theme';
 
 import { TouchlessModeFeature } from './features/TouchlessModeFeature';
 import { SyncLocationFeature } from './features/SyncLocationFeature';
-import { AdminAccessFeature } from './features/AdminAccessFeature';
-import { OfflineRedundancyFeature } from './features/OfflineRedundancyFeature';
 import { ThemeSelectorFeature } from './features/ThemeSelectorFeature';
 import { LivenessCheckFeature } from './features/LivenessCheckFeature';
-import { FaceRecogEngineFeature, type FaceEngine } from './features/FaceRecogEngineFeature';
-import { SettingRow } from './components/SettingRow';
+import { AutoSyncFeature } from './features/AutoSyncFeature';
+import { ServerVerificationFeature } from './features/ServerVerificationFeature';
+import { mmkv /*, clearOfflineUserCache */ } from '../../utils/offlineUsers';
 
 const TOUCHLESS_SETTING_KEY = 'settings_touchless_enabled';
+const AUTO_SYNC_SETTING_KEY = 'settings_auto_sync_enabled';
 
 type Props = {
   onBack: () => void;
@@ -49,28 +49,16 @@ let settingsHasLoadedOnce = false;
 
 export default function Settings({ onBack }: Props) {
   const { colors, theme } = useTheme();
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
+
   const [isLoading, setIsLoading] = useState(!settingsHasLoadedOnce);
   const [touchlessEnabled, setTouchlessEnabled] = useState(false);
-  const [isOnline, setIsOnline] = useState(true);
-
-  // Shimmer animation for loading skeletons
-  const shimmerTranslate = useRef(new Animated.Value(-1)).current;
-
-  useEffect(() => {
-    if (isLoading) {
-      Animated.loop(
-        Animated.timing(shimmerTranslate, {
-          toValue: 1,
-          duration: 1500,
-          useNativeDriver: true,
-        })
-      ).start();
-    } else {
-      shimmerTranslate.setValue(-1);
-    }
-  }, [isLoading, shimmerTranslate]);
+  const [autoSyncEnabled, setAutoSyncEnabled] = useState(true);
+  const [kioskMode, setKioskMode] = useState<'employee' | 'intern'>(() => {
+    return (mmkv.getString('kiosk_mode') as 'employee' | 'intern') || 'employee';
+  });
   const [livenessEnabled, setLivenessEnabled] = useState(true);
-  const [faceEngine, setFaceEngine] = useState<FaceEngine>('facepp');
+  const [serverVerifyEnabled, setServerVerifyEnabled] = useState(true);
   const [backendSettings, setBackendSettings] = useState<BackendSettings>({
     attendance_location: {
       latitude: 14.6130261,
@@ -78,10 +66,46 @@ export default function Settings({ onBack }: Props) {
     },
     attendance_interval_minutes: 5,
   });
-  const [storageSize, setStorageSize] = useState<string>('0 KB');
+  // const [storageSize, setStorageSize] = useState<string>('0 KB');
   const [logoutTapCount, setLogoutTapCount] = useState(0);
   const [showLogout, setShowLogout] = useState(false);
-  const [showWipeConfirm, setShowWipeConfirm] = useState(false);
+  // const [showWipeConfirm, setShowWipeConfirm] = useState(false);
+
+  // Shimmer animation for loading skeletons
+  const shimmerTranslate = useRef(new Animated.Value(-1)).current;
+
+  const shortDimension = Math.min(windowWidth, windowHeight);
+  const isTablet = shortDimension >= 768;
+  const isSmallTablet = shortDimension >= 480 && shortDimension < 768;
+  const isPhone = shortDimension < 480;
+
+  const headerTitleFontSize = isTablet ? 24 : isSmallTablet ? 20 : 18;
+  const headerSubtitleFontSize = isTablet ? 14 : isSmallTablet ? 12 : 10;
+  const sectionTitleFontSize = isTablet ? 12 : isSmallTablet ? 11 : 10;
+  // const storageLabelFontSize = isTablet ? 11 : isSmallTablet ? 10 : 9;
+  // const storageValueFontSize = isTablet ? 28 : isSmallTablet ? 23 : 18;
+  // const storageSubtextFontSize = isTablet ? 13 : isSmallTablet ? 11 : 10;
+  // const wipeButtonTextFontSize = isTablet ? 12 : isSmallTablet ? 11 : 10;
+  const logoutTitleFontSize = isTablet ? 18 : isSmallTablet ? 15 : 13;
+  const logoutSubtitleFontSize = isTablet ? 13 : isSmallTablet ? 11 : 10;
+  // const modalTitleFontSize = isTablet ? 24 : isSmallTablet ? 20 : 16;
+  // const modalMessageFontSize = isTablet ? 15 : isSmallTablet ? 13 : 11;
+  // const modalPrimaryBtnTextFontSize = isTablet ? 15 : isSmallTablet ? 13 : 11;
+  // const modalSecondaryBtnTextFontSize = isTablet ? 14 : isSmallTablet ? 12 : 10;
+
+  useEffect(() => {
+    if (isLoading) {
+      Animated.loop(
+        Animated.timing(shimmerTranslate, {
+          toValue: 1,
+          duration: 1200,
+          useNativeDriver: true,
+        })
+      ).start();
+    } else {
+      shimmerTranslate.setValue(-1);
+    }
+  }, [isLoading, shimmerTranslate]);
 
   const handleHeaderTap = useCallback(() => {
     const newCount = logoutTapCount + 1;
@@ -93,6 +117,7 @@ export default function Settings({ onBack }: Props) {
     }
   }, [logoutTapCount]);
 
+  /*
   const calculateStorageSize = useCallback(async () => {
     try {
       const keys = await AsyncStorage.getAllKeys();
@@ -111,11 +136,17 @@ export default function Settings({ onBack }: Props) {
       console.log('Failed to calculate storage size', e);
     }
   }, []);
+  */
 
   const loadSettings = useCallback(async () => {
     try {
       const [settingsEntries, response] = await Promise.all([
-        AsyncStorage.multiGet([TOUCHLESS_SETTING_KEY, 'settings_liveness_enabled', 'settings_face_engine']),
+        AsyncStorage.multiGet([
+          TOUCHLESS_SETTING_KEY, 
+          'settings_liveness_enabled', 
+          AUTO_SYNC_SETTING_KEY,
+          'settings_server_verification_enabled'
+        ]),
         fetch(`${BACKEND_URL}/settings.php`, {
           headers: {
             Accept: 'application/json',
@@ -127,38 +158,41 @@ export default function Settings({ onBack }: Props) {
       const localSettings = Object.fromEntries(settingsEntries);
       setTouchlessEnabled(localSettings[TOUCHLESS_SETTING_KEY] === 'true');
       setLivenessEnabled(localSettings['settings_liveness_enabled'] !== 'false');
-      setFaceEngine((localSettings['settings_face_engine'] as FaceEngine) || 'facepp');
+      setAutoSyncEnabled(localSettings[AUTO_SYNC_SETTING_KEY] !== 'false');
+      setServerVerifyEnabled(localSettings['settings_server_verification_enabled'] !== 'false');
 
-      calculateStorageSize();
+      // calculateStorageSize();
 
       const payload = await response.json();
       if (payload?.ok) {
-        setIsOnline(true);
         setBackendSettings((prev) => ({
           ...prev,
           ...payload.settings,
         }));
-      } else {
-        setIsOnline(false);
+        if (payload.kiosk_mode) {
+          mmkv.set('kiosk_mode', payload.kiosk_mode);
+          setKioskMode(payload.kiosk_mode);
+        }
       }
     } catch (error: any) {
       console.log('Settings load error', error);
-      setIsOnline(false);
     } finally {
       setIsLoading(false);
       settingsHasLoadedOnce = true;
     }
-  }, [calculateStorageSize]);
+  }, [/* calculateStorageSize */]);
 
   useEffect(() => {
     loadSettings();
   }, [loadSettings]);
 
+  /*
   const confirmWipe = async () => {
     setShowWipeConfirm(false);
     setIsLoading(true);
     try {
       await AsyncStorage.clear();
+      await clearOfflineUserCache();
       await calculateStorageSize();
       Alert.alert('Success', 'Device memory has been cleared.');
     } catch (e) {
@@ -171,6 +205,7 @@ export default function Settings({ onBack }: Props) {
   const handleWipeCache = useCallback(() => {
     setShowWipeConfirm(true);
   }, []);
+  */
 
   const handleTouchlessChange = useCallback(async (value: boolean) => {
     setTouchlessEnabled(value);
@@ -190,12 +225,21 @@ export default function Settings({ onBack }: Props) {
     }
   }, []);
 
-  const handleFaceEngineChange = useCallback(async (value: FaceEngine) => {
-    setFaceEngine(value);
+  const handleAutoSyncChange = useCallback(async (value: boolean) => {
+    setAutoSyncEnabled(value);
     try {
-      await AsyncStorage.setItem('settings_face_engine', value);
+      await AsyncStorage.setItem(AUTO_SYNC_SETTING_KEY, value ? 'true' : 'false');
     } catch {
-      setFaceEngine(value === 'facepp' ? 'camera_vision' : 'facepp');
+      setAutoSyncEnabled(!value);
+    }
+  }, []);
+
+  const handleServerVerifyChange = useCallback(async (value: boolean) => {
+    setServerVerifyEnabled(value);
+    try {
+      await AsyncStorage.setItem('settings_server_verification_enabled', value ? 'true' : 'false');
+    } catch {
+      setServerVerifyEnabled(!value);
     }
   }, []);
 
@@ -238,38 +282,32 @@ export default function Settings({ onBack }: Props) {
   }, [onBack]);
 
   if (isLoading) {
-    const getShimmerStyle = (width: number = 200) => ({
-      position: 'absolute' as const,
-      top: 0,
-      bottom: 0,
-      width: width,
-      backgroundColor: theme === 'light' ? 'rgba(255, 255, 255, 0.45)' : 'rgba(255, 255, 255, 0.08)',
-      transform: [{
-        translateX: shimmerTranslate.interpolate({
-          inputRange: [-1, 1],
-          outputRange: [-width, width]
-        })
-      }]
-    });
+    const getShimmerStyle = (width: number | string = 200) => {
+      const numericWidth = typeof width === 'number' ? width : 200;
+      return {
+        position: 'absolute' as const,
+        top: 0,
+        bottom: 0,
+        width: width as any,
+        backgroundColor: theme === 'light' ? 'rgba(255, 255, 255, 0.7)' : 'rgba(255, 255, 255, 0.15)',
+        opacity: shimmerTranslate.interpolate({
+          inputRange: [-1, -0.2, 0.2, 1],
+          outputRange: [0, 1, 1, 0]
+        }),
+        transform: [{
+          translateX: shimmerTranslate.interpolate({
+            inputRange: [-1, 1],
+            outputRange: [-numericWidth, numericWidth]
+          })
+        }]
+      };
+    };
 
     const SettingRowSkeleton = () => (
       <View style={[
         styles.rowSkeleton, 
         { backgroundColor: colors.surface, borderColor: colors.border, overflow: 'hidden', position: 'relative' }
       ]}>
-        <Animated.View 
-          style={[
-            styles.shimmerStreak, 
-            { 
-              transform: [{ 
-                translateX: shimmerTranslate.interpolate({
-                  inputRange: [-1, 1],
-                  outputRange: [-200, 600]
-                }) 
-              }] 
-            }
-          ]} 
-        />
         <View style={styles.rowTextBlock}>
           <View style={{ width: '45%', height: 22, borderRadius: 6, marginBottom: 8, backgroundColor: theme === 'light' ? '#e5e7eb' : '#424242', overflow: 'hidden', position: 'relative' }}>
             <Animated.View style={getShimmerStyle(150)} />
@@ -303,8 +341,8 @@ export default function Settings({ onBack }: Props) {
             <MaterialCommunityIcons name="chevron-left" size={32} color={colors.text} />
           </Pressable>
           <View style={styles.headerTitleWrap}>
-            <Text style={[styles.headerTitle, { color: colors.text }]}>Settings</Text>
-            <Text style={[styles.headerSubtitle, { color: colors.textSecondary }]}>
+            <Text style={[styles.headerTitle, { color: colors.text, fontSize: headerTitleFontSize }]}>Settings</Text>
+            <Text style={[styles.headerSubtitle, { color: colors.textSecondary, fontSize: headerSubtitleFontSize }]}>
               Change how this kiosk works and manages data.
             </Text>
           </View>
@@ -312,7 +350,6 @@ export default function Settings({ onBack }: Props) {
 
         <ScrollView contentContainerStyle={styles.listContent} showsVerticalScrollIndicator={false}>
           <View style={styles.sectionContainer}>
-            {/* Device Options Title Skeleton */}
             <View style={styles.sectionHeader}>
               <View style={{ width: 140, height: 14, borderRadius: 4, backgroundColor: theme === 'light' ? '#e5e7eb' : '#424242', overflow: 'hidden', position: 'relative' }}>
                 <Animated.View style={getShimmerStyle(100)} />
@@ -320,10 +357,9 @@ export default function Settings({ onBack }: Props) {
             </View>
 
             <View style={styles.featureGrid}>
-              {[1, 2, 3, 4].map((i) => <SettingRowSkeleton key={i} />)}
+              {[1, 2, 3, 4, 5].map((i) => <SettingRowSkeleton key={i} />)}
             </View>
 
-            {/* Visual Style Title Skeleton */}
             <View style={styles.sectionHeader}>
               <View style={{ width: 120, height: 14, borderRadius: 4, backgroundColor: theme === 'light' ? '#e5e7eb' : '#424242', overflow: 'hidden', position: 'relative' }}>
                 <Animated.View style={getShimmerStyle(100)} />
@@ -331,19 +367,6 @@ export default function Settings({ onBack }: Props) {
             </View>
             
             <View style={[styles.themeSelectorSkeleton, { backgroundColor: colors.surface, borderColor: colors.border, overflow: 'hidden', position: 'relative' }]}>
-              <Animated.View 
-                style={[
-                  styles.shimmerStreak, 
-                  { 
-                    transform: [{ 
-                      translateX: shimmerTranslate.interpolate({
-                        inputRange: [-1, 1],
-                        outputRange: [-200, 600]
-                      }) 
-                    }] 
-                  }
-                ]} 
-              />
               <View style={{ width: '30%', height: 16, borderRadius: 4, marginBottom: 16, backgroundColor: theme === 'light' ? '#e5e7eb' : '#424242', overflow: 'hidden', position: 'relative' }}>
                 <Animated.View style={getShimmerStyle(100)} />
               </View>
@@ -356,28 +379,13 @@ export default function Settings({ onBack }: Props) {
               </View>
             </View>
 
-            {/* Device Memory Title Skeleton */}
             <View style={styles.sectionHeader}>
               <View style={{ width: 155, height: 14, borderRadius: 4, backgroundColor: theme === 'light' ? '#e5e7eb' : '#424242', overflow: 'hidden', position: 'relative' }}>
                 <Animated.View style={getShimmerStyle(100)} />
               </View>
             </View>
 
-            {/* Device Storage Card Skeleton */}
             <View style={[styles.storageCard, { backgroundColor: colors.surface, borderColor: colors.border, overflow: 'hidden', position: 'relative' }]}>
-              <Animated.View 
-                style={[
-                  styles.shimmerStreak, 
-                  { 
-                    transform: [{ 
-                      translateX: shimmerTranslate.interpolate({
-                        inputRange: [-1, 1],
-                        outputRange: [-200, 600]
-                      }) 
-                    }] 
-                  }
-                ]} 
-              />
               <View style={styles.storageMainRow}>
                 <View style={styles.storageInfoBlock}>
                   <View style={{ width: 90, height: 12, borderRadius: 3, marginBottom: 6, backgroundColor: theme === 'light' ? '#e5e7eb' : '#424242', overflow: 'hidden', position: 'relative' }}>
@@ -418,8 +426,8 @@ export default function Settings({ onBack }: Props) {
           <MaterialCommunityIcons name="chevron-left" size={32} color={colors.text} />
         </Pressable>
         <View style={styles.headerTitleWrap}>
-          <Text style={[styles.headerTitle, { color: colors.text }]}>Settings</Text>
-          <Text style={[styles.headerSubtitle, { color: colors.textSecondary }]}>
+          <Text style={[styles.headerTitle, { color: colors.text, fontSize: headerTitleFontSize }]}>Settings</Text>
+          <Text style={[styles.headerSubtitle, { color: colors.textSecondary, fontSize: headerSubtitleFontSize }]}>
             Change how this kiosk works and manages data.
           </Text>
         </View>
@@ -428,36 +436,65 @@ export default function Settings({ onBack }: Props) {
       <ScrollView contentContainerStyle={styles.listContent} showsVerticalScrollIndicator={false}>
         <View style={styles.sectionContainer}>
           <View style={styles.sectionHeader}>
-            <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>Device Options</Text>
+            <Text style={[styles.sectionTitle, { color: colors.textSecondary, fontSize: sectionTitleFontSize }]}>Device Options</Text>
           </View>
 
           <View style={styles.featureGrid}>
+            <ServerVerificationFeature enabled={serverVerifyEnabled} onToggle={handleServerVerifyChange} />
             <TouchlessModeFeature enabled={touchlessEnabled} onToggle={handleTouchlessChange} />
             <LivenessCheckFeature enabled={livenessEnabled} onToggle={handleLivenessChange} />
-            <FaceRecogEngineFeature engine={faceEngine} onSelect={handleFaceEngineChange} />
-            <SyncLocationFeature
-              attendance_location={backendSettings.attendance_location}
-              saveBackendSettings={saveBackendSettings}
-            />
-            <AdminAccessFeature saveBackendSettings={saveBackendSettings} />
-            <OfflineRedundancyFeature isOnline={isOnline} />
+          
+            <AutoSyncFeature enabled={autoSyncEnabled} onToggle={handleAutoSyncChange} />
+
+            {kioskMode !== 'intern' && (
+              <SyncLocationFeature
+                attendance_location={backendSettings.attendance_location}
+                saveBackendSettings={saveBackendSettings}
+              />
+            )}
           </View>
 
           <View style={styles.sectionHeader}>
-            <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>Visual Style</Text>
+            <Text style={[styles.sectionTitle, { color: colors.textSecondary, fontSize: sectionTitleFontSize }]}>Visual Style</Text>
           </View>
           <ThemeSelectorFeature />
-          
+
           <View style={styles.sectionHeader}>
-            <Pressable onPress={handleHeaderTap}>
-              <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>Device Storage</Text>
-            </Pressable>
+            <Text style={[styles.sectionTitle, { color: colors.textSecondary, fontSize: sectionTitleFontSize }]}>Active Connection</Text>
           </View>
+          <View style={[styles.storageCard, { backgroundColor: theme === 'light' ? '#f3f4f6' : colors.background, borderColor: colors.border, padding: 16 }]}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+              <MaterialCommunityIcons 
+                name={kioskMode === 'intern' ? 'database' : 'cloud'} 
+                size={24} 
+                color={Colors.powerOrange} 
+              />
+              <View>
+                <Text style={{ color: colors.text, fontWeight: '800', fontSize: 13 }}>
+                  {kioskMode === 'intern' ? 'MySQL' : 'Supabase'}
+                </Text>
+                <Text style={{ color: colors.textSecondary, fontSize: 11, marginTop: 2 }}>
+                  Connected to{' '}
+                  <Text style={{ color: Colors.powerOrange, fontWeight: 'bold' }}>
+                    {kioskMode === 'intern' ? 'Intern Management System' : 'HRIS'}
+                  </Text>
+                </Text>
+              </View>
+            </View>
+          </View>
+          
+          {/* -----------------!!temporarily hide storage info!!----------------- */}
+          {/* <View style={styles.sectionHeader}>
+            <Pressable onPress={handleHeaderTap}>
+              <Text style={[styles.sectionTitle, { color: colors.textSecondary, fontSize: sectionTitleFontSize }]}>Device Storage</Text>
+            </Pressable>
+          </View> */}
+          {/*
           <View style={[styles.storageCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
             <View style={styles.storageMainRow}>
               <View style={styles.storageInfoBlock}>
-                <Text style={[styles.storageLabel, { color: colors.textSecondary }]}>USED MEMORY</Text>
-                <Text style={[styles.storageValue, { color: colors.text }]}>{storageSize}</Text>
+                <Text style={[styles.storageLabel, { color: colors.textSecondary, fontSize: storageLabelFontSize }]}>USED MEMORY</Text>
+                <Text style={[styles.storageValue, { color: colors.text, fontSize: storageValueFontSize }]}>{storageSize}</Text>
               </View>
               <Pressable 
                 onPress={handleWipeCache}
@@ -469,14 +506,17 @@ export default function Settings({ onBack }: Props) {
                   },
                 ]}
               >
-                <Text style={styles.wipeButtonText}>CLEAR DATA</Text>
+                <Text style={[styles.wipeButtonText, { fontSize: wipeButtonTextFontSize }]}>CLEAR DATA</Text>
               </Pressable>
             </View>
             <View style={[styles.storageDivider, { backgroundColor: colors.border }]} />
-            <Text style={[styles.storageSubtext, { color: colors.textSecondary }]}>
-              Includes saved employee lists, pictures, and attendance logs.
+            <Text style={[styles.storageSubtext, { color: colors.textSecondary, fontSize: storageSubtextFontSize }]}>
+              {kioskMode === 'intern' 
+                ? 'Includes saved intern lists, pictures, and attendance logs.' 
+                : 'Includes saved employee lists, pictures, and attendance logs.'}
             </Text>
           </View>
+          */}
 
           {showLogout && (
             <View style={[styles.logoutSection, { borderTopColor: colors.border }]}>
@@ -493,8 +533,8 @@ export default function Settings({ onBack }: Props) {
                 <View style={styles.logoutContent}>
                   <MaterialCommunityIcons name="logout-variant" size={24} color="#ef4444" />
                   <View style={styles.logoutTextWrap}>
-                    <Text style={styles.logoutTitle}>End Management Session</Text>
-                    <Text style={[styles.logoutSubtitle, { color: colors.textSecondary }]}>Close settings and return to home screen</Text>
+                    <Text style={[styles.logoutTitle, { fontSize: logoutTitleFontSize }]}>End Management Session</Text>
+                    <Text style={[styles.logoutSubtitle, { color: colors.textSecondary, fontSize: logoutSubtitleFontSize }]}>Close settings and return to home screen</Text>
                   </View>
                 </View>
                 <MaterialCommunityIcons name="chevron-right" size={24} color={colors.textSecondary} />
@@ -505,6 +545,7 @@ export default function Settings({ onBack }: Props) {
       </ScrollView>
 
       {/* CUSTOM CONFIRMATION MODAL */}
+      {/*
       <Modal
         visible={showWipeConfirm}
         transparent
@@ -517,9 +558,11 @@ export default function Settings({ onBack }: Props) {
               <MaterialCommunityIcons name="database-remove" size={42} color="#ef4444" />
             </View>
             
-            <Text style={[styles.modalTitle, { color: colors.text }]}>Clear Device Memory?</Text>
-            <Text style={[styles.modalMessage, { color: colors.textSecondary }]}>
-              This will permanently delete all saved logs and employee pictures from this device.
+            <Text style={[styles.modalTitle, { color: colors.text, fontSize: modalTitleFontSize }]}>Clear Device Memory?</Text>
+            <Text style={[styles.modalMessage, { color: colors.textSecondary, fontSize: modalMessageFontSize }]}>
+              {kioskMode === 'intern' 
+                ? 'This will permanently delete all saved logs and intern pictures from this device.' 
+                : 'This will permanently delete all saved logs and employee pictures from this device.'}
               {'\n'}{'\n'}
               Internet connection will be needed to get this information back.
             </Text>
@@ -532,7 +575,7 @@ export default function Settings({ onBack }: Props) {
                   { backgroundColor: pressed ? withAlpha(colors.border, 0.5) : colors.background, borderColor: colors.border }
                 ]}
               >
-                <Text style={[styles.modalSecondaryBtnText, { color: colors.textSecondary }]}>CANCEL</Text>
+                <Text style={[styles.modalSecondaryBtnText, { color: colors.textSecondary, fontSize: modalSecondaryBtnTextFontSize }]}>CANCEL</Text>
               </Pressable>
 
               <Pressable 
@@ -542,12 +585,13 @@ export default function Settings({ onBack }: Props) {
                   { backgroundColor: pressed ? '#dc2626' : '#ef4444' }
                 ]}
               >
-                <Text style={styles.modalPrimaryBtnText}>CLEAR NOW</Text>
+                <Text style={[styles.modalPrimaryBtnText, { fontSize: modalPrimaryBtnTextFontSize }]}>CLEAR NOW</Text>
               </Pressable>
             </View>
           </View>
         </View>
       </Modal>
+      */}
     </SafeAreaView>
   );
 }
@@ -555,11 +599,6 @@ export default function Settings({ onBack }: Props) {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-  },
-  loadingWrap: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
   },
   header: {
     paddingHorizontal: 24,
@@ -781,14 +820,5 @@ const styles = StyleSheet.create({
     borderRadius: 24,
     borderWidth: 1.5,
     marginTop: 8,
-  },
-  shimmerStreak: {
-    position: 'absolute',
-    top: 0,
-    bottom: 0,
-    width: '100%',
-    backgroundColor: 'rgba(61, 61, 61, 0.15)',
-    zIndex: 10,
-    transform: [{ skewX: '-25deg' }],
   },
 });

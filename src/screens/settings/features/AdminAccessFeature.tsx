@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react';
-import { ActivityIndicator, Alert, Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Alert, Modal, Pressable, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native';
 import { SettingRow } from '../components/SettingRow';
 import { Colors, useTheme } from '../../../config/theme';
 
@@ -9,6 +9,16 @@ type Props = {
 
 export function AdminAccessFeature({ saveBackendSettings }: Props) {
   const { colors } = useTheme();
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
+  const shortDimension = Math.min(windowWidth, windowHeight);
+  const isTablet = shortDimension >= 768;
+  const isSmallTablet = shortDimension >= 480 && shortDimension < 768;
+  const isPhone = shortDimension < 480;
+
+  const modalTitleFontSize = isTablet ? 28 : isSmallTablet ? 22 : 18;
+  const inputFontSize = isTablet ? 18 : isSmallTablet ? 15 : 13;
+  const buttonTextFontSize = isTablet ? 15 : isSmallTablet ? 13 : 11;
+
   const [isOpen, setIsOpen] = useState(false);
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -53,10 +63,10 @@ export function AdminAccessFeature({ saveBackendSettings }: Props) {
       <Modal visible={isOpen} transparent animationType="fade" onRequestClose={closeDialog}>
         <View style={styles.modalOverlay}>
           <View style={[styles.modalCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-            <Text style={[styles.modalTitle, { color: colors.text }]}>Administrative Access</Text>
+            <Text style={[styles.modalTitle, { color: colors.text, fontSize: modalTitleFontSize }]}>Administrative Access</Text>
 
             <TextInput
-              style={[styles.input, { backgroundColor: colors.background, color: colors.text, borderColor: colors.border }]}
+              style={[styles.input, { backgroundColor: colors.background, color: colors.text, borderColor: colors.border, fontSize: inputFontSize }]}
               placeholder="Current Password"
               placeholderTextColor={colors.textSecondary}
               value={currentPassword}
@@ -64,7 +74,7 @@ export function AdminAccessFeature({ saveBackendSettings }: Props) {
               secureTextEntry
             />
             <TextInput
-              style={[styles.input, { backgroundColor: colors.background, color: colors.text, borderColor: colors.border }]}
+              style={[styles.input, { backgroundColor: colors.background, color: colors.text, borderColor: colors.border, fontSize: inputFontSize }]}
               placeholder="New Secure Password"
               placeholderTextColor={colors.textSecondary}
               value={newPassword}
@@ -74,7 +84,7 @@ export function AdminAccessFeature({ saveBackendSettings }: Props) {
 
             <View style={styles.modalActions}>
               <Pressable style={[styles.modalButton, { backgroundColor: colors.background }]} onPress={closeDialog}>
-                <Text style={{ color: colors.textSecondary, fontWeight: '700' }}>CANCEL</Text>
+                <Text style={{ color: colors.textSecondary, fontWeight: '700', fontSize: buttonTextFontSize }}>CANCEL</Text>
               </Pressable>
               <Pressable 
                 style={[styles.modalButton, { backgroundColor: Colors.powerOrange }]} 
@@ -84,7 +94,7 @@ export function AdminAccessFeature({ saveBackendSettings }: Props) {
                 {isSubmitting ? (
                   <ActivityIndicator size="small" color="#fff" />
                 ) : (
-                  <Text style={{ color: '#fff', fontWeight: '800' }}>SAVE CHANGES</Text>
+                  <Text style={{ color: '#fff', fontWeight: '800', fontSize: buttonTextFontSize }}>SAVE CHANGES</Text>
                 )}
               </Pressable>
             </View>

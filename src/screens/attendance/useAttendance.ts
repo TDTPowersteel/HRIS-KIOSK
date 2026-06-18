@@ -7,15 +7,15 @@ import * as ImageManipulator from 'expo-image-manipulator';
 import { useFaceDetector } from 'react-native-vision-camera-face-detector';
 import { Worklets, useSharedValue } from 'react-native-worklets-core';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Alert, Animated, Platform, ToastAndroid, useWindowDimensions } from 'react-native';
+import { Alert, Animated, Image as RNImage, Platform, ToastAndroid, useWindowDimensions, NativeModules } from 'react-native';
 import { BACKEND_URL } from '../../config/backend';
-import { enqueueOfflineAttendance, getOfflineAttendanceQueue } from '../../utils/offlineAttendance';
-import { resolveOfflineUserFromQr, upsertOfflineUserCacheUser } from '../../utils/offlineUsers';
+import { enqueueOfflineAttendance, getOfflineAttendanceQueue, syncOfflineQueue, syncOfflineItem } from '../../utils/offlineAttendance';
+import { resolveOfflineUserFromQr, upsertOfflineUserCacheUser, updateOfflineUserCacheFromEmployees, mmkv } from '../../utils/offlineUsers';
 import { useTheme } from '../../config/theme';
+import { useNetworkStatus } from '../../hooks/useNetworkStatus';
 import { compareEmbeddings, compareMultiAngleEmbeddings, isMatch, MODEL_CONFIG } from '../../utils/face-embedding';
 import { loadFaceModel, getEmbedding, isModelLoaded } from '../../faceEngine/model';
-import { rgbaBufferToCHWTensor } from '../../faceEngine/preprocess';
-import type { FaceEngine } from '../settings/features/FaceRecogEngineFeature';
+import { rgbaBufferToCHWTensor, prepareEmbeddingInput } from '../../faceEngine/preprocess';
 import {
   ATTENDANCE_SESSIONS_KEY,
   TOUCHLESS_SETTING_KEY,
@@ -171,12 +171,12 @@ function isFaceBoxUsableForRecognition(faceBox: NormalizedFaceBox, face?: any): 
   if (faceBox.x + faceBox.width > 0.995 || faceBox.y + faceBox.height > 0.995) return false;
   if (centerX < 0.14 || centerX > 0.86 || centerY < 0.14 || centerY > 0.86) return false;
 
-  // Frontal gate (Pose check - tightened from 18 to 14 to avoid bad verification angles)
+  // Frontal gate (Pose check - aligned with registration standards and euler fallbacks)
   if (face) {
-    const yaw = face?.yawAngle ?? 0;
-    const pitch = face?.pitchAngle ?? 0;
-    const roll = face?.rollAngle ?? 0;
-    if (Math.abs(yaw) > 14 || Math.abs(pitch) > 14 || Math.abs(roll) > 14) return false;
+    const yaw = face?.yawAngle ?? face?.eulerY ?? face?.headEulerAngleY ?? 0;
+    const pitch = face?.pitchAngle ?? face?.eulerX ?? face?.headEulerAngleX ?? 0;
+    const roll = face?.rollAngle ?? face?.eulerZ ?? face?.headEulerAngleZ ?? 0;
+    if (Math.abs(yaw) > 15 || Math.abs(pitch) > 15 || Math.abs(roll) > 15) return false;
   }
 
   return true;
@@ -262,11 +262,11 @@ const sanitizeForLog = (obj: any) => {
 
 export function useAttendance() {
   const { colors } = useTheme();
-  const NETWORK_TIMEOUT_MS = 2500;
+  const { isConnected, hasGoodInternet } = useNetworkStatus();
+  const NETWORK_TIMEOUT_MS = 1500;
   const NETWORK_TOAST_COOLDOWN_MS = 15000;
-  const FACEPP_TOUCHLESS_COUNTDOWN_SECONDS = 3;
-  const CAMERA_VISION_STABLE_FACE_FRAMES = 5;
-  const CAMERA_VISION_TOUCHLESS_MIN_READINESS_TO_VERIFY = 90;
+    const CAMERA_VISION_STABLE_FACE_FRAMES = 8;
+  const CAMERA_VISION_TOUCHLESS_MIN_READINESS_TO_VERIFY = 65;
   const CAMERA_VISION_MANUAL_MIN_READINESS_TO_VERIFY = 30;
   const CAMERA_VISION_GATE_LOG_COOLDOWN_MS = 2000;
 
@@ -276,8 +276,8 @@ export function useAttendance() {
   const backDevice = useCameraDevice('back');
   const device = frontDevice ?? backDevice;
   const cameraFormat = useCameraFormat(device, [
-    { photoResolution: 'max' },
-    { videoResolution: 'max' }
+    { photoResolution: { width: 640, height: 480 }, videoResolution: { width: 1280, height: 720 } },
+    { photoResolution: { width: 1280, height: 720 }, videoResolution: { width: 1280, height: 720 } }
   ]);
   const cameraRef = useRef<Camera>(null);
 
@@ -296,10 +296,9 @@ export function useAttendance() {
   const identityStatusRef = useRef<'idle' | 'pending' | 'passed' | 'failed'>('idle');
   const livenessStatusRef = useRef<'idle' | 'pending' | 'passed'>('idle');
   const livenessScoreRef = useRef<number | null>(null);
-  const faceppCountdownStartedRef = useRef(false);
-  const cameraVisionAutoTriggeredRef = useRef(false);
+    const cameraVisionAutoTriggeredRef = useRef(false);
   const touchlessEnabledRef = useRef(false);
-  const faceEngineRef = useRef<FaceEngine>('facepp');
+  const serverVerifyEnabledRef = useRef(true);
   const lastCameraVisionGateLogRef = useRef(0);
 
   // Shared Values (moved up to avoid use-before-declaration)
@@ -315,12 +314,29 @@ export function useAttendance() {
   const lastCameraVisionDetectedSent = useSharedValue(false);
   const frameCounter = useSharedValue(0);
   const lastFaceProcessedFrame = useSharedValue(0);
+  const [backgroundLivenessPassed, setBackgroundLivenessPassed] = useState(false);
+  const onBackgroundLivenessChange = Worklets.createRunOnJS((passed: boolean) => {
+    setBackgroundLivenessPassed(passed);
+  });
   // Last tracked face box from continuous detection — reused during capture to avoid calling detectFaces twice
   const lastTrackedFaceX = useSharedValue(0);
   const lastTrackedFaceY = useSharedValue(0);
   const lastTrackedFaceW = useSharedValue(0);
   const lastTrackedFaceH = useSharedValue(0);
   const hasTrackedFace = useSharedValue(false);
+  const lastTrackedFaceYaw = useSharedValue(0);
+  const lastTrackedFacePitch = useSharedValue(0);
+  const lastTrackedFaceRoll = useSharedValue(0);
+
+  // PASSIVE LIVENESS HISTORY
+  const leftEyeHistory = useSharedValue<number[]>([0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]);
+  const rightEyeHistory = useSharedValue<number[]>([0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]);
+  const smileHistory = useSharedValue<number[]>([0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]);
+  const historyIndex = useSharedValue(0);
+  const livenessConsecutiveFrames = useSharedValue(0);
+  const consecutiveNoFaceFrames = useSharedValue(0);
+  const hasPassedPassiveLiveness = useSharedValue(false);
+  const isHumanDetected = useSharedValue(false);
 
   // State
   const [hasLocationPermission, setHasLocationPermission] = useState(false);
@@ -356,7 +372,7 @@ export function useAttendance() {
   const [touchlessEnabled, setTouchlessEnabled] = useState(false);
   const [offlineModeEnabled, setOfflineModeEnabled] = useState(false);
   const [livenessEnabled, setLivenessEnabled] = useState(true);
-  const [faceEngine, setFaceEngine] = useState<FaceEngine>('facepp');
+  const [serverVerifyEnabled, setServerVerifyEnabled] = useState(true);
   const [pendingSyncCount, setPendingSyncCount] = useState(0);
   const [scanStage, setScanStage] = useState<FaceScanStage>('idle');
   const [cameraVisionFaceDetected, setCameraVisionFaceDetected] = useState(false);
@@ -376,7 +392,28 @@ export function useAttendance() {
       .catch(e => console.error('[FaceEngine] Failed to load ONNX model:', e));
     return () => { active = false; };
   }, []);
-  
+
+  // Bootstrap: seed kiosk_mode and offline user cache on mount
+  const [kioskMode, setKioskMode] = useState<'employee' | 'intern'>(() => {
+    return (mmkv.getString('kiosk_mode') as 'employee' | 'intern') || 'employee';
+  });
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const response = await fetch(`${BACKEND_URL}/employees.php?page=1&limit=50`);
+        const payload = await response.json();
+        if (payload?.kiosk_mode) {
+          mmkv.set('kiosk_mode', payload.kiosk_mode);
+          setKioskMode(payload.kiosk_mode);
+        }
+        if (Array.isArray(payload?.data)) {
+          await updateOfflineUserCacheFromEmployees(payload.data, false);
+        }
+      } catch {}
+    })();
+  }, []);
+
 
   // Modal state
   const [showResultModal, setShowResultModal] = useState(false);
@@ -390,6 +427,8 @@ export function useAttendance() {
   const scanLineAnim = useRef(new Animated.Value(0)).current;
   const flashAnim = useRef(new Animated.Value(0)).current;
   const [snapSound, setSnapSound] = useState<Audio.Sound | null>(null);
+  const qrSoundRef = useRef<Audio.Sound | null>(null);
+  const faceSuccessSoundRef = useRef<Audio.Sound | null>(null);
 
   // Liveness detection
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
@@ -412,6 +451,48 @@ export function useAttendance() {
     try {
       if (snapSound) await snapSound.replayAsync();
     } catch { }
+  };
+
+  const playQrSound = async () => {
+    try {
+      if (qrSoundRef.current) {
+        const status = await qrSoundRef.current.getStatusAsync();
+        if (!status.isLoaded) {
+          await qrSoundRef.current.loadAsync(require('../../../assets/audio/qr_scan.wav'), { volume: 1.0, shouldPlay: false });
+        }
+        await qrSoundRef.current.replayAsync();
+      } else {
+        const { sound } = await Audio.Sound.createAsync(
+          require('../../../assets/audio/qr_scan.wav'),
+          { volume: 1.0, shouldPlay: false }
+        );
+        qrSoundRef.current = sound;
+        await sound.replayAsync();
+      }
+    } catch (e) {
+      console.log('[Audio] QR sound play/heal failed:', e);
+    }
+  };
+
+  const playSuccessSound = async () => {
+    try {
+      if (faceSuccessSoundRef.current) {
+        const status = await faceSuccessSoundRef.current.getStatusAsync();
+        if (!status.isLoaded) {
+          await faceSuccessSoundRef.current.loadAsync(require('../../../assets/audio/face_scan.wav'), { volume: 1.0, shouldPlay: false });
+        }
+        await faceSuccessSoundRef.current.replayAsync();
+      } else {
+        const { sound } = await Audio.Sound.createAsync(
+          require('../../../assets/audio/face_scan.wav'),
+          { volume: 1.0, shouldPlay: false }
+        );
+        faceSuccessSoundRef.current = sound;
+        await sound.replayAsync();
+      }
+    } catch (e) {
+      console.log('[Audio] Success sound play/heal failed:', e);
+    }
   };
 
   const showOfflineToast = useCallback(() => {
@@ -451,8 +532,7 @@ export function useAttendance() {
         setFaceCountdown(0);
         countdownRef.current = 0;
         setCountdownActive(false);
-        faceppCountdownStartedRef.current = false;
-        cameraVisionAutoTriggeredRef.current = false;
+                cameraVisionAutoTriggeredRef.current = false;
         stableFaceFrames.value = 0;
         setCameraVisionFaceDetected(false);
         setCameraVisionReadiness(0);
@@ -468,8 +548,7 @@ export function useAttendance() {
         setFaceCountdown(0);
         countdownRef.current = 0;
         setCountdownActive(false);
-        faceppCountdownStartedRef.current = false;
-        cameraVisionAutoTriggeredRef.current = false;
+                cameraVisionAutoTriggeredRef.current = false;
         stableFaceFrames.value = 0;
         setCameraVisionFaceDetected(false);
         setCameraVisionReadiness(0);
@@ -481,7 +560,6 @@ export function useAttendance() {
         livenessScoreRef.current = null;
         if (
           touchlessEnabledRef.current &&
-          faceEngineRef.current === 'camera_vision' &&
           attendanceAction === 'clock_in' &&
           qrVerified
         ) {
@@ -495,11 +573,10 @@ export function useAttendance() {
   }, [scaleAnim, workletPhase, blinkState, stableFaceFrames, attendanceAction, qrVerified]);
 
   const showModal = useCallback(
-    (type: ModalType, title: string, message: string, hint: string, autoCloseMs?: number) => {
+    (type: ModalType, title: string, hint: string, autoCloseMs?: number) => {
       modalVisibleRef.current = true;
       setModalType(type);
       setModalTitle(title);
-      setModalMessage(message);
       setModalHint(hint);
       setShowResultModal(true);
       Animated.spring(scaleAnim, { toValue: 1, friction: 5, tension: 100, useNativeDriver: true }).start();
@@ -540,6 +617,7 @@ export function useAttendance() {
   }, []);
 
   const resetAttendanceFlow = useCallback(async () => {
+    const wasIntern = selectedUserRef.current?.isIntern;
     setQrVerified(false);
     setClockInTime('');
     setWelcomeName(null);
@@ -549,9 +627,12 @@ export function useAttendance() {
     countdownRef.current = 0;
     setCountdownActive(false);
     modalContextRef.current = 'other';
-    lastScanRef.current = { data: null, ts: 0 };
+
+    // Clear lastScanRef for employees to preserve original behavior, but keep it for interns to prevent double-scans
+    if (!wasIntern) {
+      lastScanRef.current = { data: null, ts: 0 };
+    }
     touchlessTriggeredRef.current = false;
-    faceppCountdownStartedRef.current = false;
     cameraVisionAutoTriggeredRef.current = false;
     stableFaceFrames.value = 0;
     setCameraVisionFaceDetected(false);
@@ -564,14 +645,20 @@ export function useAttendance() {
     faceProcessingRef.current = false;
     identityStatusRef.current = 'idle';
     livenessStatusRef.current = 'idle';
+    livenessScoreRef.current = null;
+    setOfflineModeEnabled(false);
 
     // Reset liveness state machine
-    blinkState.value = 0;
+    consecutiveNoFaceFrames.value = 0;
+    hasPassedPassiveLiveness.value = false;
+    setBackgroundLivenessPassed(false);
+    cameraVisionAutoTriggeredRef.current = false;
+    consecutiveNoFaceFrames.value = 0;
     setLivenessMessage('Face the camera directly');
     workletPhase.value = 0;
 
     try { await AsyncStorage.multiRemove(['userId', 'username']); } catch { }
-  }, []);
+  }, [hasPassedPassiveLiveness, livenessConsecutiveFrames, consecutiveNoFaceFrames]);
 
   const refreshPendingSyncCount = useCallback(async () => {
     try {
@@ -581,29 +668,44 @@ export function useAttendance() {
   }, []);
 
   const applyScannerSettings = useCallback(async () => {
-    const entries = await AsyncStorage.multiGet([TOUCHLESS_SETTING_KEY, 'settings_liveness_enabled', 'settings_face_engine']);
+    const entries = await AsyncStorage.multiGet([
+      TOUCHLESS_SETTING_KEY, 
+      'settings_liveness_enabled', 
+      'settings_face_engine',
+      'settings_server_verification_enabled'
+    ]);
     const mapped = Object.fromEntries(entries);
     const touchless = mapped[TOUCHLESS_SETTING_KEY] === 'true';
     const liveness = mapped['settings_liveness_enabled'] !== 'false';
-    const engine: FaceEngine = mapped['settings_face_engine'] === 'camera_vision' ? 'camera_vision' : 'facepp';
+    const serverVerify = mapped['settings_server_verification_enabled'] !== 'false';
     touchlessEnabledRef.current = touchless;
-    faceEngineRef.current = engine;
     setTouchlessEnabled(touchless);
     setLivenessEnabled(liveness);
-    setFaceEngine(engine);
+    serverVerifyEnabledRef.current = serverVerify;
+    setServerVerifyEnabled(serverVerify);
     sharedTouchlessEnabled.value = touchless;
     sharedLivenessEnabled.value = liveness;
-    sharedFaceEngineIsCameraVision.value = engine === 'camera_vision';
-    return { touchless, liveness, engine };
-  }, [sharedTouchlessEnabled, sharedLivenessEnabled, sharedFaceEngineIsCameraVision]);
+    sharedFaceEngineIsCameraVision.value = true;
+    return { touchless, liveness, serverVerify };
+  }, [sharedTouchlessEnabled, sharedLivenessEnabled]);
+
+  const getImsUrl = useCallback(() => {
+    try {
+      if (/:\d{4}$/.test(BACKEND_URL)) {
+        return BACKEND_URL.replace(/:\d{4}$/, ':8002');
+      }
+      return `${BACKEND_URL}/ims`;
+    } catch (e) {}
+    return BACKEND_URL;
+  }, []);
 
   // QR resolve
   const resolveUserFromQr = useCallback(async (qrData: string): Promise<ResolvedUser> => {
     try {
-      // FORCE SYNC: Add timestamp to URL to bypass any server/proxy cache
       const timestamp = Date.now();
-      const currentEngine = faceEngineRef.current;
-      const response = await fetch(`${BACKEND_URL}/resolve_qr.php?qr=${encodeURIComponent(qrData)}&engine=${currentEngine}&_t=${timestamp}`, {
+
+      // FORCE SYNC: Add timestamp to URL to bypass any server/proxy cache
+      const response = await fetch(`${BACKEND_URL}/resolve_qr.php?qr=${encodeURIComponent(qrData)}&engine=camera_vision&_t=${timestamp}`, {
         headers: { 
           'Accept': 'application/json', 
           'ngrok-skip-browser-warning': 'true',
@@ -620,7 +722,7 @@ export function useAttendance() {
       if (!response.ok) throw new Error(payload?.message || `QR validation failed. Status: ${response.status}`);
       if (!payload?.ok || !payload?.user?.log_id) throw new Error(payload?.message || 'QR not recognized');
       
-      const user = {
+      const user: ResolvedUser = {
         userId: String(payload.user.log_id),
         username: String(payload.user.username || ''),
         name: payload.user.name ?? null,
@@ -630,7 +732,15 @@ export function useAttendance() {
         role: payload.user.role ?? null,
         department: payload.user.department ?? null,
         open_session: payload.user.open_session ?? null,
+        isIntern: payload.user.role?.toLowerCase() === 'intern' || String(payload.user.log_id).startsWith('intern_'),
       };
+
+      try {
+        const cachedUser = await resolveOfflineUserFromQr(qrData);
+        if (cachedUser && cachedUser.profile_picture?.startsWith('file://') && cachedUser.profile_picture_remote === user.profile_picture) {
+          user.profile_picture = cachedUser.profile_picture;
+        }
+      } catch {}
 
       console.log(`[QR] Resolve details for ${user.username}:`, {
         log_id: user.userId,
@@ -639,19 +749,30 @@ export function useAttendance() {
         embedding_val: user.face_embedding ? (typeof user.face_embedding === 'string' ? user.face_embedding.substring(0, 50) + '...' : 'object/array') : 'NULL'
       });
 
-      // FORCE SYNC LOCAL CACHE: If server says user is clocked out, we MUST clear local session
-      if (!user.open_session) {
-        console.log(`[QR] Server says NO open session for ${user.username}. Clearing local cache.`);
-        await clearStoredSession(user.userId);
+      // FORCE SYNC LOCAL CACHE: If server says user is clocked out, we MUST clear local session,
+      // but ONLY if there are no pending offline attendance records for this user (which haven't synced yet).
+      const queue = await getOfflineAttendanceQueue().catch(() => []);
+      const hasPendingOffline = queue.some(item => 
+        item.userId === user.userId && 
+        (item.status === 'pending' || item.status === 'failed')
+      );
+
+      if (hasPendingOffline) {
+        console.log(`[QR] Unsynced offline queue items exist for ${user.username}. Preserving local session state.`);
       } else {
-        console.log(`[QR] Server says OPEN session found for ${user.username}. Saving to local cache.`);
-        await saveStoredSession({
-          userId: user.userId,
-          username: user.username,
-          name: user.name ?? null,
-          clockInTime: user.open_session.timein,
-          clockInDate: user.open_session.date
-        });
+        if (!user.open_session) {
+          console.log(`[QR] Server says NO open session for ${user.username}. Clearing local cache.`);
+          await clearStoredSession(user.userId);
+        } else {
+          console.log(`[QR] Server says OPEN session found for ${user.username}. Saving to local cache.`);
+          await saveStoredSession({
+            userId: user.userId,
+            username: user.username,
+            name: user.name ?? null,
+            clockInTime: user.open_session.timein,
+            clockInDate: user.open_session.date
+          });
+        }
       }
 
       setOfflineModeEnabled(false);
@@ -662,9 +783,11 @@ export function useAttendance() {
         name: user.name ?? null,
         qrCode: qrData,
         profile_picture: user.profile_picture ?? null,
+        profile_picture_remote: payload.user.profile_picture ?? null,
         role: user.role ?? null,
         department: user.department ?? null,
         face_embedding: user.face_embedding ?? null,
+        isIntern: user.isIntern,
       });
       return user;
     } catch (error) {
@@ -673,72 +796,29 @@ export function useAttendance() {
       showOfflineToast();
       const cachedUser = await resolveOfflineUserFromQr(qrData);
       if (!cachedUser) throw new Error('Offline mode needs cached QR/user data for this code. Connect online and open Employee Directory or scan once online to cache it.');
-      return { userId: cachedUser.userId, username: cachedUser.username, name: cachedUser.name ?? null, profile_picture: cachedUser.profile_picture ?? null, role: cachedUser.role ?? null, department: cachedUser.department ?? null, face_embedding: cachedUser.face_embedding ?? null };
+      return { userId: cachedUser.userId, username: cachedUser.username, name: cachedUser.name ?? null, profile_picture: cachedUser.profile_picture ?? null, role: cachedUser.role ?? null, department: cachedUser.department ?? null, face_embedding: cachedUser.face_embedding ?? null, isIntern: cachedUser.isIntern };
     }
-  }, [offlineModeEnabled, isLikelyConnectivityError, showOfflineToast]);
+  }, [offlineModeEnabled, isLikelyConnectivityError, showOfflineToast, getImsUrl]);
 
-  // Face verify
-  const verifyFace = async (photoUri1: string, photoUri2?: string) => {
-    let userId = null;
-    try { userId = await AsyncStorage.getItem('userId'); } catch { }
-    if (!userId) throw new Error('User not logged in (missing userId). Please log in again.');
-    console.log('[Verify] Sending face to backend', sanitizeForLog({
-      userId,
-      isSendingSecondPhoto: !!photoUri2,
-      face_reference: selectedUserRef.current?.face
-    }));
-    const form = new FormData();
-    form.append('photo', { uri: photoUri1, name: 'selfie_1.jpg', type: 'image/jpeg' } as any);
-    if (photoUri2) form.append('photo_liveness', { uri: photoUri2, name: 'selfie_2.jpg', type: 'image/jpeg' } as any);
-    form.append('clock_time', new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
-    form.append('user_id', userId);
-    form.append('engine', faceEngineRef.current);
-    
-    // Add client-side active liveness score if available
-    if (livenessScoreRef.current !== null) {
-      form.append('liveness_score', livenessScoreRef.current.toFixed(4));
+
+  // Helper to run ONNX inference and normalize the output
+  const runOnnxAndNormalize = async (tensor: Float32Array): Promise<number[]> => {
+    const raw = await getEmbedding(tensor);
+    if (raw.length < 64) throw new Error('Embedding output is too small');
+
+    // L2 Normalize
+    const normalized: number[] = Array.from(raw);
+    const norm = Math.sqrt(normalized.reduce((sum, val) => sum + val * val, 0));
+    if (norm > 0) {
+      for (let i = 0; i < normalized.length; i++) normalized[i] /= norm;
     }
 
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 28000);
-    const response = await fetch(`${BACKEND_URL}/verify.php`, { method: 'POST', body: form, headers: { Accept: 'application/json', 'ngrok-skip-browser-warning': 'true' }, signal: controller.signal });
-    clearTimeout(timeoutId);
-    const responseText = await response.text();
-    console.log('[Verify] Raw response', response.status, responseText?.slice?.(0, 200));
-    let json: any = {};
-    try { json = responseText ? JSON.parse(responseText) : {}; } catch { throw new Error(`Server returned invalid response. Status: ${response.status}`); }
-    if (response.status === 401 && json.message) {
-      if (json.message.includes('Liveness')) {
-        console.log('[Verify] Liveness Failure', sanitizeForLog(json));
-      } else {
-        console.log('[Verify] Identity Mismatch', sanitizeForLog(json));
-      }
-      if (json.captured_faces_count != null || json.reference_faces_count != null) {
-        console.log(`[Verify] Debug Info: Faces detected in Live Capture: ${json.captured_faces_count ?? 0}, Faces detected in Database Reference: ${json.reference_faces_count ?? 0}`);
-      }
-      return { ok: false, verified: false, message: json.message, hint: json.hint, match_score: json.match_score, threshold: json.threshold, liveness_score: json.liveness_score };
+    if (!isValidEmbeddingVector(normalized)) {
+      throw new Error('Captured face data is invalid. Please center your face and try again.');
     }
-    if (!response.ok || !json.ok) {
-      let errorMsg = json.message || 'Verification failed';
-      if (json.detail) errorMsg += `\n\nDetail: ${json.detail}`;
-      if (json.hint) errorMsg += `\n\n${json.hint}`;
-      throw new Error(errorMsg);
-    }
-    return json;
+
+    return normalized;
   };
-
-  const runVerification = useCallback(async () => {
-    if (!cameraRef.current) throw new Error('Camera not ready');
-    const photo1 = await cameraRef.current.takePhoto({ 
-      flash: 'off',
-      enableAutoRedEyeReduction: true,
-    });
-    if (!photo1?.path) throw new Error('No image captured');
-
-    if (offlineModeEnabled) return { ok: true, verified: true, offlineCaptured: true, message: 'Face photos captured offline.', photoUri: `file://${photo1.path}` };
-    return verifyFace(`file://${photo1.path}`);
-  }, [offlineModeEnabled]);
-
 
   // Photo-based embedding capture: takes a photo, decodes JPEG, runs buffalo_sc ONNX inference.
   const captureEmbeddingFromPhoto = useCallback(async (): Promise<number[]> => {
@@ -746,7 +826,12 @@ export function useAttendance() {
     if (!isModelLoaded()) throw new Error('Face model not loaded');
 
     console.log('[CameraVision] Taking photo for embedding (buffalo_sc ONNX)...');
-    const photo = await cameraRef.current.takePhoto({ flash: 'off' });
+    if(!cameraRef.current) throw new Error('Camera not ready');
+    // @ts-ignore
+    const photo = await cameraRef.current.takePhoto({
+      flash: 'off',
+      enableShutterSound: false,
+    });
     if (!photo?.path) throw new Error('No image captured');
 
     const faceBox = cameraVisionFaceBox;
@@ -755,8 +840,18 @@ export function useAttendance() {
     let imageToProcess = `file://${photo.path}`;
 
     if (faceBox) {
-      const photoW = photo.width;
-      const photoH = photo.height;
+      // Resolve actual decoded dimensions natively (avoids full ImageManipulator decode)
+      let photoW = photo.width;
+      let photoH = photo.height;
+      try {
+        const [resolvedW, resolvedH] = await new Promise<[number, number]>((resolve, reject) => {
+          RNImage.getSize(imageToProcess, (w, h) => resolve([w, h]), reject);
+        });
+        photoW = resolvedW;
+        photoH = resolvedH;
+      } catch (err) {
+        console.warn('[CameraVision] Failed to get image dimensions, using photo metadata:', err);
+      }
       
       // Determine if the frame is rotated relative to the physical photo
       const frameW = faceBox.frameWidth || (photoW > photoH ? 1280 : 720);
@@ -826,92 +921,257 @@ export function useAttendance() {
 
       if (safeSize > 0) {
         try {
+          if (Platform.OS === 'android' && NativeModules.NativeFacePreprocessor) {
+            console.log('[CameraVision] Using NativeFacePreprocessor...');
+            const startNative = Date.now();
+            const base64Str = await NativeModules.NativeFacePreprocessor.preprocessFace(
+              photo.path,
+              {
+                x: originX / photoW,
+                y: originY / photoH,
+                width: safeSize / photoW,
+                height: safeSize / photoH,
+                isMirrored: device?.position === 'front',
+              },
+              photoW,
+              photoH
+            );
+            console.log(`[CameraVision] NativeFacePreprocessor completed in ${Date.now() - startNative}ms`);
+            const binaryString = global.atob(base64Str);
+            const len = binaryString.length;
+            const bytes = new Uint8Array(len);
+            for (let i = 0; i < len; i++) {
+              bytes[i] = binaryString.charCodeAt(i);
+            }
+            const tensor = new Float32Array(bytes.buffer);
+            return await runOnnxAndNormalize(tensor);
+          }
+        } catch (e: any) {
+          if (e?.code === 'PREPROCESS_TOO_DARK' || e?.code === 'PREPROCESS_TOO_BLURRY') {
+            throw e;
+          }
+          console.warn('[CameraVision] NativeFacePreprocessor failed, falling back to ImageManipulator:', e);
+        }
+
+        try {
+          const actions: ImageManipulator.Action[] = [
+            { crop: { originX, originY, width: safeSize, height: safeSize } },
+            { resize: { width: 112, height: 112 } }
+          ];
+          if (device?.position === 'front') {
+            actions.push({ flip: ImageManipulator.FlipType.Horizontal });
+          }
           const manipResult = await ImageManipulator.manipulateAsync(
             imageToProcess,
-            [
-              { crop: { originX, originY, width: safeSize, height: safeSize } },
-              { resize: { width: 112, height: 112 } }
-            ],
-            { format: ImageManipulator.SaveFormat.JPEG, compress: 0.95 }
+            actions,
+            { format: ImageManipulator.SaveFormat.JPEG, compress: 0.95, base64: true }
           );
           imageToProcess = manipResult.uri;
+          if (manipResult.base64) {
+            const tensor = prepareEmbeddingInput(manipResult.base64);
+            return await runOnnxAndNormalize(tensor);
+          }
         } catch (e) {
-          console.warn('[CameraVision] Native crop failed:', e);
+          console.warn('[CameraVision] Native crop failed, falling back to full-frame resize:', e);
         }
       }
-    } else {
-      try {
-        const manipResult = await ImageManipulator.manipulateAsync(
-          imageToProcess,
-          [{ resize: { width: 112 } }],
-          { format: ImageManipulator.SaveFormat.JPEG, compress: 0.9 }
-        );
-        imageToProcess = manipResult.uri;
-      } catch (e) {}
     }
 
-    // Read JPEG file and decode to raw RGBA pixels
+    // Fallback: no faceBox or crop failed — resize full image to 112px and use base64 path
+    try {
+      const fallbackResult = await ImageManipulator.manipulateAsync(
+        imageToProcess,
+        [{ resize: { width: 112 } }],
+        { format: ImageManipulator.SaveFormat.JPEG, compress: 0.9, base64: true }
+      );
+      if (fallbackResult.base64) {
+        const tensor = prepareEmbeddingInput(fallbackResult.base64);
+        return await runOnnxAndNormalize(tensor);
+      }
+      imageToProcess = fallbackResult.uri;
+    } catch (e) {
+      console.warn('[CameraVision] Fallback resize failed:', e);
+    }
+
+    // Last resort: fetch file and decode via jpeg-js (only reached if base64 paths all failed)
     const response = await fetch(imageToProcess);
     const jpegBuffer = await response.arrayBuffer();
     const jpegData = new Uint8Array(jpegBuffer);
-    console.log(`[CameraVision] JPEG size: ${jpegData.length} bytes`);
-
     const decoded = jpeg.decode(jpegData, { useTArray: true, formatAsRGBA: true });
-    console.log(`[CameraVision] Decoded: ${decoded.width}x${decoded.height}, RGBA pixels: ${decoded.data.length} bytes`);
-
-    // Convert to CHW Float32 tensor for buffalo_sc ONNX model
     const tensor = rgbaBufferToCHWTensor(decoded.data, decoded.width, decoded.height, undefined);
-    console.log(`[CameraVision] CHW Tensor created: ${tensor.byteLength} bytes (expected: ${112 * 112 * 3 * 4})`);
-
-    // Run buffalo_sc ONNX inference → 512-dim embedding
-    const raw = await getEmbedding(tensor);
-    if (raw.length < 64) throw new Error('Embedding output is too small');
-
-    // L2 Normalize (must match HRIS-APP registration)
-    const normalized: number[] = Array.from(raw);
-    const norm = Math.sqrt(normalized.reduce((sum, val) => sum + val * val, 0));
-    if (norm > 0) {
-      for (let i = 0; i < normalized.length; i++) normalized[i] /= norm;
-    }
-
-    if (!isValidEmbeddingVector(normalized)) {
-      throw new Error('Captured face data is invalid. Please center your face and try again.');
-    }
-
-    console.log(`[CameraVision] Embedding captured: ${normalized.length} dimensions (buffalo_sc)`);
-    return normalized;
+    return await runOnnxAndNormalize(tensor);
   }, [cameraVisionFaceBox]);
 
-  // Sync comparator — receives the already-captured live embedding from the frame processor
-  const verifyFaceViaAPI = useCallback(async (liveEmbedding: number[]): Promise<{ ok: boolean; verified: boolean; message?: string; hint?: string; similarity?: number } | null> => {
+  const captureFaceCropB64 = useCallback(async (): Promise<string> => {
+    if (!cameraRef.current) throw new Error('Camera not ready');
+
+    console.log('[CameraVision] Taking photo for server-assisted embedding (640x480)...');
+    // @ts-ignore
+    const photo = await cameraRef.current.takePhoto({
+      flash: 'off',
+      enableShutterSound: false,
+    });
+    if (!photo?.path) throw new Error('No image captured');
+
+    const faceBox = cameraVisionFaceBox;
+    let imageToProcess = `file://${photo.path}`;
+
+    let originX = 0;
+    let originY = 0;
+    let safeSize = 0;
+    let photoW = photo.width;
+    let photoH = photo.height;
+
+    if (faceBox) {
+      try {
+        const [resolvedW, resolvedH] = await new Promise<[number, number]>((resolve, reject) => {
+          RNImage.getSize(imageToProcess, (w, h) => resolve([w, h]), reject);
+        });
+        photoW = resolvedW;
+        photoH = resolvedH;
+      } catch (err) {
+        console.warn('[CameraVision] Failed to get image dimensions, using photo metadata:', err);
+      }
+      
+      const frameW = faceBox.frameWidth || (photoW > photoH ? 1280 : 720);
+      const frameH = faceBox.frameHeight || (photoW > photoH ? 720 : 1280);
+      
+      const isFrameLandscape = frameW > frameH;
+      const isPhotoLandscape = photoW > photoH;
+      const isRotated = isFrameLandscape !== isPhotoLandscape;
+
+      const orientedFrameWidth = isRotated ? frameH : frameW;
+      const orientedFrameHeight = isRotated ? frameW : frameH;
+
+      const rawFaceX = faceBox.left * orientedFrameWidth;
+      const rawFaceY = faceBox.top * orientedFrameHeight;
+      const rawFaceW = faceBox.width * orientedFrameWidth;
+      const rawFaceH = faceBox.height * orientedFrameHeight;
+      
+      const scale = Math.min(photoW / orientedFrameWidth, photoH / orientedFrameHeight);
+      const renderedW = orientedFrameWidth * scale;
+      const renderedH = orientedFrameHeight * scale;
+      const offsetX = (photoW - renderedW) / 2;
+      const offsetY = (photoH - renderedH) / 2;
+
+      let photoFaceX = (rawFaceX * scale) + offsetX;
+      let photoFaceY = (rawFaceY * scale) + offsetY;
+      const photoFaceW = rawFaceW * scale;
+      const photoFaceH = rawFaceH * scale;
+
+      if (device?.position === 'front') {
+        photoFaceX = photoW - (photoFaceX + photoFaceW);
+      }
+
+      const pxCenterX = photoFaceX + photoFaceW / 2;
+      const pxCenterY = photoFaceY + photoFaceH / 2;
+
+      const faceRatio = Math.max(photoFaceW / photoW, photoFaceH / photoH);
+      
+      let paddingMult: number;
+      if (faceRatio >= 0.35) {
+        paddingMult = 1.6;
+      } else if (faceRatio <= 0.15) {
+        paddingMult = 2.0;
+      } else {
+        const t = (faceRatio - 0.15) / (0.35 - 0.15);
+        paddingMult = 2.0 - t * (2.0 - 1.6);
+      }
+
+      const pxSide = Math.max(photoFaceW, photoFaceH) * paddingMult;
+      
+      originX = Math.floor(pxCenterX - pxSide / 2);
+      originY = Math.floor(pxCenterY - pxSide * 0.45);
+      const size = Math.floor(pxSide);
+
+      safeSize = Math.min(size, photoW, photoH);
+      originX = Math.max(0, Math.min(photoW - safeSize, originX));
+      originY = Math.max(0, Math.min(photoH - safeSize, originY));
+    }
+
+    const actions: ImageManipulator.Action[] = [];
+    if (safeSize > 0) {
+      actions.push({ crop: { originX, originY, width: safeSize, height: safeSize } });
+    }
+    actions.push({ resize: { width: 112, height: 112 } });
+    if (device?.position === 'front') {
+      actions.push({ flip: ImageManipulator.FlipType.Horizontal });
+    }
+
+    const manipResult = await ImageManipulator.manipulateAsync(
+      imageToProcess,
+      actions,
+      { format: ImageManipulator.SaveFormat.JPEG, compress: 0.95, base64: true }
+    );
+
+    if (!manipResult.base64) throw new Error('Failed to encode image to base64');
+    return manipResult.base64;
+  }, [device, cameraVisionFaceBox]);
+
+  const verifyFaceViaAPI = useCallback(async (
+    liveEmbedding: number[] | null,
+    liveImageB64: string | null = null
+  ): Promise<{ 
+    ok: boolean; 
+    verified: boolean; 
+    message?: string; 
+    hint?: string; 
+    similarity?: number; 
+    angle_count?: number; 
+    best_angle_index?: number; 
+    agreeing_angles?: number;
+    username?: string;
+    model_used?: string;
+  } | null> => {
     try {
       const userId = selectedUserRef.current?.userId;
       if (!userId) return null;
 
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 5000);
+      const timeoutId = setTimeout(() => controller.abort(), 6000);
 
-      const response = await fetch(`${BACKEND_URL}/verify_face_api.php`, {
+      const body: any = { log_id: userId };
+      if (liveImageB64) {
+        body.live_image_b64 = liveImageB64;
+      } else if (liveEmbedding) {
+        body.live_embedding = liveEmbedding;
+      }
+
+      const response = await fetch(`${BACKEND_URL}/verify_embedding.php`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'ngrok-skip-browser-warning': 'true' },
-        body: JSON.stringify({ log_id: userId, live_embedding: liveEmbedding }),
+        body: JSON.stringify(body),
         signal: controller.signal,
       });
       clearTimeout(timeoutId);
 
       const json = await response.json();
-      console.log(`[Face Verification API] Response:`, { verified: json.verified, similarity: json.similarity, threshold: json.threshold, angle_count: json.angle_count, best_angle: json.best_angle_index });
+      const isVerified = json.verified === true || json.is_match === true || json.ok === true;
 
       if (json.ok === false && json.message) {
-        return { ok: false, verified: false, message: json.message, hint: json.hint };
+        return { 
+          ok: false, 
+          verified: false, 
+          message: json.message, 
+          hint: json.hint, 
+          similarity: json.similarity, 
+          angle_count: json.angle_count, 
+          best_angle_index: json.best_angle_index ?? json.best_angle, 
+          agreeing_angles: json.agreeing_angles,
+          model_used: json.model_used
+        };
       }
 
       return {
-        ok: json.verified === true,
-        verified: json.verified === true,
-        message: json.verified ? undefined : `Face does not match. Similarity: ${((json.similarity || 0) * 100).toFixed(0)}%`,
-        hint: json.verified ? undefined : 'Ensure good lighting and face the camera directly.',
+        ok: isVerified,
+        verified: isVerified,
+        message: isVerified ? undefined : (json.message || `Face does not match. Similarity: ${((json.similarity || 0) * 100).toFixed(0)}%`),
+        hint: isVerified ? undefined : (json.hint || 'Ensure good lighting and face the camera directly.'),
         similarity: json.similarity,
+        angle_count: json.angle_count,
+        best_angle_index: json.best_angle_index ?? json.best_angle,
+        agreeing_angles: json.agreeing_angles,
+        model_used: json.model_used
       };
     } catch (err: any) {
       console.log('[Face Verification API] Unavailable, falling back to local:', err?.message);
@@ -919,7 +1179,7 @@ export function useAttendance() {
     }
   }, []);
 
-  const verifyFaceLocal = useCallback((liveEmbedding: number[]): { ok: boolean; verified: boolean; message?: string; hint?: string; similarity?: number } => {
+  const verifyFaceLocal = useCallback((liveEmbedding: number[]): { ok: boolean; verified: boolean; message?: string; hint?: string; similarity?: number; angle_count?: number; best_angle_index?: number; agreeing_angles?: number; model_used?: string } => {
     console.log('[Face Verification] === LOCAL VERIFICATION START ===');
     console.log(`[Face Verification] Target Employee: ${selectedUserRef.current?.name || 'Unknown'} (Username: ${selectedUserRef.current?.username || 'N/A'}, ID: ${selectedUserRef.current?.userId || 'N/A'})`);
     if (!isValidEmbeddingVector(liveEmbedding)) {
@@ -964,22 +1224,35 @@ export function useAttendance() {
     const threshold = MODEL_CONFIG.matchThreshold;
     const subThreshold = MODEL_CONFIG.subThreshold;
 
-    // top2_agree: for multi-angle registrations, require at least 2 angles above sub-threshold
+    // Require at least 3 matching angles for 5 profiles, 2 for 3-4 profiles, and 1 for <3 profiles
     const agreeingAngles = result.perAngleScores.filter(s => s >= subThreshold).length;
-    const top2Required = result.angleCount >= 3;
-    const top2Agrees = !top2Required || agreeingAngles >= 2;
+    const minAgrees = result.angleCount >= 5 ? 3 : (result.angleCount >= 3 ? 2 : 1);
+    const agreementOk = agreeingAngles >= minAgrees;
 
-    const isMatched = isMatch(result.maxSimilarity, threshold) && top2Agrees;
+    const isMatched = isMatch(result.maxSimilarity, threshold) && agreementOk;
     
     console.log(`[Face Verification] Angles: ${result.angleCount}, Per-angle scores: [${result.perAngleScores.map(s => s.toFixed(4)).join(', ')}]`);
     console.log(`[Face Verification] Best Cosine Similarity: ${result.maxSimilarity.toFixed(4)} (${(result.maxSimilarity * 100).toFixed(2)}%) from angle ${result.bestAngleIndex}`);
-    console.log(`[Face Verification] Agreeing angles (≥${subThreshold}): ${agreeingAngles} / ${result.angleCount}${top2Required ? ' (top2 required)' : ''}`);
+    console.log(`[Face Verification] Agreeing angles (≥${subThreshold}): ${agreeingAngles} / ${result.angleCount} (Required: ${minAgrees})`);
     console.log(`[Face Verification] Match Threshold Required: ${threshold.toFixed(2)} (${(threshold * 100).toFixed(0)}%)`);
     console.log(`[Face Verification] Match Verdict: ${isMatched ? '✅ [PASS]' : '❌ [FAIL]'}`);
     console.log('[Face Verification] === LOCAL VERIFICATION END ===');
 
-    if (isMatched) return { ok: true, verified: true, similarity: result.maxSimilarity };
-    return { ok: false, verified: false, similarity: result.maxSimilarity, message: `Face does not match. Similarity: ${(result.maxSimilarity * 100).toFixed(0)}%`, hint: 'Ensure good lighting and face the camera directly.' };
+    const ret = {
+      ok: isMatched,
+      verified: isMatched,
+      similarity: result.maxSimilarity,
+      angle_count: result.angleCount,
+      best_angle_index: result.bestAngleIndex,
+      agreeing_angles: agreeingAngles,
+      model_used: 'buffalo_sc (Local)'
+    };
+    if (isMatched) return ret;
+    return {
+      ...ret,
+      message: 'Verification failed.',
+      hint: 'Please try again.',
+    };
   }, []);
 
   const logCameraVisionGateSkip = useCallback((reason: string, details?: Record<string, unknown>) => {
@@ -993,8 +1266,7 @@ export function useAttendance() {
     console.log(`[CameraVision] Verification gate blocked: ${reason}`);
   }, []);
 
-  const recordAttendance = useCallback(async (action: 'clock_in' | 'clock_out', location: { address?: string; latitude?: number; longitude?: number } = {}) => {
-    const userId = await AsyncStorage.getItem('userId');
+  const recordAttendance = useCallback(async (userId: string, action: 'clock_in' | 'clock_out', location: { address?: string; latitude?: number; longitude?: number; isIntern?: boolean } = {}) => {
     if (!userId) return;
     console.log('[Attendance] Recording', { userId, action, location });
     const payload = { 
@@ -1002,17 +1274,32 @@ export function useAttendance() {
       action, 
       ...location 
     };
-    const res = await fetch(`${BACKEND_URL}/record_attendance.php`, { 
-      method: 'POST', 
-      headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'ngrok-skip-browser-warning': 'true' }, 
-      body: JSON.stringify(payload) 
-    });
-    const responseText = await res.text();
-    let data: any = {};
-    try { data = responseText ? JSON.parse(responseText) : {}; }
-    catch { throw new Error(`Attendance response invalid. Status: ${res.status}`); }
-    if (!res.ok || !data?.ok) throw new Error(data?.message || `Unable to record attendance (${res.status})`);
-    return data;
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), NETWORK_TIMEOUT_MS);
+
+    try {
+      const res = await fetch(`${BACKEND_URL}/record_attendance.php`, { 
+        method: 'POST', 
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'ngrok-skip-browser-warning': 'true' }, 
+        body: JSON.stringify(payload),
+        signal: controller.signal
+      });
+      clearTimeout(timeoutId);
+      const responseText = await res.text();
+      let data: any = {};
+      try { data = responseText ? JSON.parse(responseText) : {}; }
+      catch { throw new Error(`Attendance response invalid. Status: ${res.status}`); }
+      if (!res.ok || !data?.ok) {
+        const err = new Error(data?.message || `Unable to record attendance (${res.status})`);
+        (err as any).status = res.status;
+        throw err;
+      }
+      return data;
+    } catch (error) {
+      clearTimeout(timeoutId);
+      throw error;
+    }
   }, []);
 
   const storeClockInNotification = useCallback(async (payload: { date?: string; timein?: string }) => {
@@ -1045,88 +1332,119 @@ export function useAttendance() {
         const cachedRaw = await AsyncStorage.getItem('kiosk_cached_location');
         if (cachedRaw) {
           locationData = JSON.parse(cachedRaw);
-        } else {
-          // Fallback to live fetch if cache is somehow missing
-          const { status } = await Location.requestForegroundPermissionsAsync();
-          if (status === 'granted') {
-            const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
-            const [addressRes] = await Location.reverseGeocodeAsync({ latitude: loc.coords.latitude, longitude: loc.coords.longitude });
-            locationData = {
-              latitude: loc.coords.latitude,
-              longitude: loc.coords.longitude,
-              radius: loc.coords.accuracy ?? 0,
-              address: addressRes ? `${addressRes.streetNumber ? addressRes.streetNumber + ' ' : ''}${addressRes.street || ''}, ${addressRes.city || ''}, ${addressRes.region || ''}`.trim().replace(/^, |, $/g, '') : 'Unknown'
-            };
-            await AsyncStorage.setItem('kiosk_cached_location', JSON.stringify(locationData));
-          }
         }
       } catch (e) {
         console.log('[Attendance] Could not capture location', e);
       }
 
-      let data: any = null;
-      let capturedOffline = offlineModeEnabled;
+      const isActuallyOffline = !isConnected || !hasGoodInternet || offlineModeEnabled;
 
-      if (capturedOffline) {
-        await enqueueOfflineAttendance({ 
-            userId: selectedUserRef.current!.userId, 
-            username: selectedUserRef.current!.username, 
-            name: selectedUserRef.current!.name ?? null, 
-            action, 
-            date: localDate, 
-            time: localTime,
-            ...locationData
-        });
-        await refreshPendingSyncCount();
-      } else {
+      if (!isActuallyOffline) {
         try {
-          console.log(`[Attendance] Recording finalized. Identity Passed. Active Liveness Passed (Score: ${livenessScoreRef.current?.toFixed(3) ?? 'N/A'})`);
-          data = await recordAttendance(action, locationData);
-        } catch (error) {
-          if (!isLikelyConnectivityError(error)) throw error;
-          capturedOffline = true;
-          setOfflineModeEnabled(true);
-          showOfflineToast();
-          await enqueueOfflineAttendance({ 
+          console.log('[Attendance] Recording online directly...');
+          const result = await recordAttendance(
+            selectedUserRef.current!.userId,
+            action,
+            {
+              isIntern: selectedUserRef.current!.isIntern,
+              ...(selectedUserRef.current!.isIntern ? {} : locationData)
+            }
+          );
+
+          const serverDate = result?.date || localDate;
+          const serverTime = result?.time || localTime;
+
+          if (action === 'clock_in') {
+            await storeClockInNotification({ date: serverDate, timein: serverTime });
+            await saveStoredSession({ 
               userId: selectedUserRef.current!.userId, 
               username: selectedUserRef.current!.username, 
               name: selectedUserRef.current!.name ?? null, 
-              action, 
-              date: localDate, 
-              time: localTime,
-              ...locationData
-          });
-          await refreshPendingSyncCount();
+              clockInTime: serverTime, 
+              clockInDate: serverDate 
+            });
+          } else {
+            await clearStoredSession(selectedUserRef.current!.userId);
+          }
+
+          setScanStage('success');
+          playSuccessSound();
+          setSuccessAnimationTick((prev) => prev + 1);
+          
+          setTimeout(async () => {
+            await resetAttendanceFlow();
+            workletPhase.value = 0;
+            
+            showModal('success',
+              action === 'clock_in' ? "You're Clocked In!" : "You're Clocked Out!",
+              'Attendance processed.', 2000);
+          }, 500);
+          return;
+        } catch (onlineError: any) {
+          console.log('[Attendance] Online record failed:', onlineError);
+          
+          // If it's a 4xx error (like "No clock in entry found"), it's a business logic rejection, NOT a network issue!
+          if (onlineError.status >= 400 && onlineError.status < 500) {
+            setScanStage('idle');
+            showModal('error', 'Attendance Failed', onlineError.message || 'Rejected by server.', 5000);
+            
+            setTimeout(async () => {
+              await resetAttendanceFlow();
+              workletPhase.value = 0;
+            }, 5000);
+            return;
+          }
+          
+          console.log('[Attendance] Falling back to offline queue...');
         }
       }
 
+      const offlineItem = await enqueueOfflineAttendance({ 
+          userId: selectedUserRef.current!.userId, 
+          username: selectedUserRef.current!.username, 
+          name: selectedUserRef.current!.name ?? null, 
+          action, 
+          date: localDate, 
+          time: localTime,
+          isIntern: selectedUserRef.current!.isIntern,
+          ...(selectedUserRef.current!.isIntern ? {} : locationData)
+      });
+      await refreshPendingSyncCount();
+
       if (action === 'clock_in') {
-        await storeClockInNotification({ date: data?.date || localDate, timein: data?.timein || localTime });
-        await saveStoredSession({ userId: selectedUserRef.current!.userId, username: selectedUserRef.current!.username, name: selectedUserRef.current!.name ?? null, clockInTime: data?.timein || localTime, clockInDate: data?.date || localDate });
-        if (!capturedOffline && data?.emp_id != null) await AsyncStorage.setItem('emp_id', String(data.emp_id));
+        await storeClockInNotification({ date: localDate, timein: localTime });
+        await saveStoredSession({ 
+          userId: selectedUserRef.current!.userId, 
+          username: selectedUserRef.current!.username, 
+          name: selectedUserRef.current!.name ?? null, 
+          clockInTime: localTime, 
+          clockInDate: localDate 
+        });
       } else {
         await clearStoredSession(selectedUserRef.current!.userId);
       }
-      
+
       setScanStage('success');
+      playSuccessSound();
       setSuccessAnimationTick((prev) => prev + 1);
-      await new Promise((resolve) => setTimeout(resolve, 500));
-      await resetAttendanceFlow();
-      workletPhase.value = 0; // Reset worklet phase
-      showModal('success',
-        action === 'clock_in' ? 'Clock In Success' : 'Clock Out Success',
-        capturedOffline ? 'Captured and saved offline.' : 'Face verified and recorded.',
-        '', 2000);
+      
+      setTimeout(async () => {
+        await resetAttendanceFlow();
+        workletPhase.value = 0;
+        
+        showModal('success',
+          action === 'clock_in' ? "You're Clocked In!" : "You're Clocked Out!",
+          'Attendance processed.', 2000);
+      }, 500);
+
     } catch (e: any) {
       faceProcessingRef.current = false;
       livenessTriggeredRef.current = false;
       setScanStage('idle');
-      const showOfflineError = offlineModeEnabled || isLikelyConnectivityError(e);
-      showModal('error', showOfflineError ? 'Offline Mode Error' : 'Connection Error', e?.message || 'Please try again.', showOfflineError ? 'Connect once to refresh employee QR cache.' : 'Check your internet connection', 2000);
     } finally {
       setIsVerifying(false);
     }
-  }, [attendanceAction, clearStoredSession, enqueueOfflineAttendance, isLikelyConnectivityError, offlineModeEnabled, recordAttendance, refreshPendingSyncCount, resetAttendanceFlow, saveStoredSession, showModal, showOfflineToast, storeClockInNotification, workletPhase]);
+  }, [attendanceAction, clearStoredSession, enqueueOfflineAttendance, isConnected, hasGoodInternet, offlineModeEnabled, refreshPendingSyncCount, resetAttendanceFlow, saveStoredSession, showModal, storeClockInNotification, workletPhase, recordAttendance]);
 
   // Main attendance handler (Concurrent Phase 1 & 2)
   const executeFaceVerification = useCallback(async () => {
@@ -1152,18 +1470,47 @@ export function useAttendance() {
     let result: any;
 
     try {
-      if (faceEngine === 'camera_vision') {
+      // Pre-parse stored embedding for quick scoring between shots
+      const storedRaw = selectedUserRef.current?.face_embedding;
+      let parsedStored: number[] | number[][] | null = null;
+      if (storedRaw) {
+        try { parsedStored = Array.isArray(storedRaw) ? storedRaw : JSON.parse(storedRaw as string); } catch {}
+      }
+
+      const isActuallyOffline = !isConnected || !hasGoodInternet || offlineModeEnabled;
+      const useServerVerify = serverVerifyEnabledRef.current && !isActuallyOffline;
+
+      if (useServerVerify) {
+        methodUsed = 'Server-assisted (Camera Vision)';
+        const captureStart = Date.now();
+        let base64Crop: string | null = null;
+        try {
+          base64Crop = await captureFaceCropB64();
+        } catch (err) {
+          console.warn('[CameraVision] Failed to capture face crop base64 for server:', err);
+        }
+        captureDuration = Date.now() - captureStart;
+        setIsCapturingHardware(false);
+
+        if (base64Crop) {
+          const compareStart = Date.now();
+          const apiResult = await verifyFaceViaAPI(null, base64Crop);
+          compareDuration = Date.now() - compareStart;
+
+          if (apiResult && typeof apiResult.ok === 'boolean') {
+            result = apiResult;
+          } else {
+            console.warn('[CameraVision] Server face verification returned invalid response, falling back to local verification.');
+          }
+        }
+      }
+
+      if (!result) {
+        methodUsed = 'Local (Camera Vision)';
         const captureStart = Date.now();
         let liveEmbedding: number[] | null = null;
         let bestScore = -1;
         let lastError: any = null;
-
-        // Pre-parse stored embedding for quick scoring between shots
-        const storedRaw = selectedUserRef.current?.face_embedding;
-        let parsedStored: number[] | number[][] | null = null;
-        if (storedRaw) {
-          try { parsedStored = Array.isArray(storedRaw) ? storedRaw : JSON.parse(storedRaw as string); } catch {}
-        }
 
         for (let attempt = 1; attempt <= 2; attempt++) {
           try {
@@ -1174,20 +1521,26 @@ export function useAttendance() {
                 bestScore = r.maxSimilarity;
                 liveEmbedding = embedding;
               }
-              // First shot already clear pass — skip second
-              if (bestScore >= MODEL_CONFIG.matchThreshold && attempt === 1) {
-                console.log(`[CameraVision] Shot 1 scored well (${(bestScore * 100).toFixed(1)}%), skipping shot 2.`);
+              
+              const threshold = MODEL_CONFIG.matchThreshold;
+              const subThreshold = MODEL_CONFIG.subThreshold;
+              const agreeingAngles = r.perAngleScores.filter((s: number) => s >= subThreshold).length;
+              const minAgrees = r.angleCount >= 5 ? 3 : (r.angleCount >= 3 ? 2 : 1);
+              const isMatched = r.maxSimilarity >= threshold && agreeingAngles >= minAgrees;
+
+              if (isMatched && attempt === 1) {
+                console.log(`[CameraVision] Shot 1 is a clear pass (${(r.maxSimilarity * 100).toFixed(1)}% >= ${(threshold * 100).toFixed(0)}%), skipping shot 2.`);
                 break;
               }
             } else {
               if (!liveEmbedding) liveEmbedding = embedding;
               break;
             }
-            if (attempt < 2) await new Promise(r => setTimeout(r, 200));
+            if (attempt < 2) await new Promise(r => setTimeout(r, 50));
           } catch (err) {
             console.log(`[CameraVision] Photo capture attempt ${attempt} failed:`, err);
             lastError = err;
-            if (attempt < 2) await new Promise(r => setTimeout(r, 100));
+            if (attempt < 2) await new Promise(r => setTimeout(r, 50));
           }
         }
         if (!liveEmbedding) throw lastError || new Error('Failed to capture face embedding');
@@ -1196,39 +1549,7 @@ export function useAttendance() {
         setIsCapturingHardware(false);
 
         const compareStart = Date.now();
-        // Try API verification first (authoritative server-side check), fall back to local
-        if (!offlineModeEnabled) {
-          const apiResult = await verifyFaceViaAPI(liveEmbedding);
-          if (apiResult !== null) {
-            result = apiResult;
-            methodUsed = 'API (Camera Vision)';
-          } else {
-            result = verifyFaceLocal(liveEmbedding);
-            methodUsed = 'Local Fallback (Camera Vision)';
-          }
-        } else {
-          result = verifyFaceLocal(liveEmbedding);
-          methodUsed = 'Local Offline (Camera Vision)';
-        }
-        compareDuration = Date.now() - compareStart;
-      } else {
-        const captureStart = Date.now();
-        // Face++ or offline photo capture
-        if (!cameraRef.current) throw new Error('Camera not ready');
-        const photo1 = await cameraRef.current.takePhoto({ flash: 'off', enableAutoRedEyeReduction: true });
-        captureDuration = Date.now() - captureStart;
-        setIsCapturingHardware(false);
-        if (!photo1?.path) throw new Error('No image captured');
-        const photoUri = `file://${photo1.path}`;
-
-        const compareStart = Date.now();
-        if (offlineModeEnabled) {
-          result = { ok: true, verified: true, offlineCaptured: true, message: 'Face photos captured offline.', photoUri };
-          methodUsed = 'Offline Photo Capture (Face++)';
-        } else {
-          result = await verifyFace(photoUri);
-          methodUsed = 'API (Face++)';
-        }
+        result = verifyFaceLocal(liveEmbedding);
         compareDuration = Date.now() - compareStart;
       }
     } catch (e: any) {
@@ -1237,7 +1558,16 @@ export function useAttendance() {
       identityStatusRef.current = 'failed';
       modalContextRef.current = 'face_error';
       setScanStage('idle');
-      showModal('error', 'Camera Error', e?.message || 'Failed to capture photo', '', 2000);
+      let title = 'Camera could not capture';
+      let message = 'Make sure nothing is blocking the lens.';
+      if (e?.code === 'PREPROCESS_TOO_DARK') {
+        title = 'Too dark';
+        message = 'Move to a well-lit area.';
+      } else if (e?.code === 'PREPROCESS_TOO_BLURRY') {
+        title = 'Image was blurry';
+        message = 'Please hold still.';
+      }
+      showModal('camera_error', title, message, 2000);
       return;
     }
 
@@ -1249,21 +1579,32 @@ export function useAttendance() {
       const isSuccess = result?.ok === true || result?.verified === true;
 
       console.log('\n==================================================');
-      console.log('       [Face Verification TEST METRICS]           ');
+      console.log('        [Face Verification TEST METRICS]          ');
       console.log('==================================================');
-      console.log(`👤 Employee:    ${userName} (ID: ${userId})`);
-      console.log(`⚡ Method:      ${methodUsed}`);
-      console.log(`🏆 Result:      ${isSuccess ? '✅ [PASSED]' : '❌ [FAILED]'}`);
+      console.log(` Employee:      ${userName} (ID: ${userId})`);
+      console.log(` Method:        ${methodUsed}`);
+      if (result?.model_used) {
+        console.log(` Model:         ${result.model_used}`);
+      }
+      console.log(` Result:        ${isSuccess ? '[PASSED]' : '[FAILED]'}`);
       if (scoreVal !== null) {
-        console.log(`📈 Score:       ${(scoreVal * 100).toFixed(2)}% (Threshold: ${(MODEL_CONFIG.matchThreshold * 100).toFixed(0)}%)`);
+        console.log(` Score:         ${(scoreVal * 100).toFixed(2)}% (Threshold: ${(MODEL_CONFIG.matchThreshold * 100).toFixed(0)}%)`);
       } else {
-        console.log(`📈 Score:       N/A`);
+        console.log(` Score:         N/A`);
+      }
+      if (result?.angle_count != null) {
+        const minAgrees = result.angle_count >= 5 ? 3 : (result.angle_count >= 3 ? 2 : 1);
+        console.log(` Angles:        ${result.angle_count} profiles (Best angle: #${result.best_angle_index})`);
+        console.log(` Agreement:     ${result.agreeing_angles ?? 0} matching angles (At least ${minAgrees} required)`);
+        if (!isSuccess && scoreVal >= MODEL_CONFIG.matchThreshold) {
+          console.log(` Reason:        Failed multi-angle alignment check (less than ${minAgrees} angles matched)`);
+        }
       }
       console.log('--------------------------------------------------');
-      console.log('Performance Details:');
-      console.log(`📸 Image Capture/ONNX:  ${captureDuration} ms`);
-      console.log(`⚖️ Comparison Math:     ${compareDuration} ms`);
-      console.log(`⏱️ Total Cycle Time:    ${totalTime} ms`);
+      console.log(' Performance Details:');
+      console.log(` Image Capture/ONNX: ${captureDuration} ms`);
+      console.log(` Comparison Math:    ${compareDuration} ms`);
+      console.log(` Total Cycle Time:   ${totalTime} ms`);
       console.log('==================================================\n');
 
       if (result?.ok === true || result?.verified === true) {
@@ -1276,7 +1617,7 @@ export function useAttendance() {
         faceProcessingRef.current = false; // reset so touchless can auto-retry
         modalContextRef.current = 'face_error';
         setScanStage('idle');
-        showModal('error', 'Verification Failed', result?.message || 'Face verification failed.', result?.hint || 'Please try again.', 2000);
+        showModal('face_error', result?.message || 'Face not recognized', result?.hint || 'Ensure good lighting and try again.', 2000);
       }
     } catch (e: any) {
       identityStatusRef.current = 'failed';
@@ -1285,28 +1626,26 @@ export function useAttendance() {
       faceProcessingRef.current = false; // reset so touchless can auto-retry
       modalContextRef.current = 'face_error';
       setScanStage('idle');
-      const showOfflineError = offlineModeEnabled || isLikelyConnectivityError(e);
-      showModal('error', showOfflineError ? 'Offline Mode Error' : 'Connection Error', e?.message || 'Please try again.', showOfflineError ? 'Connect once to refresh employee QR cache.' : 'Check your internet connection', 2000);
     }
-  }, [qrVerified, faceEngine, offlineModeEnabled, verifyFace, verifyFaceLocal, captureEmbeddingFromPhoto, executeAttendanceRecording, showModal, flashAnim, isLikelyConnectivityError, workletPhase]);
+  }, [qrVerified, offlineModeEnabled, verifyFaceLocal, captureEmbeddingFromPhoto, executeAttendanceRecording, showModal, flashAnim, isLikelyConnectivityError, workletPhase]);
 
   // Main attendance handler (Concurrent Phase 1 & 2)
   const handleAttendance = useCallback(async () => {
     if (faceProcessingRef.current || isVerifying) return;
     if (!qrVerified || !selectedUserRef.current) {
       setScanStage('idle');
-      showModal('warning', 'Scan QR Code First', 'Please scan your personal QR code before continuing.', 'The user must scan a QR code.');
+      showModal('warning', 'Scan your QR code first', 'Place your personal QR code in front of the camera.');
       return;
     }
     
 
     if (!hasPermission) {
       setScanStage('idle');
-      showModal('warning', 'Camera Required', 'Please allow camera access to verify your identity.', '');
+      showModal('warning', 'Camera access is needed', 'Allow camera permission to continue.');
       return;
     }
 
-    if (faceEngine === 'camera_vision' && !offlineModeEnabled) {
+    if (!offlineModeEnabled) {
       const minReadiness = touchlessEnabled
         ? CAMERA_VISION_TOUCHLESS_MIN_READINESS_TO_VERIFY
         : CAMERA_VISION_MANUAL_MIN_READINESS_TO_VERIFY;
@@ -1320,9 +1659,8 @@ export function useAttendance() {
         });
         showModal(
           'warning',
-          'Face Not Ready',
-          'No stable face detected yet. Please center your face and hold still.',
-          'Ensure your full face is visible with good lighting.',
+          'Hold still — face not detected',
+          'Center your face with good lighting.',
           1500,
         );
         return;
@@ -1332,33 +1670,37 @@ export function useAttendance() {
     faceProcessingRef.current = true;
 
     if (livenessEnabled) {
-      // PHASE 1: Active Liveness (Detect blinking first)
-      livenessStatusRef.current = 'pending';
-      livenessScoreRef.current = null;
-      workletPhase.value = 2; // Trigger blinking check in worklet
-      setScanStage('verifying');
-      setLivenessMessage('Please Blink or Smile to verify');
+      if (hasPassedPassiveLiveness.value) {
+        livenessStatusRef.current = 'passed';
+        livenessScoreRef.current = 1.0;
+        await executeFaceVerification();
+      } else {
+        // Reject click instantly since background liveness is not passed yet
+        faceProcessingRef.current = false;
+        showModal(
+          'warning',
+          'Liveness check pending',
+          'Please blink or smile at the camera to verify you are a real person.',
+          2000
+        );
+        return;
+      }
     } else {
-      // Skip active liveness: start verifying face immediately
       await executeFaceVerification();
     }
-  }, [attendanceAction, touchlessEnabled, hasPermission, isLikelyConnectivityError, livenessEnabled, offlineModeEnabled, qrVerified, showModal, workletPhase, executeAttendanceRecording, faceEngine, cameraVisionFaceDetected, cameraVisionReadiness, logCameraVisionGateSkip, executeFaceVerification]);
+  }, [attendanceAction, touchlessEnabled, hasPermission, isLikelyConnectivityError, livenessEnabled, offlineModeEnabled, qrVerified, showModal, workletPhase, executeAttendanceRecording, cameraVisionFaceDetected, cameraVisionReadiness, logCameraVisionGateSkip, executeFaceVerification, hasPassedPassiveLiveness]);
 
   const onFaceDetectedForIdentity = Worklets.createRunOnJS(() => {
     if (!touchlessEnabledRef.current || modalVisibleRef.current || !qrVerified || countdownRef.current > 0 || countdownActive || faceProcessingRef.current || isVerifying) return;
-    if (faceEngineRef.current === 'facepp') return;
-    if (faceEngineRef.current === 'camera_vision') {
+    if (false) return;
+    {
       setScanStage('detecting');
       return;
     }
   });
-
   const onTouchlessFaceLost = Worklets.createRunOnJS(() => {
     if (!touchlessEnabledRef.current || faceProcessingRef.current || isVerifying) return;
-    if (faceEngineRef.current === 'facepp' && faceppCountdownStartedRef.current) return;
-    if (faceEngineRef.current === 'camera_vision') {
-      cameraVisionAutoTriggeredRef.current = false;
-    }
+    cameraVisionAutoTriggeredRef.current = false;
     setLivenessMessage('Face the camera directly');
   });
 
@@ -1427,7 +1769,6 @@ export function useAttendance() {
       }
     }
     if (
-      faceEngineRef.current === 'camera_vision' &&
       qrVerified &&
       !isVerifying &&
       !faceProcessingRef.current &&
@@ -1493,23 +1834,72 @@ export function useAttendance() {
     try {
       // Run detection synchronously on the frame processor main thread to prevent hardware buffer lock errors
       const faces = detectFaces(frame);
-        const detectedFace = selectBestDetectedFace(faces, frame.width, frame.height);
-        const recognitionFace = selectBestRecognitionFace(faces, frame.width, frame.height);
-        const trackedFace = detectedFace ?? recognitionFace;
+      if (faces.length === 0) {
+        consecutiveNoFaceFrames.value += 1;
+        if (consecutiveNoFaceFrames.value >= 15) {
+          if (hasPassedPassiveLiveness.value) {
+            hasPassedPassiveLiveness.value = false;
+            onBackgroundLivenessChange(false);
+          }
+          blinkState.value = 0;
+          livenessConsecutiveFrames.value = 0;
+        }
+      } else {
+        consecutiveNoFaceFrames.value = 0;
+      }
 
-        // Store the best face box in shared values for the capture block to reuse
-        if (trackedFace) {
-          lastTrackedFaceX.value = trackedFace.box.x;
-          lastTrackedFaceY.value = trackedFace.box.y;
-          lastTrackedFaceW.value = trackedFace.box.width;
-          lastTrackedFaceH.value = trackedFace.box.height;
-          hasTrackedFace.value = true;
+      const detectedFace = selectBestDetectedFace(faces, frame.width, frame.height);
+      const recognitionFace = selectBestRecognitionFace(faces, frame.width, frame.height);
+      const trackedFace = detectedFace ?? recognitionFace;
+
+      let isMoving = false;
+      if (trackedFace) {
+        const yaw = trackedFace.sourceFace?.yawAngle ?? trackedFace.sourceFace?.eulerY ?? trackedFace.sourceFace?.headEulerAngleY ?? 0;
+        const pitch = trackedFace.sourceFace?.pitchAngle ?? trackedFace.sourceFace?.eulerX ?? trackedFace.sourceFace?.headEulerAngleX ?? 0;
+        const roll = trackedFace.sourceFace?.rollAngle ?? trackedFace.sourceFace?.eulerZ ?? trackedFace.sourceFace?.headEulerAngleZ ?? 0;
+
+        if (hasTrackedFace.value) {
+          const currentCenterX = trackedFace.box.x + trackedFace.box.width / 2;
+          const currentCenterY = trackedFace.box.y + trackedFace.box.height / 2;
+          const prevCenterX = lastTrackedFaceX.value + lastTrackedFaceW.value / 2;
+          const prevCenterY = lastTrackedFaceY.value + lastTrackedFaceH.value / 2;
+
+          const dx = currentCenterX - prevCenterX;
+          const dy = currentCenterY - prevCenterY;
+          const dw = trackedFace.box.width - lastTrackedFaceW.value;
+          const dh = trackedFace.box.height - lastTrackedFaceH.value;
+
+          const movementDistance = Math.sqrt(dx * dx + dy * dy);
+          const sizeChange = Math.sqrt(dw * dw + dh * dh);
+          
+          const dYaw = Math.abs(yaw - lastTrackedFaceYaw.value);
+          const dPitch = Math.abs(pitch - lastTrackedFacePitch.value);
+          const dRoll = Math.abs(roll - lastTrackedFaceRoll.value);
+
+          if (movementDistance > 0.015 || sizeChange > 0.015 || dYaw > 2.5 || dPitch > 2.5 || dRoll > 2.5) {
+            isMoving = true;
+          }
         }
 
-        if (workletPhase.value === 0) {
-          if (detectedFace) {
-            stableFaceFrames.value = Math.min(stableFaceFrames.value + 1, CAMERA_VISION_STABLE_FACE_FRAMES);
+        lastTrackedFaceX.value = trackedFace.box.x;
+        lastTrackedFaceY.value = trackedFace.box.y;
+        lastTrackedFaceW.value = trackedFace.box.width;
+        lastTrackedFaceH.value = trackedFace.box.height;
+        lastTrackedFaceYaw.value = yaw;
+        lastTrackedFacePitch.value = pitch;
+        lastTrackedFaceRoll.value = roll;
+        hasTrackedFace.value = true;
+      }
 
+      if (workletPhase.value === 0) {
+        const isUsable = detectedFace && isFaceBoxUsableForRecognition(detectedFace.box, detectedFace.sourceFace) && !isMoving;
+        if (isUsable) {
+          stableFaceFrames.value = Math.min(stableFaceFrames.value + 1, CAMERA_VISION_STABLE_FACE_FRAMES);
+        } else {
+          stableFaceFrames.value = 0; // Instant reset on motion or tracking loss
+        }
+
+          if (detectedFace) {
             if (sharedFaceEngineIsCameraVision.value) {
               const readinessPercent = Math.min(
                 100,
@@ -1562,9 +1952,7 @@ export function useAttendance() {
                 );
               }
             }
-            if (stableFaceFrames.value >= CAMERA_VISION_STABLE_FACE_FRAMES) {
-              onFaceDetectedForIdentity();
-            }
+            // Phase 0 completed, waiting for JS thread to trigger handleAttendance and set Phase 2
           } else {
             if (stableFaceFrames.value !== 0) {
               stableFaceFrames.value = Math.max(0, stableFaceFrames.value - 1);
@@ -1585,66 +1973,64 @@ export function useAttendance() {
           }
         }
 
-        if (faces.length > 0) {
-          const face = faces[0];
-          if (workletPhase.value === 2) {
-            // PHASE 2: Active Liveness (Blink or Smile)
-            const leftOpenProb = face.leftEyeOpenProbability ?? 1;
-            const rightOpenProb = face.rightEyeOpenProbability ?? 1;
-            const smileProb = face.smilingProbability ?? 0;
-            const isEyesOpen = leftOpenProb > 0.4 && rightOpenProb > 0.4;
-            const isEyesClosed = leftOpenProb < 0.2 && rightOpenProb < 0.2;
-            const isSmiling = smileProb > 0.7;
-            const isNotSmiling = smileProb < 0.3;
-            if (blinkState.value === 0 && isEyesOpen) {
-              if (isNotSmiling) {
-                blinkState.value = 1; 
-                updateLivenessMessage('Please Blink or Smile to verify');
-              } else {
-                // If they are already smiling when they walk up, they MUST blink to prove a physical action
-                blinkState.value = 10;
-                updateLivenessMessage('Please Blink to verify');
+        if (workletPhase.value === 0 || workletPhase.value === 2) {
+            if (faces.length > 0) {
+              const faceRaw = faces[0];
+              const leftEye = typeof faceRaw?.leftEyeOpenProbability === 'number' ? faceRaw.leftEyeOpenProbability : 0.5;
+              const rightEye = typeof faceRaw?.rightEyeOpenProbability === 'number' ? faceRaw.rightEyeOpenProbability : 0.5;
+              
+              const isEyesOpen = leftEye > 0.6 && rightEye > 0.6;
+              const isEyesClosed = leftEye < 0.3 && rightEye < 0.3;
+
+              if (!hasPassedPassiveLiveness.value) {
+                if (blinkState.value === 0) {
+                  if (isEyesOpen) {
+                    livenessConsecutiveFrames.value += 1;
+                    if (livenessConsecutiveFrames.value >= 3) {
+                      blinkState.value = 1; // Ready
+                      livenessConsecutiveFrames.value = 0;
+                    }
+                  } else {
+                    livenessConsecutiveFrames.value = 0;
+                  }
+                  if (workletPhase.value === 0 && sharedLivenessEnabled.value) updateLivenessMessage('Look straight with a neutral face');
+                } else if (blinkState.value === 1) {
+                  if (isEyesClosed) {
+                    livenessConsecutiveFrames.value += 1;
+                    if (livenessConsecutiveFrames.value >= 1) { 
+                      blinkState.value = 2; // Blink started
+                      livenessConsecutiveFrames.value = 0;
+                    }
+                  } else {
+                    livenessConsecutiveFrames.value = 0;
+                    if (workletPhase.value === 0 && sharedLivenessEnabled.value) updateLivenessMessage('Please Blink');
+                  }
+                } else if (blinkState.value === 2) {
+                  if (isEyesOpen) {
+                    livenessConsecutiveFrames.value += 1;
+                    if (livenessConsecutiveFrames.value >= 2) { 
+                      blinkState.value = 3; // Blink complete
+                      hasPassedPassiveLiveness.value = true;
+                      onBackgroundLivenessChange(true);
+                    }
+                  } else {
+                    livenessConsecutiveFrames.value = Math.max(0, livenessConsecutiveFrames.value - 1);
+                    if (workletPhase.value === 0 && sharedLivenessEnabled.value) updateLivenessMessage('Open your eyes');
+                  }
+                }
               }
-            } else if (blinkState.value === 1) {
-              if (isEyesClosed) {
-                blinkState.value = 2; // Blink started
-                updateLivenessMessage('Open your eyes');
-              } else if (isSmiling) {
-                blinkState.value = 3; // Genuine new smile detected
-                updateLivenessMessage('Verified!');
-                onActiveLivenessPassed(smileProb);
+
+              if (hasPassedPassiveLiveness.value) {
+                 if (workletPhase.value === 0 && sharedLivenessEnabled.value) updateLivenessMessage('Liveness passed! Ready to verify.');
               }
-            } else if (blinkState.value === 10) {
-              if (isEyesClosed) {
-                blinkState.value = 2; // Blink started
-                updateLivenessMessage('Open your eyes');
-              } else if (isNotSmiling) {
-                // They stopped smiling, reset baseline to 1 so they can now smile or blink
-                blinkState.value = 1;
-                updateLivenessMessage('Please Blink or Smile to verify');
-              }
-            } else if (blinkState.value === 2) {
-              if (isEyesOpen) {
-                blinkState.value = 3; // Blink completed
-                updateLivenessMessage('Verified!');
-                // For a blink, "accuracy" is how deep the blink was (lowest eye prob seen)
-                // Since we're here, we already passed the threshold. We'll send a high confidence score.
-                const blinkDepth = 1 - Math.min(leftOpenProb, rightOpenProb);
-                onActiveLivenessPassed(blinkDepth);
-              }
+            } else {
+               if (workletPhase.value === 0 && sharedLivenessEnabled.value) updateLivenessMessage('Face the camera directly');
             }
-          }
-        } else {
-          // Reset if face is lost
-          if (workletPhase.value === 2 && blinkState.value !== 0 && blinkState.value !== 3) {
-            blinkState.value = 0;
-            updateLivenessMessage('Face the camera directly');
-          }
         }
       } finally {
         isProcessingFace.value = false;
       }
-  }, [detectFaces, sharedTouchlessEnabled, sharedFaceEngineIsCameraVision, onFaceDetectedForIdentity, onTouchlessFaceLost, onCameraVisionDetectionProgress, onActiveLivenessPassed, updateLivenessMessage, isCapturingHardwareRef, workletPhase, blinkState, isProcessingFace, stableFaceFrames, lastCameraVisionReadinessSent, lastCameraVisionDetectedSent, frameCounter, lastFaceProcessedFrame, lastTrackedFaceX, lastTrackedFaceY, lastTrackedFaceW, lastTrackedFaceH, hasTrackedFace]);
+  }, [detectFaces, sharedTouchlessEnabled, sharedFaceEngineIsCameraVision, onFaceDetectedForIdentity, onTouchlessFaceLost, onCameraVisionDetectionProgress, onBackgroundLivenessChange, updateLivenessMessage, isCapturingHardwareRef, workletPhase, blinkState, isProcessingFace, stableFaceFrames, lastCameraVisionReadinessSent, lastCameraVisionDetectedSent, frameCounter, lastFaceProcessedFrame, lastTrackedFaceX, lastTrackedFaceY, lastTrackedFaceW, lastTrackedFaceH, hasTrackedFace, lastTrackedFaceYaw, lastTrackedFacePitch, lastTrackedFaceRoll, consecutiveNoFaceFrames, hasPassedPassiveLiveness, sharedLivenessEnabled]);
 
   // QR scanner
   const handleBarcodeScanned = async (event: any) => {
@@ -1652,12 +2038,12 @@ export function useAttendance() {
     const data: string | undefined = event?.data;
     if (!data) return;
     const now = Date.now();
-    if (lastScanRef.current.data === data && now - lastScanRef.current.ts < 1500) return;
+    if (lastScanRef.current.data === data && now - lastScanRef.current.ts < 5000) return;
     qrProcessingRef.current = true;
     lastScanRef.current = { data, ts: now };
     touchlessTriggeredRef.current = false;
     cameraVisionAutoTriggeredRef.current = false;
-    playSnapSound();
+    playQrSound();
     Animated.sequence([
       Animated.timing(flashAnim, { toValue: 1, duration: 50, useNativeDriver: true }),
       Animated.timing(flashAnim, { toValue: 0, duration: 150, useNativeDriver: true }),
@@ -1668,7 +2054,7 @@ export function useAttendance() {
       const currentSettings = await applyScannerSettings().catch(() => ({
         touchless: touchlessEnabledRef.current,
         liveness: livenessEnabled,
-        engine: faceEngineRef.current,
+        engine: 'camera_vision',
       }));
       console.log('[QR] Scanned', data);
       
@@ -1682,7 +2068,30 @@ export function useAttendance() {
 
       if (cachedUser) {
         console.log('[QR] Loaded from local cache -> Instant UI transition for:', cachedUser.username);
-        const localSession = await getStoredSession(cachedUser.userId);
+        
+        // If there are pending offline records for this user, the latest offline record determines the active state.
+        const queue = await getOfflineAttendanceQueue().catch(() => []);
+        const userPendingItems = queue.filter(item => 
+          item.userId === cachedUser.userId && 
+          (item.status === 'pending' || item.status === 'failed')
+        );
+
+        let localSession = null;
+        if (userPendingItems.length > 0) {
+          userPendingItems.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+          const latestAction = userPendingItems[0].action;
+          if (latestAction === 'clock_in') {
+            localSession = {
+              userId: cachedUser.userId,
+              username: cachedUser.username,
+              name: cachedUser.name ?? null,
+              clockInTime: userPendingItems[0].time,
+              clockInDate: userPendingItems[0].date
+            };
+          }
+        } else {
+          localSession = await getStoredSession(cachedUser.userId);
+        }
         
         await AsyncStorage.setItem('userId', cachedUser.userId);
         await AsyncStorage.setItem('username', cachedUser.username);
@@ -1695,13 +2104,13 @@ export function useAttendance() {
         setIsQrLoading(false);
 
         // Check if we have the necessary offline data to do a fast-path face verify
-        const hasNeededFaceData = currentSettings.engine === 'camera_vision' 
+        const hasNeededFaceData = true 
           ? !!cachedUser.face_embedding 
           : true; // Face++ sends the live photo to backend, backend fetches stored face
 
         // If we are missing the embedding locally, we CANNOT auto-trigger handleAttendance yet.
         // We must wait for the background sync to finish fetching it!
-        const shouldWaitSync = currentSettings.touchless && currentSettings.engine === 'camera_vision' && !hasNeededFaceData;
+        const shouldWaitSync = currentSettings.touchless && true && !hasNeededFaceData;
 
         // Show the success checkmark for 600ms before transitioning
         setTimeout(async () => {
@@ -1720,10 +2129,9 @@ export function useAttendance() {
             countdownRef.current = 0;
             livenessTriggeredRef.current = false;
             touchlessTriggeredRef.current = false;
-            faceppCountdownStartedRef.current = false;
-            stableFaceFrames.value = 0;
+                        stableFaceFrames.value = 0;
             setCountdownActive(false);
-            if (currentSettings.touchless && currentSettings.engine === 'camera_vision') {
+            if (currentSettings.touchless && true) {
               if (!shouldWaitSync) {
                 setScanStage('detecting');
               } else {
@@ -1738,17 +2146,53 @@ export function useAttendance() {
 
         // Background server sync to correct session state and fetch face data
         resolveUserFromQr(data).then(async (resolved) => {
+           const queue = await getOfflineAttendanceQueue().catch(() => []);
+           const userPendingItems = queue.filter(item => 
+             item.userId === resolved.userId && 
+             (item.status === 'pending' || item.status === 'failed')
+           );
+
            let existingSession = null;
-           if (!offlineModeEnabled && resolved.open_session) {
-             existingSession = {
-               clockInTime: resolved.open_session.timein,
-               clockInDate: resolved.open_session.date,
-             };
+           if (userPendingItems.length > 0) {
+             userPendingItems.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+             const latestAction = userPendingItems[0].action;
+             if (latestAction === 'clock_in') {
+               existingSession = {
+                 clockInTime: userPendingItems[0].time,
+                 clockInDate: userPendingItems[0].date
+               };
+             }
            } else {
-             existingSession = await getStoredSession(resolved.userId);
+             if (!offlineModeEnabled && resolved.open_session) {
+               existingSession = {
+                 clockInTime: resolved.open_session.timein,
+                 clockInDate: resolved.open_session.date,
+               };
+             } else {
+               existingSession = await getStoredSession(resolved.userId);
+             }
            }
            console.log('[QR] Background sync complete. Updated user data for:', resolved.username);
            
+           // Double check if live embedding differs from cached representation to overwrite cache and swap target on-the-fly
+           const cacheMatch = cachedUser && cachedUser.face_embedding === resolved.face_embedding;
+           if (!cacheMatch) {
+             console.log('[QR] Face embedding changed on server. Updating local cache and target Ref.');
+             await upsertOfflineUserCacheUser({
+               userId: resolved.userId,
+               empId: resolved.userId,
+               username: resolved.username,
+               name: resolved.name ?? null,
+               qrCode: data,
+               profile_picture: resolved.profile_picture ?? null,
+               profile_picture_remote: resolved.profile_picture ?? null,
+               role: resolved.role ?? null,
+               department: resolved.department ?? null,
+               face_embedding: resolved.face_embedding ?? null,
+               isIntern: resolved.isIntern,
+             });
+           }
+
            // Update the selected user with the fresh data from the server (including face_embedding)
            setSelectedUser(resolved);
            setWelcomeName(resolved.name || resolved.username || 'Employee');
@@ -1775,14 +2219,31 @@ export function useAttendance() {
       const resolved = await resolveUserFromQr(data);
       
       // Determine session state: Server-first (if online), Local fallback (if offline)
+      const queue = await getOfflineAttendanceQueue().catch(() => []);
+      const userPendingItems = queue.filter(item => 
+        item.userId === resolved.userId && 
+        (item.status === 'pending' || item.status === 'failed')
+      );
+
       let existingSession = null;
-      if (!offlineModeEnabled && resolved.open_session) {
-        existingSession = {
-          clockInTime: resolved.open_session.timein,
-          clockInDate: resolved.open_session.date,
-        };
+      if (userPendingItems.length > 0) {
+        userPendingItems.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+        const latestAction = userPendingItems[0].action;
+        if (latestAction === 'clock_in') {
+          existingSession = {
+            clockInTime: userPendingItems[0].time,
+            clockInDate: userPendingItems[0].date
+          };
+        }
       } else {
-        existingSession = await getStoredSession(resolved.userId);
+        if (!offlineModeEnabled && resolved.open_session) {
+          existingSession = {
+            clockInTime: resolved.open_session.timein,
+            clockInDate: resolved.open_session.date,
+          };
+        } else {
+          existingSession = await getStoredSession(resolved.userId);
+        }
       }
 
       console.log('[QR] Resolved user from server', sanitizeForLog(resolved));
@@ -1804,10 +2265,9 @@ export function useAttendance() {
         countdownRef.current = 0;
         livenessTriggeredRef.current = false;
         touchlessTriggeredRef.current = false;
-        faceppCountdownStartedRef.current = false;
-        stableFaceFrames.value = 0;
+                stableFaceFrames.value = 0;
         setCountdownActive(false);
-        if (currentSettings.touchless && currentSettings.engine === 'camera_vision') {
+        if (currentSettings.touchless && true) {
           setScanStage('detecting');
         } else {
           setScanStage('idle');
@@ -1818,7 +2278,8 @@ export function useAttendance() {
       setQrVerified(false);
       qrProcessingRef.current = false;
       setSelectedUser(null);
-      showModal('error', 'QR Validation Error', e?.message || 'Could not validate QR code.', '', 2000);
+      lastScanRef.current = { data: lastScanRef.current.data, ts: Date.now() + 3500 };
+      showModal('qr_error', 'QR code not recognized', 'Make sure you are using a valid employee QR.', 2000);
     } finally {
       setIsQrLoading(false);
     }
@@ -1833,31 +2294,66 @@ export function useAttendance() {
 
   // Effects
   useEffect(() => {
+    let activeSnapSound: Audio.Sound | null = null;
     async function loadSound() {
       try {
         const { sound } = await Audio.Sound.createAsync({ uri: 'https://www.soundjay.com/camera/camera-shutter-click-08.mp3' });
+        activeSnapSound = sound;
         setSnapSound(sound);
       } catch { }
+      try {
+        await Audio.setAudioModeAsync({
+          playsInSilentModeIOS: true,
+          staysActiveInBackground: false,
+          shouldDuckAndroid: false,
+          playThroughEarpieceAndroid: false,
+        });
+        const { sound: qrSound } = await Audio.Sound.createAsync(
+          require('../../../assets/audio/qr_scan.wav'),
+          { volume: 1.0, shouldPlay: false }
+        );
+        qrSoundRef.current = qrSound;
+        const { sound: faceSound } = await Audio.Sound.createAsync(
+          require('../../../assets/audio/face_scan.wav'),
+          { volume: 1.0, shouldPlay: false }
+        );
+        faceSuccessSoundRef.current = faceSound;
+      } catch (err) {
+        console.log('[Audio] Failed to load custom audio assets:', err);
+      }
     }
     loadSound();
-    return () => { if (snapSound) snapSound.unloadAsync(); };
+    return () => {
+      if (activeSnapSound) (activeSnapSound as Audio.Sound).unloadAsync();
+      if (qrSoundRef.current) qrSoundRef.current.unloadAsync();
+      if (faceSuccessSoundRef.current) faceSuccessSoundRef.current.unloadAsync();
+    };
   }, []);
 
-  useEffect(() => { setIsLoading(false); }, []);
-
   useEffect(() => {
-    if (qrVerified && !isVerifying) {
+    if (!qrVerified) {
       Animated.loop(Animated.sequence([
         Animated.timing(scanLineAnim, { toValue: 1, duration: 2000, useNativeDriver: true }),
         Animated.timing(scanLineAnim, { toValue: 0, duration: 2000, useNativeDriver: true }),
       ])).start();
-    } else { scanLineAnim.setValue(0); }
-  }, [qrVerified, isVerifying, scanLineAnim]);
+    } else { 
+      scanLineAnim.stopAnimation();
+      scanLineAnim.setValue(0); 
+    }
+  }, [qrVerified, scanLineAnim]);
+
+  useEffect(() => { setIsLoading(false); }, []);
 
   useEffect(() => {
     if (!countdownActive || !qrVerified || isVerifying) return;
     if (faceCountdown <= 0) return;
-    const timer = setTimeout(() => { const next = faceCountdown - 1; setFaceCountdown(next); countdownRef.current = next; }, 1000);
+    const interval = 500;
+    const step = 0.5;
+    const timer = setTimeout(() => {
+      const next = Math.max(0, faceCountdown - step);
+      setFaceCountdown(next);
+      countdownRef.current = next;
+    }, interval);
     return () => clearTimeout(timer);
   }, [countdownActive, qrVerified, isVerifying, faceCountdown]);
 
@@ -1866,30 +2362,23 @@ export function useAttendance() {
     if (showResultModal || modalVisibleRef.current) return;
     if (faceCountdown > 0 || isVerifying || faceProcessingRef.current) return;
     setCountdownActive(false);
-    faceppCountdownStartedRef.current = false;
-    setScanStage('capturing');
+        setScanStage('capturing');
     handleAttendance();
-  }, [countdownActive, faceCountdown, faceEngine, handleAttendance, isVerifying, qrVerified, showResultModal, touchlessEnabled]);
+  }, [countdownActive, faceCountdown, handleAttendance, isVerifying, qrVerified, showResultModal, touchlessEnabled]);
 
   useEffect(() => {
     if (!touchlessEnabled || !qrVerified) return;
-    if (faceEngine !== 'facepp') return;
+    return;
     if (isVerifying || faceProcessingRef.current || showResultModal || modalVisibleRef.current) return;
-    if (countdownActive || faceCountdown > 0 || faceppCountdownStartedRef.current) return;
-    faceppCountdownStartedRef.current = true;
-    setFaceCountdown(FACEPP_TOUCHLESS_COUNTDOWN_SECONDS);
-    countdownRef.current = FACEPP_TOUCHLESS_COUNTDOWN_SECONDS;
-    setCountdownActive(true);
-    setScanStage('countdown');
-    setLivenessMessage(`Capturing in ${FACEPP_TOUCHLESS_COUNTDOWN_SECONDS}...`);
-  }, [countdownActive, faceCountdown, faceEngine, isVerifying, qrVerified, showResultModal, touchlessEnabled]);
+        
+        setScanStage('capturing');
+    handleAttendance();
+  }, [handleAttendance, isVerifying, qrVerified, showResultModal, touchlessEnabled]);
 
   useEffect(() => {
     if (!touchlessEnabled || !qrVerified) return;
-    if (faceEngine !== 'camera_vision') return;
+    
     if (isVerifying || faceProcessingRef.current || showResultModal || modalVisibleRef.current) return;
-
-    if (countdownActive) return;
 
     setScanStage('detecting');
     const autoReadinessThreshold = CAMERA_VISION_TOUCHLESS_MIN_READINESS_TO_VERIFY;
@@ -1899,12 +2388,13 @@ export function useAttendance() {
       cameraVisionReadiness >= autoReadinessThreshold &&
       !cameraVisionAutoTriggeredRef.current
     ) {
-      setFaceCountdown(2);
-      countdownRef.current = 2;
-      setCountdownActive(true);
-      setScanStage('countdown');
-      setLivenessMessage('Capturing in 2...');
+      if (livenessEnabled && !backgroundLivenessPassed) {
+        return; // Gated: wait for liveness
+      }
+
       cameraVisionAutoTriggeredRef.current = true;
+      setScanStage('capturing');
+      handleAttendance();
       return;
     }
 
@@ -1913,18 +2403,12 @@ export function useAttendance() {
       cameraVisionReadiness < Math.max(12, autoReadinessThreshold - 15)
     ) {
       cameraVisionAutoTriggeredRef.current = false;
-      if (countdownActive) {
-        setCountdownActive(false);
-        setFaceCountdown(0);
-        countdownRef.current = 0;
-        setScanStage('detecting');
-      }
     }
   }, [
-    countdownActive,
     cameraVisionFaceDetected,
     cameraVisionReadiness,
-    faceEngine,
+    backgroundLivenessPassed,
+    livenessEnabled,
     handleAttendance,
     isVerifying,
     qrVerified,
@@ -1933,13 +2417,12 @@ export function useAttendance() {
   ]);
 
   useEffect(() => {
-    faceppCountdownStartedRef.current = false;
-    if (countdownRef.current > 0 || countdownActive || faceCountdown > 0) {
+        if (countdownRef.current > 0 || countdownActive || faceCountdown > 0) {
       setFaceCountdown(0);
       countdownRef.current = 0;
       setCountdownActive(false);
     }
-  }, [countdownActive, faceCountdown, faceEngine]);
+  }, []);
 
   useEffect(() => {
     touchlessEnabledRef.current = touchlessEnabled;
@@ -1947,11 +2430,9 @@ export function useAttendance() {
   }, [touchlessEnabled]);
 
   useEffect(() => {
-    faceEngineRef.current = faceEngine;
-    sharedFaceEngineIsCameraVision.value = faceEngine === 'camera_vision';
-    lastCameraVisionReadinessSent.value = -1;
+            lastCameraVisionReadinessSent.value = -1;
     lastCameraVisionDetectedSent.value = false;
-  }, [faceEngine]);
+  }, []);
 
   useEffect(() => {
     if (!qrVerified) {
@@ -2046,6 +2527,7 @@ export function useAttendance() {
   const formattedDate = currentTime.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
   const isClockingOut = attendanceAction === 'clock_out';
   const displayClockInTime = formatTo12Hour(clockInTime);
+  const isOnline = !!(isConnected && hasGoodInternet);
 
   return {
     colors, device, hasPermission, requestPermission,
@@ -2055,9 +2537,9 @@ export function useAttendance() {
     formattedTime, formattedDate,
     isLoading, isVerifying, isQrLoading, isClockingOut, isCapturingHardware: uiCapturingHardware,
     qrVerified, qrSuccessLocal, selectedUser, clockInTime: displayClockInTime, faceCountdown,
-    touchlessEnabled, offlineModeEnabled, livenessEnabled, faceEngine, pendingSyncCount,
+    touchlessEnabled, offlineModeEnabled, livenessEnabled, serverVerifyEnabled, pendingSyncCount, isOnline, kioskMode,
     scanStage, cameraVisionFaceDetected, cameraVisionReadiness, cameraVisionFaceBox, cameraVisionAllFaces, cameraVisionFaceTelemetry, successAnimationTick,
-    showResultModal, modalType, modalTitle, modalMessage, modalHint, livenessMessage,
-    closeModal, handleAttendance, resetAttendanceFlow,
+    showResultModal, modalType, modalTitle, modalMessage: '', modalHint, livenessMessage,
+    closeModal, handleAttendance, resetAttendanceFlow, backgroundLivenessPassed,
   };
 }

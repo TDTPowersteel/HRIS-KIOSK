@@ -1,8 +1,9 @@
-import React, { useEffect, useState, useMemo } from 'react';
-import { Modal, View, Text, StyleSheet, Pressable, ActivityIndicator, Image, ScrollView, useWindowDimensions } from 'react-native';
+import React, { useEffect, useState, useMemo, useRef } from 'react';
+import { Modal, View, Text, StyleSheet, Pressable, ActivityIndicator, Image, ScrollView, useWindowDimensions, Platform, ToastAndroid } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Colors, useTheme } from '../../../config/theme';
 import { BACKEND_URL } from '../../../config/backend';
+import { mmkv, cacheProfilePictureOnDisk, upsertOfflineUserCacheUser } from '../../../utils/offlineUsers';
 
 type AttendanceLog = {
   date: string;
@@ -84,99 +85,340 @@ const getLogStatuses = (log: AttendanceLog): LogStatus[] => {
   return statuses;
 };
 
+interface FilterButtonProps {
+  type: FilterType;
+  label: string;
+  icon: any;
+  filter: FilterType;
+  setFilter: (filter: FilterType) => void;
+  setStatusFilter: (statusFilter: LogStatus | 'All') => void;
+  colors: any;
+  theme: string;
+  fontSize: number;
+}
+
+const FilterButton = ({
+  type,
+  label,
+  icon,
+  filter,
+  setFilter,
+  setStatusFilter,
+  colors,
+  theme,
+  fontSize,
+}: FilterButtonProps) => (
+  <Pressable 
+    onPress={() => {
+      setFilter(type);
+      setStatusFilter('All');
+    }}
+    style={[
+      styles.filterBtn, 
+      { backgroundColor: filter === type ? Colors.powerOrange : (theme === 'light' ? '#f3f4f6' : '#2a2a2a') }
+    ]}
+  >
+    <MaterialCommunityIcons name={icon} size={18} color={filter === type ? '#fff' : colors.textSecondary} />
+    <Text style={[styles.filterBtnText, { color: filter === type ? '#fff' : colors.textSecondary, fontSize }]}>{label}</Text>
+  </Pressable>
+);
+
+interface MonthDropdownProps {
+  filter: FilterType;
+  setFilter: (filter: FilterType) => void;
+  setStatusFilter: (statusFilter: LogStatus | 'All') => void;
+  showMonthDropdown: boolean;
+  setShowMonthDropdown: (show: boolean) => void;
+  colors: any;
+  theme: string;
+  filterBtnTextFontSize: number;
+  optionTextFontSize: number;
+}
+
+const MonthDropdown = ({
+  filter,
+  setFilter,
+  setStatusFilter,
+  showMonthDropdown,
+  setShowMonthDropdown,
+  colors,
+  theme,
+  filterBtnTextFontSize,
+  optionTextFontSize,
+}: MonthDropdownProps) => {
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const isActive = filter !== 'week' && filter !== 'month';
+  const label = filter === 'all' ? 'All Time' : (isActive ? months[parseInt(filter as string, 10)] : 'Month');
+  
+  const [buttonPos, setButtonPos] = useState({ x: 0, y: 0, width: 0, height: 0 });
+  const buttonRef = useRef<View>(null);
+
+  return (
+    <View 
+      ref={buttonRef} 
+      onLayout={() => {
+        buttonRef.current?.measureInWindow((x, y, width, height) => {
+          setButtonPos({ x, y, width, height });
+        });
+      }}
+    >
+      <Pressable 
+        onPress={() => {
+          buttonRef.current?.measureInWindow((x, y, width, height) => {
+            setButtonPos({ x, y, width, height });
+            setShowMonthDropdown(!showMonthDropdown);
+          });
+        }}
+        style={[
+          styles.filterBtn, 
+          { backgroundColor: isActive ? Colors.powerOrange : (theme === 'light' ? '#f3f4f6' : '#2a2a2a') }
+        ]}
+      >
+        <MaterialCommunityIcons name="calendar-range" size={18} color={isActive ? '#fff' : colors.textSecondary} />
+        <Text style={[styles.filterBtnText, { color: isActive ? '#fff' : colors.textSecondary, fontSize: filterBtnTextFontSize }]}>
+          {label} ▼
+        </Text>
+      </Pressable>
+
+      <Modal visible={showMonthDropdown} transparent animationType="fade" onRequestClose={() => setShowMonthDropdown(false)}>
+        <Pressable style={StyleSheet.absoluteFill} onPress={() => setShowMonthDropdown(false)}>
+          <View style={[
+            styles.dropdownList, 
+            { 
+              backgroundColor: colors.surface, 
+              borderColor: colors.border, 
+              top: buttonPos.y + buttonPos.height + 5, 
+              left: buttonPos.x,
+              width: 140
+            }
+          ]}>
+            <ScrollView 
+              nestedScrollEnabled={true} 
+              style={{ maxHeight: 200 }} 
+              showsVerticalScrollIndicator={true}
+              keyboardShouldPersistTaps="handled"
+            >
+              <Pressable 
+                onPress={() => { setFilter('all'); setStatusFilter('All'); setShowMonthDropdown(false); }}
+                style={[styles.dropdownOption, filter === 'all' && { backgroundColor: theme === 'light' ? '#f3f4f6' : '#322721' }]}
+              >
+                <Text style={[styles.optionText, { color: colors.text, fontSize: optionTextFontSize }]}>All Time</Text>
+              </Pressable>
+              {months.map((m, idx) => {
+                const typeVal = idx.toString();
+                return (
+                  <Pressable 
+                    key={m} 
+                    onPress={() => {
+                      setFilter(typeVal);
+                      setStatusFilter('All');
+                      setShowMonthDropdown(false);
+                    }}
+                    style={[
+                      styles.dropdownOption,
+                      filter === typeVal && { backgroundColor: theme === 'light' ? '#f3f4f6' : '#322721' }
+                    ]}
+                  >
+                    <Text style={[styles.optionText, { color: colors.text, fontSize: optionTextFontSize }]}>{m}</Text>
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+          </View>
+        </Pressable>
+      </Modal>
+    </View>
+  );
+};
+
 export default function EmployeeDetailsModal({ visible, onClose, employee }: Props) {
   const { colors, theme } = useTheme();
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const [loading, setLoading] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
   const [history, setHistory] = useState<AttendanceLog[]>([]);
   const [filter, setFilter] = useState<FilterType>('week');
   const [statusFilter, setStatusFilter] = useState<LogStatus | 'All'>('All');
-  const [hqImage, setHqImage] = useState<string | null>(null);
-  const [hqLoading, setHqLoading] = useState(false);
   const [showMonthDropdown, setShowMonthDropdown] = useState(false);
+  const [localEmployee, setLocalEmployee] = useState<any>(employee);
+  const activeEmployee = useMemo(() => {
+    if (!employee) return null;
+    if (localEmployee && Number(localEmployee.emp_id) !== Number(employee.emp_id)) {
+      return employee;
+    }
+    return {
+      ...employee,
+      ...(localEmployee || {}),
+      accounts: localEmployee?.accounts || employee.accounts
+    };
+  }, [employee, localEmployee]);
+
+  const hasFaceId = useMemo(() => {
+    if (!activeEmployee) return false;
+    const acc = Array.isArray(activeEmployee.accounts) ? activeEmployee.accounts[0] : activeEmployee.accounts;
+    return !!(activeEmployee.face_embedding || acc?.face_embedding);
+  }, [activeEmployee]);
+  const activeControllerRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    if (employee) {
+      setLocalEmployee(employee);
+    }
+  }, [employee]);
 
   useEffect(() => {
     if (visible && employee?.emp_id) {
-      fetchHistory();
-      fetchHqDetails();
-    } else {
-      setHistory([]);
-      setHqImage(null);
-      setHqLoading(false);
       setShowMonthDropdown(false);
       setStatusFilter('All');
+      fetchHistory();
+    } else {
+      setHistory([]);
+      setLoading(false);
     }
-  }, [visible, employee, filter]);
-
-  const fetchHqDetails = async () => {
-    // We need to fetch the profile_picture again from the accounts table properly.
-    const account = Array.isArray(employee?.accounts) ? employee.accounts[0] : employee?.accounts;
-    const userId = account?.log_id || employee?.log_id;
-    
-    if (!userId) return;
-    
-    setHqLoading(true);
-    try {
-      const response = await fetch(`${BACKEND_URL}/employee_details.php?user_id=${userId}`);
-      const text = await response.text();
-      try {
-        const payload = JSON.parse(text);
-        if (payload.ok && payload.user?.profile_picture_hq) {
-          setHqImage(payload.user.profile_picture_hq);
-        } else if (payload.ok && payload.user?.profile_picture) {
-          setHqImage(payload.user.profile_picture);
-        }
-      } catch (jsonErr) {
-        console.error('Invalid JSON from employee_details.php:', text.substring(0, 200));
+    return () => {
+      if (activeControllerRef.current) {
+        activeControllerRef.current.abort();
+        activeControllerRef.current = null;
       }
-    } catch (e) {
-      console.error('Failed to fetch HQ image', e);
-    } finally {
-      setHqLoading(false);
-    }
-  };
+    };
+  }, [visible, employee?.emp_id, filter]);
 
   const fetchHistory = async () => {
     if (!employee?.emp_id) return;
-    setLoading(true);
+
+    if (activeControllerRef.current) {
+      activeControllerRef.current.abort();
+    }
+    
+    const cacheKey = `attendance_history:${employee.emp_id}:${filter}`;
+    const cachedString = mmkv.getString(cacheKey);
+    const hasCache = !!cachedString;
+
+    if (hasCache) {
+      try {
+        const parsed = JSON.parse(cachedString);
+        setHistory(parsed);
+      } catch (err) {
+        console.error('Failed to parse cached history:', err);
+        try {
+          if (typeof (mmkv as any).delete === 'function') {
+            (mmkv as any).delete(cacheKey);
+          } else if (typeof (mmkv as any).remove === 'function') {
+            (mmkv as any).remove(cacheKey);
+          } else {
+            (mmkv as any).delete(cacheKey);
+          }
+        } catch (deleteErr) {
+          console.error('Failed to delete corrupted cache key:', deleteErr);
+        }
+        setLoading(true);
+      }
+    } else {
+      setLoading(true);
+    }
+
+    setIsSyncing(true);
+
+    let historyUrl = `${BACKEND_URL}/record_attendance.php?emp_id=${employee.emp_id}`;
+    const now = new Date();
+    if (filter === 'week') {
+      const lastWeek = new Date();
+      lastWeek.setDate(now.getDate() - 7);
+      historyUrl += `&since=${lastWeek.toISOString().split('T')[0]}&limit=50`;
+    } else if (filter === 'month') {
+      const lastMonth = new Date();
+      lastMonth.setDate(now.getDate() - 30);
+      historyUrl += `&since=${lastMonth.toISOString().split('T')[0]}&limit=50`;
+    } else if (filter !== 'all') {
+      const year = now.getFullYear();
+      const monthIdx = parseInt(filter, 10);
+      const startDate = new Date(year, monthIdx, 1);
+      historyUrl += `&since=${startDate.toISOString().split('T')[0]}&limit=100`;
+    } else {
+      historyUrl += `&limit=100`;
+    }
+
+    const controller = new AbortController();
+    activeControllerRef.current = controller;
+    const timeoutId = setTimeout(() => controller.abort(), 15000);
+
     try {
-      let url = `${BACKEND_URL}/record_attendance.php?emp_id=${employee.emp_id}`;
-      
-      const now = new Date();
-      if (filter === 'week') {
-        const lastWeek = new Date();
-        lastWeek.setDate(now.getDate() - 7);
-        url += `&since=${lastWeek.toISOString().split('T')[0]}&limit=50`;
-      } else if (filter === 'month') {
-        const lastMonth = new Date();
-        lastMonth.setDate(now.getDate() - 30);
-        url += `&since=${lastMonth.toISOString().split('T')[0]}&limit=50`;
-      } else if (filter !== 'all') {
-        const year = now.getFullYear();
-        const monthIdx = parseInt(filter, 10);
-        const startDate = new Date(year, monthIdx, 1);
-        url += `&since=${startDate.toISOString().split('T')[0]}&limit=100`;
-      } else {
-        url += `&limit=100`;
+      const [detailRes, historyRes] = await Promise.all([
+        fetch(`${BACKEND_URL}/employees.php?detail_id=${employee.emp_id}`, { signal: controller.signal }),
+        fetch(historyUrl, { signal: controller.signal })
+      ]);
+
+      const [detailPayload, historyPayload] = await Promise.all([
+        detailRes.json(),
+        historyRes.json()
+      ]);
+
+      if (activeControllerRef.current !== controller) return;
+
+      if (!detailPayload.ok || !historyPayload.ok) {
+        throw new Error('Server returned unsuccessful response');
       }
 
-      const response = await fetch(url);
-      const payload = await response.json();
-      if (payload.ok) {
-        let fetchedData = payload.data || [];
-        if (filter !== 'all' && filter !== 'week' && filter !== 'month') {
-          const targetMonth = parseInt(filter, 10);
-          fetchedData = fetchedData.filter((log: any) => new Date(log.date).getMonth() === targetMonth);
+      if (detailPayload.user) {
+        const freshUser = detailPayload.user;
+        const hqPic = detailPayload.profile_picture_hq;
+        const acc = Array.isArray(freshUser.accounts) ? freshUser.accounts[0] : freshUser.accounts;
+        const merged = {
+          ...freshUser,
+          accounts: {
+            ...acc,
+            profile_picture: hqPic || acc?.profile_picture || null
+          }
+        };
+        setLocalEmployee(merged);
+
+        const userId = freshUser.log_id || acc?.log_id;
+        if (userId) {
+          upsertOfflineUserCacheUser({
+            userId: String(userId),
+            empId: String(freshUser.emp_id),
+            username: acc?.username || freshUser.name || '',
+            name: freshUser.name,
+            role: freshUser.role,
+            department: freshUser.departments?.name || null,
+            profile_picture: hqPic || acc?.profile_picture || null,
+            profile_picture_remote: acc?.profile_picture || null,
+            qrCode: acc?.qr_code || null,
+          }).catch(e => console.log('Cache update error:', e));
         }
-        setHistory(fetchedData);
-      } else {
+      }
+
+      let fetchedData = historyPayload.data || [];
+      if (filter !== 'all' && filter !== 'week' && filter !== 'month') {
+        const targetMonth = parseInt(filter, 10);
+        fetchedData = fetchedData.filter((log: any) => new Date(log.date).getMonth() === targetMonth);
+      }
+
+      setHistory(fetchedData);
+      mmkv.set(cacheKey, JSON.stringify(fetchedData));
+    } catch (e: any) {
+      if (activeControllerRef.current !== controller) {
+        return;
+      }
+      console.error('Failed to fetch attendance history or details:', e);
+      if (!hasCache) {
         setHistory([]);
       }
-    } catch (e) {
-      console.error('Failed to fetch attendance history', e);
-      setHistory([]);
+      if (Platform.OS === 'android') {
+        ToastAndroid.show(
+          e?.name === 'AbortError'
+            ? 'Sync timed out. Showing offline records.'
+            : 'Sync failed. Showing offline records.',
+          ToastAndroid.SHORT
+        );
+      }
     } finally {
-      setLoading(false);
+      clearTimeout(timeoutId);
+      if (activeControllerRef.current === controller) {
+        activeControllerRef.current = null;
+        setLoading(false);
+        setIsSyncing(false);
+      }
     }
   };
 
@@ -210,13 +452,33 @@ export default function EmployeeDetailsModal({ visible, onClose, employee }: Pro
   }, [enrichedHistory]);
 
   const getProfilePicture = () => {
-    if (hqImage) return hqImage;
-    if (!employee) return null;
-    const acc = Array.isArray(employee.accounts) ? employee.accounts[0] : employee.accounts;
+    if (!activeEmployee) return null;
+    const acc = Array.isArray(activeEmployee.accounts) ? activeEmployee.accounts[0] : activeEmployee.accounts;
     return acc?.profile_picture;
   };
 
-  const isTablet = windowWidth > 600;
+  const shortDimension = Math.min(windowWidth, windowHeight);
+  const isTablet = shortDimension >= 768;
+  const isSmallTablet = shortDimension >= 480 && shortDimension < 768;
+  const isPhone = shortDimension < 480;
+  const isLargeLayout = windowWidth > 600;
+
+  const placeholderFontSize = isTablet ? 64 : isSmallTablet ? 48 : 36;
+  const nameFontSize = isTablet ? 32 : isSmallTablet ? 24 : 18;
+  const roleFontSize = isTablet ? 18 : isSmallTablet ? 15 : 12;
+  const historyTitleFontSize = isTablet ? 24 : isSmallTablet ? 20 : 18;
+  const logDateFontSize = isTablet ? 18 : isSmallTablet ? 15 : 12;
+  const logTimeFontSize = isTablet ? 18 : isSmallTablet ? 15 : 12;
+
+  const deptTextFontSize = isTablet ? 14 : isSmallTablet ? 12 : 10;
+  const statsHeaderFontSize = isTablet ? 12 : isSmallTablet ? 11 : 9;
+  const statusPillTextFontSize = isTablet ? 13 : isSmallTablet ? 11 : 10;
+  const filterBtnTextFontSize = isTablet ? 12 : isSmallTablet ? 11 : 9;
+  const optionTextFontSize = isTablet ? 14 : isSmallTablet ? 12 : 11;
+  const tableLabelFontSize = isTablet ? 11 : isSmallTablet ? 10 : 9;
+  const smallStatusTextFontSize = isTablet ? 10 : isSmallTablet ? 9 : 8;
+  const loadingTextFontSize = isTablet ? 16 : isSmallTablet ? 14 : 12;
+  const noDataFontSize = isTablet ? 18 : isSmallTablet ? 15 : 13;
 
   const modalWidth = useMemo(() => {
     if (windowWidth > 1200) return 900;
@@ -228,107 +490,7 @@ export default function EmployeeDetailsModal({ visible, onClose, employee }: Pro
     return windowHeight * 0.85;
   }, [windowHeight]);
 
-  const FilterButton = ({ type, label, icon }: { type: FilterType, label: string, icon: any }) => (
-    <Pressable 
-      onPress={() => {
-        setFilter(type);
-        setStatusFilter('All');
-      }}
-      style={[
-        styles.filterBtn, 
-        { backgroundColor: filter === type ? Colors.powerOrange : (theme === 'light' ? '#f3f4f6' : '#2a2a2a') }
-      ]}
-    >
-      <MaterialCommunityIcons name={icon} size={18} color={filter === type ? '#fff' : colors.textSecondary} />
-      <Text style={[styles.filterBtnText, { color: filter === type ? '#fff' : colors.textSecondary }]}>{label}</Text>
-    </Pressable>
-  );
-
-  const MonthDropdown = () => {
-    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-    const isActive = filter !== 'week' && filter !== 'month';
-    const label = filter === 'all' ? 'All Time' : (isActive ? months[parseInt(filter as string, 10)] : 'Month');
-    
-    const [buttonPos, setButtonPos] = useState({ x: 0, y: 0, width: 0, height: 0 });
-    const buttonRef = React.useRef<View>(null);
-
-    return (
-      <View 
-        ref={buttonRef} 
-        onLayout={() => {
-          buttonRef.current?.measureInWindow((x, y, width, height) => {
-            setButtonPos({ x, y, width, height });
-          });
-        }}
-      >
-        <Pressable 
-          onPress={() => {
-            buttonRef.current?.measureInWindow((x, y, width, height) => {
-              setButtonPos({ x, y, width, height });
-              setShowMonthDropdown(!showMonthDropdown);
-            });
-          }}
-          style={[
-            styles.filterBtn, 
-            { backgroundColor: isActive ? Colors.powerOrange : (theme === 'light' ? '#f3f4f6' : '#2a2a2a') }
-          ]}
-        >
-          <MaterialCommunityIcons name="calendar-range" size={18} color={isActive ? '#fff' : colors.textSecondary} />
-          <Text style={[styles.filterBtnText, { color: isActive ? '#fff' : colors.textSecondary }]}>
-            {label} ▼
-          </Text>
-        </Pressable>
-
-        <Modal visible={showMonthDropdown} transparent animationType="fade" onRequestClose={() => setShowMonthDropdown(false)}>
-          <Pressable style={StyleSheet.absoluteFill} onPress={() => setShowMonthDropdown(false)}>
-            <View style={[
-              styles.dropdownList, 
-              { 
-                backgroundColor: colors.surface, 
-                borderColor: colors.border, 
-                top: buttonPos.y + buttonPos.height + 5, 
-                left: buttonPos.x,
-                width: 140
-              }
-            ]}>
-              <ScrollView 
-                nestedScrollEnabled={true} 
-                style={{ maxHeight: 200 }} 
-                showsVerticalScrollIndicator={true}
-                keyboardShouldPersistTaps="handled"
-              >
-                <Pressable 
-                  onPress={() => { setFilter('all'); setStatusFilter('All'); setShowMonthDropdown(false); }}
-                  style={[styles.dropdownOption, filter === 'all' && { backgroundColor: theme === 'light' ? '#f3f4f6' : '#322721' }]}
-                >
-                  <Text style={[styles.optionText, { color: colors.text }]}>All Time</Text>
-                </Pressable>
-                {months.map((m, idx) => {
-                  const typeVal = idx.toString();
-                  return (
-                    <Pressable 
-                      key={m} 
-                      onPress={() => {
-                        setFilter(typeVal);
-                        setStatusFilter('All');
-                        setShowMonthDropdown(false);
-                      }}
-                      style={[
-                        styles.dropdownOption,
-                        filter === typeVal && { backgroundColor: theme === 'light' ? '#f3f4f6' : '#322721' }
-                      ]}
-                    >
-                      <Text style={[styles.optionText, { color: colors.text }]}>{m}</Text>
-                    </Pressable>
-                  );
-                })}
-              </ScrollView>
-            </View>
-          </Pressable>
-        </Modal>
-      </View>
-    );
-  };
+  if (!activeEmployee) return null;
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
@@ -338,35 +500,52 @@ export default function EmployeeDetailsModal({ visible, onClose, employee }: Pro
             <MaterialCommunityIcons name="close-circle" size={36} color={colors.textSecondary} />
           </Pressable>
           
-          <View style={[styles.contentLayout, !isTablet && { flexDirection: 'column' }]}>
+          <View style={[styles.contentLayout, !isLargeLayout && { flexDirection: 'column' }]}>
             {/* Left Panel: Profile & Filters */}
-            <View style={[styles.profilePanel, isTablet ? { width: '35%', borderRightWidth: 1, borderRightColor: colors.border } : { width: '100%', borderBottomWidth: 1, borderBottomColor: colors.border, paddingBottom: 20 }]}>
-              <View style={[styles.avatarContainer, { borderColor: Colors.powerOrange, width: isTablet ? 160 : 100, height: isTablet ? 160 : 100, borderRadius: isTablet ? 80 : 50 }]}>
+            <View style={[styles.profilePanel, isLargeLayout ? { width: '35%', borderRightWidth: 1, borderRightColor: colors.border } : { width: '100%', borderBottomWidth: 1, borderBottomColor: colors.border, paddingBottom: 20 }]}>
+              <View style={[styles.avatarContainer, { borderColor: Colors.powerOrange, width: isLargeLayout ? 160 : 100, height: isLargeLayout ? 160 : 100, borderRadius: isLargeLayout ? 80 : 50 }]}>
                 {getProfilePicture() ? (
                   <Image source={{ uri: getProfilePicture() }} style={styles.profileImage} />
                 ) : (
                   <View style={styles.placeholderAvatar}>
-                    <Text style={[styles.placeholderText, { color: colors.textSecondary, fontSize: isTablet ? 64 : 40 }]}>{employee?.name?.charAt(0) || '?'}</Text>
-                  </View>
-                )}
-                {hqLoading && (
-                  <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', alignItems: 'center' }]}>
-                    <ActivityIndicator size={isTablet ? 'large' : 'small'} color="#fff" />
+                    <Text style={[styles.placeholderText, { color: colors.textSecondary, fontSize: placeholderFontSize }]}>{activeEmployee?.name?.charAt(0) || '?'}</Text>
                   </View>
                 )}
               </View>
-              <Text style={[styles.name, { color: colors.text, fontSize: isTablet ? 32 : 22 }]} numberOfLines={2}>{employee?.name || 'No Name'}</Text>
-              <Text style={[styles.role, { color: colors.textSecondary, fontSize: isTablet ? 18 : 14 }]}>{employee?.role || 'No Role'}</Text>
+              <Text style={[styles.name, { color: colors.text, fontSize: nameFontSize }]} numberOfLines={2}>{activeEmployee?.name || 'No Name'}</Text>
+              <Text style={[styles.role, { color: colors.textSecondary, fontSize: roleFontSize }]}>{activeEmployee?.role || 'No Role'}</Text>
               
-              <View style={[styles.deptTag, { backgroundColor: theme === 'light' ? '#f3f4f6' : '#333' }]}>
-                <Text style={[styles.deptText, { color: colors.textSecondary }]}>
-                  {employee?.departments?.name || 'General'}
+              <View style={[
+                styles.faceIdBadge, 
+                { 
+                  backgroundColor: theme === 'light' 
+                    ? (hasFaceId ? '#e8f5e9' : '#ffebee') 
+                    : (hasFaceId ? 'rgba(34, 197, 94, 0.15)' : 'rgba(239, 68, 68, 0.15)'), 
+                  borderColor: hasFaceId ? '#22c55e' : '#ef4444',
+                }
+              ]}>
+                <MaterialCommunityIcons 
+                  name="face-recognition" 
+                  size={14} 
+                  color={hasFaceId ? '#22c55e' : '#ef4444'} 
+                />
+                <Text style={[
+                  styles.faceIdBadgeText, 
+                  { color: hasFaceId ? '#22c55e' : '#ef4444', fontSize: 11 }
+                ]}>
+                  {hasFaceId ? 'Face ID Active' : 'Face ID Not Registered'}
                 </Text>
               </View>
 
-              {isTablet && (
+              <View style={[styles.deptTag, { backgroundColor: theme === 'light' ? '#f3f4f6' : '#333' }]}>
+                <Text style={[styles.deptText, { color: colors.textSecondary, fontSize: deptTextFontSize }]}>
+                  {activeEmployee?.departments?.name || 'General'}
+                </Text>
+              </View>
+
+              {isLargeLayout && (
                 <View style={styles.statsContainer}>
-                  <Text style={[styles.statsHeader, { color: colors.textSecondary }]}>STATUS FILTERS</Text>
+                  <Text style={[styles.statsHeader, { color: colors.textSecondary, fontSize: statsHeaderFontSize }]}>STATUS FILTERS</Text>
                   <View style={styles.statusPillGrid}>
                     <Pressable 
                       onPress={() => setStatusFilter('All')}
@@ -377,7 +556,7 @@ export default function EmployeeDetailsModal({ visible, onClose, employee }: Pro
                       ]}
                     >
                       <MaterialCommunityIcons name="format-list-bulleted" size={16} color={colors.text} />
-                      <Text style={[styles.statusPillText, { color: colors.text }]}>All Logs ({enrichedHistory.length})</Text>
+                      <Text style={[styles.statusPillText, { color: colors.text, fontSize: statusPillTextFontSize }]}>All Logs ({enrichedHistory.length})</Text>
                     </Pressable>
 
                     {(Object.keys(STATUS_COLORS) as LogStatus[]).map(status => {
@@ -400,7 +579,7 @@ export default function EmployeeDetailsModal({ visible, onClose, employee }: Pro
                           <MaterialCommunityIcons name={STATUS_ICONS[status]} size={16} color={isActive ? '#fff' : color} />
                           <Text style={[
                             styles.statusPillText, 
-                            { color: isActive ? '#fff' : color }
+                            { color: isActive ? '#fff' : color, fontSize: statusPillTextFontSize }
                           ]}>
                             {status} ({count})
                           </Text>
@@ -414,13 +593,43 @@ export default function EmployeeDetailsModal({ visible, onClose, employee }: Pro
 
             {/* Right Panel: History */}
             <View style={styles.historyPanel}>
-              <View style={[styles.historyHeader, !isTablet && { flexDirection: 'column', alignItems: 'flex-start', gap: 15 }]}>
+              <View style={[styles.historyHeader, !isLargeLayout && { flexDirection: 'column', alignItems: 'flex-start', gap: 15 }]}>
                 <View style={styles.headerLeftInfo}>
-                  <Text style={[styles.historyTitle, { color: colors.text, fontSize: isTablet ? 24 : 18 }]}>Attendance Records</Text>
+                  <Text style={[styles.historyTitle, { color: colors.text, fontSize: historyTitleFontSize }]}>Attendance Records</Text>
                   <View style={styles.filterRow}>
-                    <FilterButton type="week" label="7D" icon="calendar-week" />
-                    <FilterButton type="month" label="30D" icon="calendar-month" />
-                    <MonthDropdown />
+                    <FilterButton 
+                      type="week" 
+                      label="7D" 
+                      icon="calendar-week" 
+                      filter={filter}
+                      setFilter={setFilter}
+                      setStatusFilter={setStatusFilter}
+                      colors={colors}
+                      theme={theme}
+                      fontSize={filterBtnTextFontSize}
+                    />
+                    <FilterButton 
+                      type="month" 
+                      label="30D" 
+                      icon="calendar-month" 
+                      filter={filter}
+                      setFilter={setFilter}
+                      setStatusFilter={setStatusFilter}
+                      colors={colors}
+                      theme={theme}
+                      fontSize={filterBtnTextFontSize}
+                    />
+                    <MonthDropdown 
+                      filter={filter}
+                      setFilter={setFilter}
+                      setStatusFilter={setStatusFilter}
+                      showMonthDropdown={showMonthDropdown}
+                      setShowMonthDropdown={setShowMonthDropdown}
+                      colors={colors}
+                      theme={theme}
+                      filterBtnTextFontSize={filterBtnTextFontSize}
+                      optionTextFontSize={optionTextFontSize}
+                    />
                   </View>
                 </View>
               </View>
@@ -428,7 +637,7 @@ export default function EmployeeDetailsModal({ visible, onClose, employee }: Pro
               {loading ? (
                 <View style={styles.centered}>
                   <ActivityIndicator size="large" color={Colors.powerOrange} />
-                  <Text style={[styles.loadingText, { color: colors.textSecondary }]}>Updating history...</Text>
+                  <Text style={[styles.loadingText, { color: colors.textSecondary, fontSize: loadingTextFontSize }]}>Updating history...</Text>
                 </View>
               ) : (
                 <ScrollView 
@@ -438,10 +647,10 @@ export default function EmployeeDetailsModal({ visible, onClose, employee }: Pro
                 >
                   {filteredHistory.length > 0 ? (
                     <View style={styles.tableHeader}>
-                      <Text style={[styles.tableLabel, { flex: 2, color: colors.textSecondary }]}>DATE</Text>
-                      <Text style={[styles.tableLabel, { flex: 1, textAlign: 'center', color: colors.textSecondary }]}>IN</Text>
-                      <Text style={[styles.tableLabel, { flex: 1, textAlign: 'center', color: colors.textSecondary }]}>OUT</Text>
-                      <Text style={[styles.tableLabel, { flex: 2, textAlign: 'center', color: colors.textSecondary }]}>STATUS</Text>
+                      <Text style={[styles.tableLabel, { flex: 2, color: colors.textSecondary, fontSize: tableLabelFontSize }]}>DATE</Text>
+                      <Text style={[styles.tableLabel, { flex: 1, textAlign: 'center', color: colors.textSecondary, fontSize: tableLabelFontSize }]}>IN</Text>
+                      <Text style={[styles.tableLabel, { flex: 1, textAlign: 'center', color: colors.textSecondary, fontSize: tableLabelFontSize }]}>OUT</Text>
+                      <Text style={[styles.tableLabel, { flex: 2, textAlign: 'center', color: colors.textSecondary, fontSize: tableLabelFontSize }]}>STATUS</Text>
                     </View>
                   ) : null}
 
@@ -449,18 +658,18 @@ export default function EmployeeDetailsModal({ visible, onClose, employee }: Pro
                     filteredHistory.map((log, index) => (
                       <View key={index} style={[styles.logRow, { borderBottomColor: colors.border }]}>
                         <View style={{ flex: 2 }}>
-                          <Text style={[styles.logDate, { color: colors.text, fontSize: isTablet ? 18 : 14 }]}>{new Date(log.date).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}</Text>
+                          <Text style={[styles.logDate, { color: colors.text, fontSize: logDateFontSize }]}>{new Date(log.date).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}</Text>
                         </View>
                         <View style={styles.timeBox}>
-                          <Text style={[styles.logTime, { color: Colors.powerOrange, fontSize: isTablet ? 18 : 14 }]}>{log.timein?.substring(0, 5) || '--:--'}</Text>
+                          <Text style={[styles.logTime, { color: Colors.powerOrange, fontSize: logTimeFontSize }]}>{log.timein?.substring(0, 5) || '--:--'}</Text>
                         </View>
                         <View style={styles.timeBox}>
-                          <Text style={[styles.logTime, { color: colors.text, fontSize: isTablet ? 18 : 14 }]}>{log.timeout?.substring(0, 5) || '--:--'}</Text>
+                          <Text style={[styles.logTime, { color: colors.text, fontSize: logTimeFontSize }]}>{log.timeout?.substring(0, 5) || '--:--'}</Text>
                         </View>
                         <View style={{ flex: 2, flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 4 }}>
                           {log.calculatedStatuses.length > 0 ? log.calculatedStatuses.map((s) => (
                             <View key={s} style={[styles.smallStatusPill, { backgroundColor: STATUS_COLORS[s] + '15', borderColor: STATUS_COLORS[s] + '40' }]}>
-                              <Text style={[styles.smallStatusText, { color: STATUS_COLORS[s] }]}>{s}</Text>
+                              <Text style={[styles.smallStatusText, { color: STATUS_COLORS[s], fontSize: smallStatusTextFontSize }]}>{s}</Text>
                             </View>
                           )) : (
                             <Text style={{ color: colors.textSecondary, fontSize: 12 }}>---</Text>
@@ -471,7 +680,7 @@ export default function EmployeeDetailsModal({ visible, onClose, employee }: Pro
                   ) : (
                     <View style={styles.centered}>
                       <MaterialCommunityIcons name="calendar-blank" size={64} color={colors.border} />
-                      <Text style={[styles.noData, { color: colors.textSecondary }]}>No records found matching filters.</Text>
+                      <Text style={[styles.noData, { color: colors.textSecondary, fontSize: noDataFontSize }]}>No records found matching filters.</Text>
                     </View>
                   )}
                 </ScrollView>
@@ -666,5 +875,18 @@ const styles = StyleSheet.create({
   },
   centered: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   loadingText: { marginTop: 15, fontWeight: '700', fontSize: 16 },
-  noData: { textAlign: 'center', marginTop: 15, fontWeight: '600', fontSize: 18 }
+  noData: { textAlign: 'center', marginTop: 15, fontWeight: '600', fontSize: 18 },
+  faceIdBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  faceIdBadgeText: {
+    fontWeight: '700',
+  },
 });
