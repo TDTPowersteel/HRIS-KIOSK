@@ -88,10 +88,52 @@ function parseQrHints(qrData: string) {
   };
 }
 
+function getFailedDownloads(): string[] {
+  try {
+    const raw = mmkv.getString('failed_profile_downloads_v1');
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+function markDownloadFailed(url: string): void {
+  try {
+    const list = getFailedDownloads();
+    if (!list.includes(url)) {
+      list.push(url);
+      mmkv.set('failed_profile_downloads_v1', JSON.stringify(list));
+    }
+  } catch {}
+}
+
+function markDownloadSucceeded(url: string): void {
+  try {
+    const list = getFailedDownloads();
+    const index = list.indexOf(url);
+    if (index !== -1) {
+      list.splice(index, 1);
+      mmkv.set('failed_profile_downloads_v1', JSON.stringify(list));
+    }
+  } catch {}
+}
+
+function clearFailedDownloads(): void {
+  try {
+    (mmkv as any).delete('failed_profile_downloads_v1');
+  } catch {}
+}
+
 export async function cacheProfilePictureOnDisk(userId: string, remoteUrl: string): Promise<string | null> {
   if (!remoteUrl || !remoteUrl.startsWith('http')) {
     return remoteUrl || null;
   }
+  
+  const failedList = getFailedDownloads();
+  if (failedList.includes(remoteUrl)) {
+    return null;
+  }
+
   try {
     const fileExtension = remoteUrl.split('.').pop()?.split('?')[0] || 'jpg';
     const localFilename = `profile_${userId}.${fileExtension}`;
@@ -100,9 +142,16 @@ export async function cacheProfilePictureOnDisk(userId: string, remoteUrl: strin
     // Download standard 500x500px resolution profile photo directly to device cache
     const downloadedFile = await File.downloadFileAsync(remoteUrl, file);
     console.log(`[Profile Caching] Successfully cached profile for ${userId} at ${downloadedFile.uri}`);
+    markDownloadSucceeded(remoteUrl);
     return downloadedFile.uri;
-  } catch (err) {
-    console.error(`[Profile Caching] Failed to cache profile for ${userId}:`, err);
+  } catch (err: any) {
+    const msg = err?.message || String(err);
+    if (msg.includes('404')) {
+      console.warn(`[Profile Caching] Profile picture not found (404) for ${userId}`);
+      markDownloadFailed(remoteUrl);
+    } else {
+      console.error(`[Profile Caching] Failed to cache profile for ${userId}:`, err);
+    }
     return null;
   }
 }
@@ -217,6 +266,7 @@ export async function clearOfflineUserCache(): Promise<void> {
   for (const key of indexKeys) {
     (mmkv as any).delete(key);
   }
+  clearFailedDownloads();
 }
 
 export function mapEmployeesToOfflineUsers(data: EmployeePayloadRow[]): CachedOfflineUser[] {
